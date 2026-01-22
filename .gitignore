@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.env
+.vscode/
+.idea/
+
+# Runtime
+temp_ocr_screenshot.png
+images/screenshot_*.png
+*.log
+
+# System
+Thumbs.db
+Desktop.ini

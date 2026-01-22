@@ -1,0 +1,86 @@
+from app.agent import create_agent_executor
+import platform
+import ctypes
+
+def parse_state(output: str):
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines:
+        return None, output
+    last_line = lines[-1]
+    if last_line.upper().startswith("STATE:"):
+        state = last_line.split(":", 1)[1].strip().upper()
+        cleaned = "\n".join(lines[:-1]).strip()
+        return state, cleaned
+    return None, output
+
+def enable_dpi_awareness():
+    if platform.system() != "Windows":
+        return
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+def main():
+    enable_dpi_awareness()
+    print("正在初始化 Agent...")
+    try:
+        agent_executor = create_agent_executor()
+    except Exception as e:
+        print(f"初始化失败: {e}")
+        return
+
+    print("\n✅ Agent 已就绪！")
+    print("输入 'exit' 或 'quit' 退出。\n")
+
+    chat_history = []
+    max_auto_steps = 30
+    '''
+    最大自动执行步数，防止无限循环。
+    '''
+
+    while True:
+        try:
+            user_input = input("User: ").strip()
+            if user_input.lower() in ["exit", "quit"]:
+                print("Bye!")
+                break
+            
+            if not user_input:
+                continue
+
+            auto_input = user_input
+            for step in range(max_auto_steps):
+                response = agent_executor.invoke({
+                    "input": auto_input,
+                    "chat_history": chat_history
+                })
+
+                output = response.get("output", "")
+                state, cleaned_output = parse_state(output)
+                print(f"Agent: {cleaned_output}\n")
+                chat_history.extend([
+                    ("user", auto_input),
+                    ("assistant", output)
+                ])
+
+                if state == "DONE":
+                    break
+                if state != "CONTINUE":
+                    break
+                auto_input = "继续执行，基于当前屏幕状态完成任务。"
+                if step == max_auto_steps - 1:
+                    print("Agent: 已达到自动执行步数上限。\n")
+                    break
+
+        except KeyboardInterrupt:
+            print("\nBye!")
+            break
+        except Exception as e:
+            print(f"❌ 发生错误: {e}")
+
+if __name__ == "__main__":
+    main()
