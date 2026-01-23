@@ -6,3 +6,4 @@ volcengine
 pywinauto
 pillow
 pytesseract
+selenium>=4.15.0

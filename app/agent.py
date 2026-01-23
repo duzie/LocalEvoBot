@@ -29,7 +29,7 @@ def create_agent_executor():
     )
 
     # 2. 动态加载工具列表 (Skills)
-    # 自动扫描 app.skills 包及其子模块下的所有 Tool
+    # 自动扫描 app.skills 包下的多 Skill 子包
     tools = load_skills(package_name="app.skills")
     print(f"已加载 {len(tools)} 个 Skills: {[t.name for t in tools]}")
 
@@ -47,8 +47,8 @@ def create_agent_executor():
         tools=tools, 
         verbose=True,
         handle_parsing_errors=True,
-        max_iterations=20,
-        max_execution_time=180
+        max_iterations=100,
+        max_execution_time=600
     )
 
     return executor
