@@ -2,6 +2,8 @@ from app.agent import create_agent_executor
 import platform
 import ctypes
 
+RELOAD_SIGNAL = "__RELOAD_SKILLS__"
+
 def parse_state(output: str):
     lines = [line.strip() for line in output.splitlines() if line.strip()]
     if not lines:
@@ -12,6 +14,14 @@ def parse_state(output: str):
         cleaned = "\n".join(lines[:-1]).strip()
         return state, cleaned
     return None, output
+
+def strip_reload_signal(output: str):
+    if not output:
+        return output, False
+    lines = output.splitlines()
+    kept = [line for line in lines if RELOAD_SIGNAL not in line]
+    changed = len(kept) != len(lines)
+    return "\n".join(kept).strip(), changed
 
 def enable_dpi_awareness():
     if platform.system() != "Windows":
@@ -60,12 +70,19 @@ def main():
                 })
 
                 output = response.get("output", "")
+                output, reload_requested = strip_reload_signal(output)
                 state, cleaned_output = parse_state(output)
                 print(f"Agent: {cleaned_output}\n")
                 chat_history.extend([
                     ("user", auto_input),
                     ("assistant", output)
                 ])
+                if reload_requested:
+                    try:
+                        agent_executor = create_agent_executor()
+                        print("Agent: 已重载技能\n")
+                    except Exception as e:
+                        print(f"Agent: 技能重载失败: {e}\n")
 
                 if state == "DONE":
                     break

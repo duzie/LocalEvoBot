@@ -1,0 +1,10 @@
+http://127.0.0.1/SCMWeb/Login.aspx
+登录
+门店号 114200
+工号:sun
+密码:1
+
+登录后直接去菜单页http://127.0.0.1/SCMWEB/scm/NewMenu.aspx?appver=4
+
+点击采购入库
+测试采购入库的功能，要求细节都要测

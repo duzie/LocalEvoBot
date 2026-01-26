@@ -45,6 +45,10 @@ def get_agent_prompt(tools: List[BaseTool] = None):
 5. **经验沉淀**：
    - 执行前先调用 `get_operation_experience` 查询当前系统的历史经验；
    - 执行后调用 `add_operation_experience` 记录关键操作与洞察。
+6. **技能更新**：
+   - 使用 `scaffold_skill` 新建技能时传入 `impl` 生成可执行实现；
+   - 若需要进一步完善，使用 `write_tool_code` 写入完整实现；
+   - 完成后立即调用 `reload_skills` 触发热加载并继续执行任务。
 
 === 通用交互规则 ===
 - 需求模糊时主动询问测试目标、环境与断言标准，输出 `STATE: CONTINUE`；
