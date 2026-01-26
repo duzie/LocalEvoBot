@@ -24,10 +24,6 @@ app.skills.system_skill.scripts
 - get_operation_experience: 查询操作经验
 - delete_image: 删除图片文件
 - compress_operation_experience: 压缩操作经验
-- inspect_environment: 获取环境与技能信息
-- scaffold_skill: 生成新技能脚手架
-- reload_skills: 触发技能热加载
-- write_tool_code: 写入工具实现代码
 
 ## Platforms
 - Windows
