@@ -7,7 +7,7 @@ input_skill
 1.0.0
 
 ## Description
-键鼠输入与文本控制。
+键鼠输入与文本控制。（已禁用）
 
 ## Entry
 app.skills.input_skill.scripts

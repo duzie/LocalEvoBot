@@ -2,6 +2,7 @@ import importlib
 import pkgutil
 import inspect
 import os
+import sys
 from typing import List, Dict, Any
 from langchain_core.tools import BaseTool
 
@@ -35,6 +36,8 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
     """
     def _load_from_package(pkg_name: str) -> List[BaseTool]:
         tools = []
+        if auto_package_name and pkg_name == auto_package_name:
+            importlib.invalidate_caches()
         try:
             package = importlib.import_module(pkg_name)
         except ImportError as e:
@@ -62,9 +65,19 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
                     packages_to_scan.append(f"{pkg_name}.{module_name}.scripts")
 
         for scripts_package in packages_to_scan:
+            if auto_package_name and pkg_name == auto_package_name:
+                prefixes = [scripts_package]
+                if scripts_package.endswith(".scripts"):
+                    prefixes.append(scripts_package.rsplit(".scripts", 1)[0])
+                for name in list(sys.modules.keys()):
+                    for prefix in prefixes:
+                        if name == prefix or name.startswith(prefix + "."):
+                            del sys.modules[name]
+                            break
             try:
                 scripts_module = importlib.import_module(scripts_package)
-            except Exception:
+            except Exception as e:
+                print(f"Warning: Failed to import scripts package {scripts_package}: {e}")
                 continue
             if hasattr(scripts_module, "__path__"):
                 for _, module_name, _ in pkgutil.iter_modules(scripts_module.__path__):

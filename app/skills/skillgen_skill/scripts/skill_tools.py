@@ -162,7 +162,33 @@ def scaffold_skill(skill_name: str, tools: list, description: str = None, overwr
         ]
         body = []
         if impl and isinstance(impl, str) and impl.strip():
-            for line in impl.splitlines():
+            impl_lines = impl.splitlines()
+            first_non_empty = ""
+            for line in impl_lines:
+                if line.strip():
+                    first_non_empty = line.strip()
+                    break
+            is_full_impl = first_non_empty.startswith("def ") or first_non_empty.startswith("@tool") or first_non_empty.startswith("import ") or first_non_empty.startswith("from ")
+            if is_full_impl:
+                content = impl_lines[:]
+                has_tool_import = any(l.strip() == "from langchain_core.tools import tool" for l in content)
+                if not has_tool_import:
+                    content.insert(0, "from langchain_core.tools import tool")
+                has_tool_decorator = any(l.strip().startswith("@tool") for l in content)
+                if not has_tool_decorator:
+                    insert_idx = 0
+                    for idx, line in enumerate(content):
+                        if line.strip().startswith("def "):
+                            insert_idx = idx
+                            break
+                    content.insert(insert_idx, "@tool")
+                content.append("")
+                file_path = os.path.join(scripts_dir, f"{tool_name}.py")
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(content))
+                created.append(file_path)
+                continue
+            for line in impl_lines:
                 body.append(f"    {line}")
         else:
             body.append('    return "未实现"')
@@ -231,8 +257,23 @@ def write_tool_code(file_path: str, code: str):
     if not os.path.exists(p):
         return f"文件不存在: {p}"
     try:
+        content = code
+        if "def " in content:
+            lines = content.splitlines()
+            has_tool_import = any(l.strip() == "from langchain_core.tools import tool" for l in lines)
+            if not has_tool_import:
+                lines.insert(0, "from langchain_core.tools import tool")
+            if "@tool" not in content:
+                insert_idx = None
+                for idx, line in enumerate(lines):
+                    if line.strip().startswith("def "):
+                        insert_idx = idx
+                        break
+                if insert_idx is not None:
+                    lines.insert(insert_idx, "@tool")
+            content = "\n".join(lines)
         with open(p, "w", encoding="utf-8") as f:
-            f.write(code)
+            f.write(content)
         return f"已写入: {p}"
     except Exception as e:
         return f"写入失败: {e}"
