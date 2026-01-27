@@ -1,14 +1,17 @@
-# 电脑操作 Agent 项目
+# Self-Evolving Local Agent / 自进化本地自动化 Agent
 
-一个基于 LangChain 的电脑操作 Agent，支持多轮自动执行、Windows UI Automation、OCR 文本识别与视觉理解辅助，用于桌面任务自动化。
+一个基于 LangChain 的智能电脑操作 Agent，不仅支持 Windows UI Automation、OCR、Web 自动化，更具备**自我进化能力**——能根据任务需求自动编写新技能、热加载并立即使用，无需重启。
 
 **核心能力**
-- 自动多步执行：一次输入可连续执行多个工具调用
-- UI Automation 优先：基于 Windows UIA 精准定位控件
-- OCR 识别：读取界面文字，辅助下一步决策
-- 视觉理解：分析界面状态与可见信息
-- 常见桌面操作：点击、输入、显示桌面、进程检查等
-- 技能按一文件一技能拆分，便于扩展与维护
+- **自我进化 (Self-Evolution)**：
+  - 遇到未知任务时，自动生成工具脚手架 (`scaffold_skill`)
+  - 自动编写 Python 实现代码 (`write_tool_code`)
+  - 运行时热加载新技能 (`reload_skills`)，即刻生效
+- **自动多步执行**：基于 `STATE` 状态机的多轮自动执行与任务拆解
+- **UI Automation**：基于 Windows UIA 精准定位与操作原生控件
+- **Web 自动化**：内置 Selenium 支持，接管浏览器进行复杂网页交互
+- **视觉与 OCR**：屏幕/窗口文字识别，辅助定位与决策
+- **系统控制**：文件操作、进程管理、键盘鼠标模拟
 
 ## 快速开始
 
@@ -34,49 +37,54 @@ python main.py
 
 ```
 显示桌面
-打开微信并给肚子饱发消息，说晚上来吃饭
 帮我把桌面上所有 png 移动到 D:/screenshots
 读取 Excel 里 A 列总和并保存结果
 ```
 
 ## Skills 概览
 
-**UI Automation (Windows)**
-- `uia_find_control`：按窗口与控件属性定位控件并返回坐标
-- `uia_click_control`：直接点击控件
-- `uia_list_controls`：枚举窗口控件树，便于探索控件名称
+### 核心技能 (app/skills)
+**1. 自进化 (SkillGen)**
+- `scaffold_skill`: 生成新技能目录结构
+- `write_tool_code`: 编写或修改工具代码
+- `reload_skills`: 热加载所有技能 (Auto-Reload)
 
-**OCR 文本识别**
-- `ocr_screen`：全屏 OCR
-- `ocr_window`：指定窗口 OCR
+**2. UI Automation (Windows)**
+- `uia_find_control`: 定位窗口控件
+- `uia_click_control`: 点击控件
+- `uia_list_controls`: 遍历控件树
 
-**视觉理解**
-- `analyze_screen`：输出界面摘要、可见文字、UI 元素与建议动作
+**3. Web 自动化 (Selenium)**
+- `selenium_open_url`: 打开网页
+- `selenium_click` / `selenium_type`: 网页交互
+- `selenium_run_steps`: 批量执行网页操作
 
-**桌面操作**
-- `mouse_click` / `type_text` / `wait_seconds`
-- `show_desktop`
+**4. 视觉与 OCR**
+- `ocr_screen` / `ocr_window`: 文字识别
+- `take_screenshot`: 屏幕截图
 
-**进程与系统**
-- `check_process_status`
-- `list_processes`
-- `get_current_time`
-- `calculator`
+**5. 系统与文件**
+- `file_organize`: 文件整理
+- `check_process_status`: 进程检查
+- `mouse_click` / `type_text`: 键鼠模拟
 
-**文件与办公**
-- `file_organize`
-- `excel_sum`
-- `take_screenshot`
+### 自动生成技能 (app/auto_skills)
+Agent 根据任务需求自动生成的技能存放于此，例如：
+- `file_directory_skill`: 复杂文件搜索与列表
+- `excel_read_skill`: 特定 Excel 处理逻辑
+- ... (随使用自动增长)
 
 ## 目录结构
 
 ```
 app/
-  agent.py         Agent 创建与执行器配置
-  prompts.py       系统提示词与执行策略
-  skills/          工具集合
-main.py            启动入口与自动多轮执行
-requirements.txt   依赖列表
+  agent.py         Agent 核心逻辑与 LLM 配置
+  prompts.py       System Prompt 与自动化策略
+  skills/          [核心技能] 手动维护的基础能力
+    registry.py    技能注册与动态加载器
+  auto_skills/     [扩展技能] Agent 自动编写的技能库
+main.py            程序入口、热加载循环与状态管理
+requirements.txt   项目依赖
 ```
 
 ## 运行环境说明
