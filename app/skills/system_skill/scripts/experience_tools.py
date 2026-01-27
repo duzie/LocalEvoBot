@@ -1,103 +1,151 @@
 from langchain_core.tools import tool
 import os
 import json
-import re
+import shutil
 from datetime import datetime, timezone
 
-def _experience_store_path():
+# Lazy globals
+_VECTOR_STORE = None
+_EMBEDDINGS = None
+
+def _get_db_path():
+    # Path: app/data/experience_db
+    # This file: app/skills/system_skill/scripts/experience_tools.py
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
+    return os.path.join(base_dir, "app", "data", "experience_db")
+
+def _get_json_path():
     return os.path.join(os.path.dirname(__file__), "experience_store.json")
 
-def _load_experiences():
-    path = _experience_store_path()
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.loads(f.read() or "[]")
-            if isinstance(data, list):
-                return data
-            return []
-    except Exception:
-        return []
+def _init_components():
+    global _VECTOR_STORE, _EMBEDDINGS
+    if _VECTOR_STORE is not None:
+        return _VECTOR_STORE
 
-def _save_experiences(items):
-    path = _experience_store_path()
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(json.dumps(items, ensure_ascii=False, indent=2))
-    return path
+    try:
+        from langchain_chroma import Chroma
+        from langchain_huggingface import HuggingFaceEmbeddings
+    except ImportError:
+        return None # Should handle gracefully or let it fail at runtime if deps missing
+
+    if _EMBEDDINGS is None:
+        # Use lightweight local model
+        _EMBEDDINGS = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+
+    db_path = _get_db_path()
+    _VECTOR_STORE = Chroma(
+        persist_directory=db_path,
+        embedding_function=_EMBEDDINGS,
+        collection_name="agent_experiences"
+    )
+    
+    # Auto-migration check
+    try:
+        if len(_VECTOR_STORE.get()['ids']) == 0 and os.path.exists(_get_json_path()):
+            _migrate_from_json()
+    except Exception as e:
+        print(f"DB Init/Migration warning: {e}")
+
+    return _VECTOR_STORE
+
+def _migrate_from_json():
+    from langchain_core.documents import Document
+    json_path = _get_json_path()
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            content = f.read()
+            if not content.strip(): return
+            data = json.loads(content)
+        
+        if not data: return
+        
+        docs = []
+        for item in data:
+            sys = item.get("system", "")
+            txt = item.get("content", "")
+            tags = item.get("tags", [])
+            tags_str = ", ".join(tags) if isinstance(tags, list) else str(tags)
+            
+            # Rich context for embedding
+            page_content = f"System: {sys}\nContent: {txt}\nTags: {tags_str}"
+            
+            metadata = {
+                "system": sys,
+                "tags": tags_str,
+                "url": item.get("url") or "",
+                "created_at": item.get("created_at") or datetime.now(timezone.utc).isoformat(),
+                "original_content": txt
+            }
+            docs.append(Document(page_content=page_content, metadata=metadata))
+            
+        if docs:
+            _VECTOR_STORE.add_documents(docs)
+            print(f"Migrated {len(docs)} experiences to Vector DB.")
+            shutil.move(json_path, json_path + ".migrated")
+            
+    except Exception as e:
+        print(f"Migration failed: {e}")
 
 @tool
 def add_operation_experience(system_name: str, content: str, tags: list = None, url: str = None):
     """
-    记录某个系统的操作经验。
-
+    记录系统操作经验到向量知识库 (RAG)。
+    
     Args:
         system_name: 系统名称
-        content: 操作经验内容
+        content: 经验内容
         tags: 标签列表
-        url: 相关页面地址
+        url: 相关链接
     """
-    if not system_name or not content:
-        return "system_name 与 content 不能为空"
-    items = _load_experiences()
-    item = {
-        "system": system_name.strip(),
-        "content": content.strip(),
-        "tags": tags or [],
-        "url": url,
-        "created_at": datetime.now(timezone.utc).isoformat()
+    from langchain_core.documents import Document
+    store = _init_components()
+    if not store: return "Error: RAG dependencies missing."
+    
+    tags_str = ", ".join(tags) if tags else ""
+    page_content = f"System: {system_name}\nContent: {content}\nTags: {tags_str}"
+    
+    metadata = {
+        "system": system_name,
+        "tags": tags_str,
+        "url": url or "",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "original_content": content
     }
-    items.append(item)
-    path = _save_experiences(items)
-    return f"已记录经验，当前共 {len(items)} 条，保存于 {path}"
+    
+    store.add_documents([Document(page_content=page_content, metadata=metadata)])
+    return "已存入向量知识库。"
 
 @tool
-def get_operation_experience(system_name: str, keyword: str = None, max_items: int = 5):
+def get_operation_experience(query: str, system_filter: str = None, n_results: int = 5):
     """
-    查询某个系统的操作经验。
-
+    语义检索操作经验。
+    
     Args:
-        system_name: 系统名称
-        keyword: 关键词过滤
-        max_items: 最大返回数量
+        query: 问题描述或关键词 (如 "Selenium 报错")
+        system_filter: (可选) 限定系统名称
+        n_results: 返回数量
     """
-    if not system_name:
-        return "system_name 不能为空"
-    items = _load_experiences()
-    sys_key = system_name.lower().strip()
-    filtered = [x for x in items if sys_key in str(x.get("system", "")).lower()]
-    if keyword:
-        kw = keyword.lower().strip()
-        filtered = [x for x in filtered if kw in str(x.get("content", "")).lower() or kw in str(x.get("tags", "")).lower()]
-    if max_items and max_items > 0:
-        filtered = filtered[-max_items:]
-    return json.dumps(filtered, ensure_ascii=False, indent=2)
+    store = _init_components()
+    if not store: return "Error: RAG dependencies missing."
+    
+    filter_dict = {"system": system_filter} if system_filter else None
+    results = store.similarity_search(query, k=n_results, filter=filter_dict)
+    
+    if not results: return "知识库中未找到相关经验。"
+    
+    formatted = []
+    for doc in results:
+        formatted.append({
+            "content": doc.metadata.get("original_content"),
+            "system": doc.metadata.get("system"),
+            "tags": doc.metadata.get("tags")
+        })
+    return json.dumps(formatted, ensure_ascii=False, indent=2)
 
 @tool
-def compress_operation_experience(max_chars_per_system: int = 800, max_items_per_system: int = 5, dry_run: bool = False):
-    """
-    压缩操作经验，按系统合并并去重，降低上下文长度。
-
-    Args:
-        max_chars_per_system: 每个系统的最大字符数
-        max_items_per_system: 每个系统最多合并的条数
-        dry_run: 仅返回压缩结果，不写回文件
-    """
-    items = _load_experiences()
-    if not items:
-        return "无可压缩经验"
-    grouped = {}
-    for item in items:
-        system = str(item.get("system", "")).strip() or "未命名系统"
-        grouped.setdefault(system, []).append(item)
-
-    def _clean_line(value: str):
-        s = str(value or "").strip()
-        if not s:
-            return ""
-        s = re.sub(r"^\s*[\-\*\u2022]\s*", "", s)
-        s = re.sub(r"^\s*\d+[\.\)、\)]\s*", "", s)
-        s = re.sub(r"\s+", " ", s)
+def compress_operation_experience():
+    """[Deprecated] RAG模式下无需手动压缩。"""
+    return "Feature deprecated: Using Vector DB now."
         return s.strip()
 
     compressed = []

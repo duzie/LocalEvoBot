@@ -3,11 +3,14 @@
 一个基于 LangChain 的智能电脑操作 Agent，不仅支持 Windows UI Automation、OCR、Web 自动化，更具备**自我进化能力**——能根据任务需求自动编写新技能、热加载并立即使用，无需重启。
 
 **核心能力**
--10. **自我进化 (Self-Evolution)**：
+- **自我进化 (Self-Evolution)**：
   - 遇到未知任务时，自动生成工具脚手架 (`scaffold_skill`)
   - 自动编写 Python 实现代码 (`write_tool_code`)
   - 运行时热加载新技能 (`reload_skills`)，即刻生效并自动继续任务
   - 优质技能一键转正 (`promote_skill`)，沉淀为核心能力
+- **RAG 长时记忆 (Long-term Memory)**：
+  - 内置本地向量数据库 (ChromaDB)，支持语义检索
+  - 自动积累成功/失败经验，实现“不二过”的能力提升
 - **自动多步执行**：基于 `STATE` 状态机的多轮自动执行与任务拆解
 - **UI Automation**：基于 Windows UIA 精准定位与操作原生控件
 - **Web 自动化**：内置 Selenium 支持，接管浏览器进行复杂网页交互
@@ -66,6 +69,8 @@ python main.py
 - `take_screenshot`: 屏幕截图
 
 **5. 系统与文件**
+- `add_operation_experience`: 记录经验到向量库 (RAG)
+- `get_operation_experience`: 语义检索历史经验
 - `file_directory_skill`: 目录遍历、文件搜索与信息获取
 - `file_save_skill`: 文件内容写入与保存
 - `file_organize`: 文件整理

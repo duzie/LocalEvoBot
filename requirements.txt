@@ -11,3 +11,7 @@ pyautogui
 pyperclip
 pandas
 openpyxl
+langchain-chroma
+chromadb
+langchain-huggingface
+sentence-transformers
