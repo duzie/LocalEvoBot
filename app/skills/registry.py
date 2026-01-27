@@ -37,9 +37,14 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
     def _load_from_package(pkg_name: str) -> List[BaseTool]:
         tools = []
         if auto_package_name and pkg_name == auto_package_name:
+            # 强制清理父包缓存，确保 pkgutil 能扫描到新目录
+            if pkg_name in sys.modules:
+                del sys.modules[pkg_name]
             importlib.invalidate_caches()
         try:
             package = importlib.import_module(pkg_name)
+            if auto_package_name and pkg_name == auto_package_name:
+                 print(f"Registry: Loaded package {pkg_name} from {package.__file__ if hasattr(package, '__file__') else 'unknown'}")
         except ImportError as e:
             print(f"Warning: Could not import package {pkg_name}: {e}")
             return []
@@ -52,6 +57,7 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
             for _, module_name, is_pkg in pkgutil.iter_modules(package.__path__):
                 if not is_pkg:
                     continue
+                # print(f"Registry: Scanning potential skill {module_name}")
                 entry = None
                 for base_path in base_paths:
                     skill_md_path = os.path.join(base_path, module_name, "skill.md")
@@ -65,6 +71,7 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
                     packages_to_scan.append(f"{pkg_name}.{module_name}.scripts")
 
         for scripts_package in packages_to_scan:
+            print(f"Registry: Processing scripts package {scripts_package}")
             if auto_package_name and pkg_name == auto_package_name:
                 prefixes = [scripts_package]
                 if scripts_package.endswith(".scripts"):
@@ -77,23 +84,33 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
             try:
                 scripts_module = importlib.import_module(scripts_package)
             except Exception as e:
-                print(f"Warning: Failed to import scripts package {scripts_package}: {e}")
+                print(f"Registry Warning: Failed to import scripts package {scripts_package}: {e}")
                 continue
+            
             if hasattr(scripts_module, "__path__"):
+                print(f"Registry: Scanning modules in {scripts_package}")
                 for _, module_name, _ in pkgutil.iter_modules(scripts_module.__path__):
                     full_module_name = f"{scripts_package}.{module_name}"
+                    # print(f"Registry: Found script module {full_module_name}")
                     try:
                         module = importlib.import_module(full_module_name)
+                        found_tools = 0
                         for name, obj in inspect.getmembers(module):
                             if isinstance(obj, BaseTool):
                                 tools.append(obj)
+                                found_tools += 1
                             elif inspect.isclass(obj) and issubclass(obj, BaseTool) and obj is not BaseTool:
                                 try:
                                     tools.append(obj())
+                                    found_tools += 1
                                 except Exception:
                                     pass
+                        if found_tools > 0:
+                            print(f"Registry: Loaded {found_tools} tools from {full_module_name}")
+                        else:
+                            print(f"Registry: No tools found in {full_module_name}")
                     except Exception as e:
-                        print(f"Warning: Failed to load module {full_module_name}: {e}")
+                        print(f"Registry Warning: Failed to load module {full_module_name}: {e}")
             else:
                 try:
                     module = importlib.import_module(scripts_package)

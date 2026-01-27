@@ -278,9 +278,9 @@ def write_tool_code(file_path: str, code: str):
     except Exception as e:
         return f"写入失败: {e}"
 
-@tool
+@tool(return_direct=True)
 def reload_skills():
     """
-    触发技能热加载。
+    触发技能热加载。调用此工具后，Agent 会立即停止当前回合，等待系统重载完成后在下一轮继续。
     """
     return f"已触发技能重载\n{RELOAD_SIGNAL}"
