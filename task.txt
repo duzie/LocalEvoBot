@@ -1,0 +1,4 @@
+ D:\Program Files\Caimomo\CaimomoInternational\SCMWEB\SCM\Bill\PurchaseIn.aspx 
+ 你帮我分析一下这个文件，最好出一个这个文件的原始开发文档，里面每个调用到的api，都在app_code里面。你把最后的文档就生成在
+ D:\Program Files\incDoc
+ 如果当前技能无法解析，可自行编写工具

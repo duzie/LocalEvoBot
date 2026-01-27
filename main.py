@@ -81,6 +81,9 @@ def main():
                     try:
                         agent_executor = create_agent_executor()
                         print("Agent: 已重载技能\n")
+                        # 主动发起一轮对话，告知 Agent 技能已重载，让其决定下一步
+                        auto_input = "系统消息：技能热加载已完成。请确认新技能是否可用，并简要回复“新技能已加载完毕”或继续执行上一步未完成的任务。"
+                        continue # 跳过后续的状态检查，直接进入下一轮循环（使用新的 auto_input）
                     except Exception as e:
                         print(f"Agent: 技能重载失败: {e}\n")
 

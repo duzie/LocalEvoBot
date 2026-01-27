@@ -3,10 +3,11 @@
 一个基于 LangChain 的智能电脑操作 Agent，不仅支持 Windows UI Automation、OCR、Web 自动化，更具备**自我进化能力**——能根据任务需求自动编写新技能、热加载并立即使用，无需重启。
 
 **核心能力**
-- **自我进化 (Self-Evolution)**：
+-10. **自我进化 (Self-Evolution)**：
   - 遇到未知任务时，自动生成工具脚手架 (`scaffold_skill`)
   - 自动编写 Python 实现代码 (`write_tool_code`)
-  - 运行时热加载新技能 (`reload_skills`)，即刻生效
+  - 运行时热加载新技能 (`reload_skills`)，即刻生效并自动继续任务
+  - 优质技能一键转正 (`promote_skill`)，沉淀为核心能力
 - **自动多步执行**：基于 `STATE` 状态机的多轮自动执行与任务拆解
 - **UI Automation**：基于 Windows UIA 精准定位与操作原生控件
 - **Web 自动化**：内置 Selenium 支持，接管浏览器进行复杂网页交互
@@ -47,7 +48,8 @@ python main.py
 **1. 自进化 (SkillGen)**
 - `scaffold_skill`: 生成新技能目录结构
 - `write_tool_code`: 编写或修改工具代码
-- `reload_skills`: 热加载所有技能 (Auto-Reload)
+- `promote_skill`: 将验证通过的自动技能“转正”迁移至核心技能库
+- `reload_skills`: 热加载所有技能并自动衔接当前任务 (Auto-Resume)
 
 **2. UI Automation (Windows)**
 - `uia_find_control`: 定位窗口控件
@@ -64,6 +66,8 @@ python main.py
 - `take_screenshot`: 屏幕截图
 
 **5. 系统与文件**
+- `file_directory_skill`: 目录遍历、文件搜索与信息获取
+- `file_save_skill`: 文件内容写入与保存
 - `file_organize`: 文件整理
 - `check_process_status`: 进程检查
 - `mouse_click` / `type_text`: 键鼠模拟

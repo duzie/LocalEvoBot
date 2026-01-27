@@ -17,6 +17,7 @@ app.skills.skillgen_skill.scripts
 - scaffold_skill: 生成新技能脚手架
 - reload_skills: 触发技能热加载
 - write_tool_code: 写入工具实现代码
+- promote_skill: 迁移技能至核心库
 
 ## Platforms
 - Windows

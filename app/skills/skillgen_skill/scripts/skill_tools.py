@@ -284,3 +284,50 @@ def reload_skills():
     触发技能热加载。调用此工具后，Agent 会立即停止当前回合，等待系统重载完成后在下一轮继续。
     """
     return f"已触发技能重载\n{RELOAD_SIGNAL}"
+
+@tool
+def promote_skill(skill_name: str):
+    """
+    将自动生成的技能从 auto_skills 迁移到 skills 目录（转正）。
+    迁移后会自动更新 skill.md 中的 Entry 路径。
+    
+    Args:
+        skill_name: 技能名称
+    """
+    import shutil
+    
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+    auto_skills_dir = os.path.join(project_root, "app", "auto_skills")
+    skills_dir = os.path.join(project_root, "app", "skills")
+    
+    src_path = os.path.join(auto_skills_dir, skill_name)
+    dst_path = os.path.join(skills_dir, skill_name)
+    
+    if not os.path.exists(src_path):
+        return f"错误：在 auto_skills 中未找到技能 '{skill_name}'"
+        
+    if os.path.exists(dst_path):
+        return f"错误：skills 目录中已存在同名技能 '{skill_name}'"
+        
+    try:
+        # 1. 移动目录
+        shutil.move(src_path, dst_path)
+        
+        # 2. 更新 skill.md 中的 Entry
+        skill_md_path = os.path.join(dst_path, "skill.md")
+        if os.path.exists(skill_md_path):
+            with open(skill_md_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            
+            # 替换 Entry 路径
+            # 原: app.auto_skills.xxx.scripts
+            # 新: app.skills.xxx.scripts
+            new_content = content.replace(f"app.auto_skills.{skill_name}", f"app.skills.{skill_name}")
+            
+            with open(skill_md_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+                
+        return f"成功：技能 '{skill_name}' 已迁移至 app/skills 目录。请调用 reload_skills 使其生效。"
+        
+    except Exception as e:
+        return f"迁移失败: {e}"

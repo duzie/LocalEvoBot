@@ -7,3 +7,7 @@ pywinauto
 pillow
 pytesseract
 selenium>=4.15.0
+pyautogui
+pyperclip
+pandas
+openpyxl
