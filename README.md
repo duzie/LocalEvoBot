@@ -9,8 +9,9 @@
   - 运行时热加载新技能 (`reload_skills`)，即刻生效并自动继续任务
   - 优质技能一键转正 (`promote_skill`)，沉淀为核心能力
 - **RAG 长时记忆 (Long-term Memory)**：
-  - 内置本地向量数据库 (ChromaDB)，支持语义检索
-  - 自动积累成功/失败经验，实现“不二过”的能力提升
+  - **向量化存储**：内置 ChromaDB 本地向量数据库，无需联网即可高效存储经验
+  - **语义检索**：集成 HuggingFace 嵌入模型 (all-MiniLM-L6-v2)，支持自然语言模糊搜索
+  - **经验沉淀**：自动积累任务执行中的成功/失败经验，实现“越用越聪明”
 - **自动多步执行**：基于 `STATE` 状态机的多轮自动执行与任务拆解
 - **UI Automation**：基于 Windows UIA 精准定位与操作原生控件
 - **Web 自动化**：内置 Selenium 支持，接管浏览器进行复杂网页交互
@@ -51,8 +52,8 @@ python main.py
 **1. 自进化 (SkillGen)**
 - `scaffold_skill`: 生成新技能目录结构
 - `write_tool_code`: 编写或修改工具代码
-- `promote_skill`: 将验证通过的自动技能“转正”迁移至核心技能库
-- `reload_skills`: 热加载所有技能并自动衔接当前任务 (Auto-Resume)
+- `promote_skill`: **技能转正**。将 `auto_skills` 中验证通过的技能一键迁移至 `app/skills`，成为永久核心能力
+- `reload_skills`: **热加载与自动回复**。运行时重载所有技能，并自动读取上一轮任务状态，无缝继续执行 (Auto-Resume)
 
 **2. UI Automation (Windows)**
 - `uia_find_control`: 定位窗口控件
@@ -71,8 +72,8 @@ python main.py
 **5. 系统与文件**
 - `add_operation_experience`: 记录经验到向量库 (RAG)
 - `get_operation_experience`: 语义检索历史经验
-- `file_directory_skill`: 目录遍历、文件搜索与信息获取
-- `file_save_skill`: 文件内容写入与保存
+- `file_directory_skill`: **文件目录操作**。列出目录内容、搜索文件、获取详细信息 (支持递归与正则)
+- `file_save_skill`: **文件保存**。智能保存文本/代码到指定路径，自动处理目录创建与编码
 - `file_organize`: 文件整理
 - `check_process_status`: 进程检查
 - `mouse_click` / `type_text`: 键鼠模拟
