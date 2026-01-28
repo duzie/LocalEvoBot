@@ -4,6 +4,10 @@ import json
 import shutil
 from datetime import datetime, timezone
 
+# Ensure HF mirror is used before any HF imports
+if "HF_ENDPOINT" not in os.environ:
+    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+
 # Lazy globals
 _VECTOR_STORE = None
 _EMBEDDINGS = None
@@ -25,7 +29,8 @@ def _init_components():
     try:
         from langchain_chroma import Chroma
         from langchain_huggingface import HuggingFaceEmbeddings
-    except ImportError:
+    except ImportError as e:
+        print(f"RAG Dependency Import Error: {e}")
         return None # Should handle gracefully or let it fail at runtime if deps missing
 
     if _EMBEDDINGS is None:
@@ -146,54 +151,3 @@ def get_operation_experience(query: str, system_filter: str = None, n_results: i
 def compress_operation_experience():
     """[Deprecated] RAG模式下无需手动压缩。"""
     return "Feature deprecated: Using Vector DB now."
-        return s.strip()
-
-    compressed = []
-    for system, entries in grouped.items():
-        if max_items_per_system and max_items_per_system > 0:
-            entries = entries[-max_items_per_system:]
-        lines = []
-        tags = []
-        url = None
-        for item in entries:
-            content = str(item.get("content", "") or "")
-            for raw in content.splitlines():
-                cleaned = _clean_line(raw)
-                if cleaned:
-                    lines.append(cleaned)
-            item_tags = item.get("tags") or []
-            for t in item_tags:
-                cleaned = _clean_line(t)
-                if cleaned:
-                    tags.append(cleaned)
-            if item.get("url"):
-                url = item.get("url")
-        seen = set()
-        uniq_lines = []
-        for line in lines:
-            if line in seen:
-                continue
-            seen.add(line)
-            uniq_lines.append(line)
-        content = "；".join(uniq_lines)
-        if max_chars_per_system and max_chars_per_system > 0 and len(content) > max_chars_per_system:
-            content = content[:max_chars_per_system].rstrip("；，,。; ") + "…"
-        tag_seen = set()
-        uniq_tags = []
-        for t in tags:
-            if t in tag_seen:
-                continue
-            tag_seen.add(t)
-            uniq_tags.append(t)
-        compressed.append({
-            "system": system,
-            "content": content,
-            "tags": uniq_tags,
-            "url": url,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "source_count": len(entries)
-        })
-    if dry_run:
-        return json.dumps(compressed, ensure_ascii=False, indent=2)
-    path = _save_experiences(compressed)
-    return f"已压缩经验，当前共 {len(compressed)} 条，保存于 {path}"

@@ -47,7 +47,7 @@ def create_agent_executor():
         tools=tools, 
         verbose=True,
         handle_parsing_errors=True,
-        max_iterations=100,
+        max_iterations=1000,
         max_execution_time=600
     )
 

@@ -24,6 +24,10 @@ app.skills.system_skill.scripts
 - get_operation_experience: 查询操作经验
 - delete_image: 删除图片文件
 - compress_operation_experience: 压缩操作经验
+- create_task_plan: 创建任务计划
+- read_task_plan: 读取任务进度
+- mark_task_completed: 标记步骤完成
+- append_task_step: 追加任务步骤
 
 ## Platforms
 - Windows

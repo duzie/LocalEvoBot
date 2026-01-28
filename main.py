@@ -1,6 +1,11 @@
-from app.agent import create_agent_executor
+import os
 import platform
 import ctypes
+
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+os.environ.setdefault("HUGGINGFACE_HUB_ENDPOINT", "https://hf-mirror.com")
+
+from app.agent import create_agent_executor
 
 RELOAD_SIGNAL = "__RELOAD_SKILLS__"
 
