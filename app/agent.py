@@ -13,25 +13,51 @@ def create_agent_executor():
     """
     创建并配置 Agent Executor
     """
-    # 1. 配置 LLM
-    api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")
-    base_url = os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com"
-    model_name = os.getenv("DEEPSEEK_MODEL_NAME") or "deepseek-chat"
+    provider = (os.getenv("LLM_PROVIDER") or "deepseek").strip().lower()
 
-    if not api_key:
-        raise ValueError("请确保 .env 文件中配置了 DEEPSEEK_API_KEY")
-
-    llm = ChatOpenAI(
-        model=model_name,
-        openai_api_key=api_key,
-        openai_api_base=base_url,
-        temperature=0.7,
-    )
+    if provider == "deepseek":
+        api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")
+        base_url = os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com"
+        model_name = os.getenv("DEEPSEEK_MODEL_NAME") or "deepseek-chat"
+        if not api_key:
+            raise ValueError("请确保 .env 文件中配置了 DEEPSEEK_API_KEY")
+        llm = ChatOpenAI(
+            model=model_name,
+            openai_api_key=api_key,
+            openai_api_base=base_url,
+            temperature=0.7,
+        )
+    elif provider == "qwen":
+        api_key = os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+        base_url = os.getenv("QWEN_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        model_name = os.getenv("QWEN_MODEL_NAME") or "qwen-plus"
+        if not api_key:
+            raise ValueError("请确保 .env 文件中配置了 QWEN_API_KEY (或 DASHSCOPE_API_KEY)")
+        llm = ChatOpenAI(
+            model=model_name,
+            openai_api_key=api_key,
+            openai_api_base=base_url,
+            temperature=0.7,
+        )
+    elif provider == "openai":
+        api_key = os.getenv("OPENAI_API_KEY")
+        base_url = os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
+        model_name = os.getenv("OPENAI_MODEL_NAME") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
+        if not api_key:
+            raise ValueError("请确保 .env 文件中配置了 OPENAI_API_KEY")
+        llm = ChatOpenAI(
+            model=model_name,
+            openai_api_key=api_key,
+            openai_api_base=base_url,
+            temperature=0.7,
+        )
+    else:
+        raise ValueError(f"不支持的 LLM_PROVIDER: {provider}")
 
     # 2. 动态加载工具列表 (Skills)
     # 自动扫描 app.skills 包下的多 Skill 子包
     tools = load_skills(package_name="app.skills")
-    print(f"已加载 {len(tools)} 个 Skills: {[t.name for t in tools]}")
+    print(f"已加载 {len(tools)} 个 Skills")
 
     # 3. 获取提示词模板 (动态注入 Tools 信息)
     prompt = get_agent_prompt(tools)
@@ -45,7 +71,7 @@ def create_agent_executor():
     executor = AgentExecutor(
         agent=agent, 
         tools=tools, 
-        verbose=True,
+        verbose=False,
         handle_parsing_errors=True,
         max_iterations=1000,
         max_execution_time=600

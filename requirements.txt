@@ -14,3 +14,7 @@ langchain-chroma
 chromadb
 langchain-huggingface
 sentence-transformers
+fastapi
+uvicorn
+websockets
+
