@@ -2,7 +2,7 @@ from langchain_core.tools import tool
 import os
 import datetime
 from typing import Dict, Any, Optional
-from ..code_analysis_skill.scripts.analyze_code_file import analyze_code_file
+from ...code_analysis_skill.scripts.analyze_code_file import analyze_code_file
 
 @tool
 def generate_file_documentation(file_path: Optional[str] = None,
