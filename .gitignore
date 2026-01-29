@@ -8,6 +8,7 @@ venv/
 .vscode/
 .idea/
 *.json
+*.txt
 # ChromaDB 数据与索引
 app/data/experience_db/**/*.sqlite3
 app/data/experience_db/**/*.bin

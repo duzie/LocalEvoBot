@@ -121,7 +121,7 @@ def add_operation_experience(system_name: str, content: str, tags: list = None, 
     return "已存入向量知识库。"
 
 @tool
-def get_operation_experience(query: str, system_filter: str = None, n_results: int = 5):
+def get_operation_experience(query: str, system_filter: str = None, n_results: int = 3):
     """
     语义检索操作经验。
     
