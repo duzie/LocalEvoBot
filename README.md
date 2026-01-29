@@ -14,9 +14,10 @@
   - **经验沉淀**：自动积累任务执行中的成功/失败经验，实现“越用越聪明”
 - **自动多步执行**：基于 `STATE` 状态机的多轮自动执行与任务拆解
 - **UI Automation**：基于 Windows UIA 精准定位与操作原生控件
-- **Web 自动化**：内置 Selenium 支持，接管浏览器进行复杂网页交互
+- **Web 自动化**：内置 Playwright 支持，接管浏览器进行复杂网页交互
 - **视觉与 OCR**：屏幕/窗口文字识别，辅助定位与决策
 - **系统控制**：文件操作、进程管理、键盘鼠标模拟
+- **Web 控制台**：移动端友好的网页界面（聊天、日志、配置、局域网地址与二维码）
 
 ## 快速开始
 
@@ -27,9 +28,34 @@ pip install -r requirements.txt
 
 **准备 .env**
 ```
+# 选择模型提供方（可选，默认 deepseek）
+LLM_PROVIDER=deepseek
+
+# Web 控制台（可选）
+WEB_HOST=0.0.0.0
+WEB_PORT=5010
+
+# DeepSeek（示例）
 DEEPSEEK_API_KEY=...
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL_NAME=deepseek-chat
+
+# Qwen（示例）
+QWEN_API_KEY=...
+QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+QWEN_MODEL_NAME=qwen-plus
+
+# OpenAI（示例）
+OPENAI_API_KEY=...
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL_NAME=gpt-4o-mini
+
+# NVIDIA NIM / API Catalog（示例）
+NIM_API_KEY=...
+NIM_BASE_URL=https://integrate.api.nvidia.com/v1
+# NIM_MINIMAX_M2_MODEL_NAME=minimaxai/minimax-m2
+# NIM_GLM47_MODEL_NAME=z-ai/glm4.7
+
 DOUBAO_VISION_MODEL_NAME=...
 ```
 
@@ -38,6 +64,14 @@ DOUBAO_VISION_MODEL_NAME=...
 python main.py
 ```
 
+运行后会同时启动 Web 控制台（默认端口 `5010`），浏览器打开：
+- `http://127.0.0.1:5010/`
+
+在 Web 控制台中：
+- 可切换模型（下拉框）
+- 可编辑 `.env` 配置
+- 可显示局域网地址并生成二维码，方便手机访问
+
 ## 使用示例
 
 ```
@@ -45,6 +79,21 @@ python main.py
 帮我把桌面上所有 png 移动到 D:/screenshots
 读取 Excel 里 A 列总和并保存结果
 ```
+
+## 模型与提供方
+
+通过 `.env` 的 `LLM_PROVIDER` 选择模型提供方（也可在 Web 控制台里切换）：
+- `deepseek`
+- `qwen`
+- `openai`
+- `nim_minimax_m2`（NVIDIA NIM / API Catalog：`minimaxai/minimax-m2`）
+- `nim_glm47`（NVIDIA NIM / API Catalog：`z-ai/glm4.7`）
+
+对应的关键环境变量：
+- DeepSeek：`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL_NAME`
+- Qwen：`QWEN_API_KEY`（或 `DASHSCOPE_API_KEY`）、`QWEN_BASE_URL`、`QWEN_MODEL_NAME`
+- OpenAI：`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL_NAME`
+- NVIDIA NIM：`NIM_API_KEY`、`NIM_BASE_URL`、`NIM_MINIMAX_M2_MODEL_NAME`、`NIM_GLM47_MODEL_NAME`
 
 ## Skills 概览
 
@@ -93,6 +142,9 @@ app/
   skills/          [核心技能] 手动维护的基础能力
     registry.py    技能注册与动态加载器
   auto_skills/     [扩展技能] Agent 自动编写的技能库
+web/
+  backend/         Web 控制台后端（FastAPI）
+  frontend/        Web 控制台前端（纯 HTML/CSS/JS）
 main.py            程序入口、热加载循环与状态管理
 requirements.txt   项目依赖
 ```

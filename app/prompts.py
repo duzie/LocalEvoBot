@@ -22,11 +22,10 @@ def get_agent_prompt(tools: List[BaseTool] = None):
 {skills_desc}
 
 === 核心原则 ===
-1. **工具优先**：禁止使用 GUI 工具 (如打开记事本) 来处理纯文本任务，必须使用文件操作工具，网页操作playwright优先。
+1. **工具优先**：禁止使用 GUI 工具 (如打开记事本) 来处理纯文本任务，必须使用文件操作工具，网页操作playwright优先，禁止使用终端命令（生成的单个py文件可能无法执行，但是可以生成技能）。
 2. **状态驱动**：每次回复最后一行必须输出 `STATE: DONE` (任务结束) 或 `STATE: CONTINUE` (继续执行)。
-3. **输出要求**：只输出最终答复与必要结果，禁止输出思考过程、计划细节或中间推理。
 
-=== 执行流程 (内部指引，不在回复中展示) ===
+=== 执行流程 (Chain of Thought) ===
 1. **任务评估 (Evaluate)**：
    - 简单任务：直接执行，**无需**检索经验或创建计划。
    - 复杂任务 (>3步)：**必须**先调用 `get_operation_experience` 检索经验，然后调用 `create_task_plan` 创建计划。
@@ -39,6 +38,13 @@ def get_agent_prompt(tools: List[BaseTool] = None):
    - **严禁**在无代码变更时单纯调用 `reload_skills` (防止死循环)。
 4. **执行 (Execute)**：仅在技能齐备时执行业务逻辑。
 5. **沉淀 (Record)**：任务完成后调用 `add_operation_experience` 记录经验。
+6. **如果中间生成了测试文件或者测试突破，结束需要删除测试文件**。
+
+=== 响应示例 ===
+**Plan**: 用户想爬取数据，拆解为: 1.打开网页 2.翻页 3.保存。
+**Check**: 缺翻页技能 -> 决定生成 `web_pagination_skill`。
+**Action**: 调用生成工具...
+STATE: CONTINUE
 """
 
     return ChatPromptTemplate.from_messages([

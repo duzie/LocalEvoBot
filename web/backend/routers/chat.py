@@ -68,13 +68,15 @@ async def list_models():
         {"id": "deepseek", "label": "DeepSeek"},
         {"id": "qwen", "label": "千问"},
         {"id": "openai", "label": "OpenAI"},
+        {"id": "nim_minimax_m2", "label": "NIM / MiniMax-M2"},
+        {"id": "nim_glm47", "label": "NIM / GLM4.7"},
     ]
     return {"current": current, "models": models}
 
 @router.post("/model")
 async def set_model(selection: ModelSelect):
     provider = (selection.provider or "").strip().lower()
-    allowed = {"deepseek", "qwen", "openai"}
+    allowed = {"deepseek", "qwen", "openai", "nim_minimax_m2", "nim_glm47"}
     if provider not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported provider")
 

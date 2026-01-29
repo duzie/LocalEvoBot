@@ -50,16 +50,6 @@ class DualOutput:
     def __init__(self, original_stdout):
         self.original_stdout = original_stdout
         self.blocked_tokens = [
-            "thought:",
-            "action:",
-            "observation:",
-            "finished chain",
-            "entering new",
-            "plan:",
-            "check:",
-            "analysis:",
-            "chain of thought",
-            "final answer:"
         ]
         
     def _sanitize_for_web(self, message):

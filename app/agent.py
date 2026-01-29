@@ -51,6 +51,21 @@ def create_agent_executor():
             openai_api_base=base_url,
             temperature=0.7,
         )
+    elif provider in {"nim_minimax_m2", "nim_glm47"}:
+        api_key = os.getenv("NIM_API_KEY") or os.getenv("NVIDIA_NIM_API_KEY") or os.getenv("NVIDIA_API_KEY")
+        base_url = os.getenv("NIM_BASE_URL") or "https://integrate.api.nvidia.com/v1"
+        if provider == "nim_minimax_m2":
+            model_name = os.getenv("NIM_MINIMAX_M2_MODEL_NAME") or "minimaxai/minimax-m2"
+        else:
+            model_name = os.getenv("NIM_GLM47_MODEL_NAME") or "z-ai/glm4.7"
+        if not api_key:
+            raise ValueError("请确保 .env 文件中配置了 NIM_API_KEY（NVIDIA API Catalog Key；自建 NIM 可填 no-key-required）")
+        llm = ChatOpenAI(
+            model=model_name,
+            openai_api_key=api_key,
+            openai_api_base=base_url,
+            temperature=0.7,
+        )
     else:
         raise ValueError(f"不支持的 LLM_PROVIDER: {provider}")
 
@@ -71,7 +86,7 @@ def create_agent_executor():
     executor = AgentExecutor(
         agent=agent, 
         tools=tools, 
-        verbose=False,
+        verbose=True,
         handle_parsing_errors=True,
         max_iterations=1000,
         max_execution_time=600
