@@ -163,3 +163,4 @@ requirements.txt   项目依赖
 ## 自动执行机制
 
 程序会根据 Agent 输出中的 `STATE: CONTINUE` 或 `STATE: DONE` 自动进行多轮调用，直到任务完成或达到上限。
+![输入图片说明](QQ%E6%88%AA%E5%9B%BE20260129145008.png)
