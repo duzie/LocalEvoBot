@@ -1,4 +1,4 @@
-# Self-Evolving Local Agent / 自进化本地自动化 Agent
+# 我是小冬瓜 / 自进化本地自动化 Agent
 
 一个基于 LangChain 的智能电脑操作 Agent，不仅支持 Windows UI Automation、OCR、Web 自动化，更具备**自我进化能力**——能根据任务需求自动编写新技能、热加载并立即使用，无需重启。
 
