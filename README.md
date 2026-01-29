@@ -60,10 +60,10 @@ python main.py
 - `uia_click_control`: 点击控件
 - `uia_list_controls`: 遍历控件树
 
-**3. Web 自动化 (Selenium)**
-- `selenium_open_url`: 打开网页
-- `selenium_click` / `selenium_type`: 网页交互
-- `selenium_run_steps`: 批量执行网页操作
+**3. Web 自动化 (Playwright)**
+- `playwright_open`: 打开网页
+- `playwright_click` / `playwright_type`: 网页交互
+- `playwright_run_steps`: 批量执行网页操作
 
 **4. 视觉与 OCR**
 - `ocr_screen` / `ocr_window`: 文字识别

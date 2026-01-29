@@ -126,7 +126,7 @@ def get_operation_experience(query: str, system_filter: str = None, n_results: i
     语义检索操作经验。
     
     Args:
-        query: 问题描述或关键词 (如 "Selenium 报错")
+        query: 问题描述或关键词 (如 "Playwright 报错")
         system_filter: (可选) 限定系统名称
         n_results: 返回数量
     """

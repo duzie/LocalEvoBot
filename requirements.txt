@@ -5,7 +5,7 @@ python-dotenv
 pywinauto
 pillow
 pytesseract
-selenium>=4.15.0
+playwright
 pyautogui
 pyperclip
 pandas
