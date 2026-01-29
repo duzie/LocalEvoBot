@@ -7,6 +7,9 @@ venv/
 .env
 .vscode/
 .idea/
+# ChromaDB 数据与索引
+app/data/experience_db/**/*.sqlite3
+app/data/experience_db/**/*.bin
 
 # Runtime
 temp_ocr_screenshot.png
