@@ -10,7 +10,7 @@ from web.backend.shared import shared
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 os.environ.setdefault("HUGGINGFACE_HUB_ENDPOINT", "https://hf-mirror.com")
 
-from app.agent import create_agent_executor
+from app.agent import create_agent_executor, create_llm
 
 RELOAD_SIGNAL = "__RELOAD_SKILLS__"
 SET_MODEL_PREFIX = "__SET_MODEL__:"
@@ -34,6 +34,54 @@ def strip_reload_signal(output: str):
     kept = [line for line in lines if RELOAD_SIGNAL not in line]
     changed = len(kept) != len(lines)
     return "\n".join(kept).strip(), changed
+
+def _format_history_for_summary(messages):
+    lines = []
+    for role, content in messages:
+        if role == "assistant":
+            content, _ = strip_reload_signal(content)
+        lines.append(f"{role}: {content}")
+    return "\n\n".join(lines).strip()
+
+def _is_summary_message(msg):
+    if not msg:
+        return False
+    role, content = msg
+    if role != "system":
+        return False
+    return isinstance(content, str) and content.startswith("对话摘要（用于延续上下文）：")
+
+def maybe_summarize_history(chat_history, llm, max_turns=20):
+    non_summary = chat_history[:]
+    rolling_summary = None
+    if non_summary and _is_summary_message(non_summary[0]):
+        rolling_summary = non_summary[0][1].split("：", 1)[1].strip()
+        non_summary = non_summary[1:]
+
+    chunk_size = max_turns * 2
+    if len(non_summary) <= chunk_size:
+        return chat_history
+
+    chunk = non_summary[:chunk_size]
+    rest = non_summary[chunk_size:]
+
+    from langchain_core.messages import SystemMessage, HumanMessage
+
+    system_text = "你是对话摘要器。把对话压缩为可用于继续对话的摘要，保留关键信息、约束、已完成事项、未完成事项、关键决定、关键参数/路径/变量名,并给出最后一轮对话执行到哪一步了。只输出摘要正文。"
+    transcript = _format_history_for_summary(chunk)
+    user_text = ""
+    if rolling_summary:
+        user_text += f"已有摘要：\n{rolling_summary}\n\n"
+    user_text += f"需要压缩的新增对话（按顺序）：\n{transcript}\n\n请输出更新后的摘要："
+
+    resp = llm.invoke([SystemMessage(content=system_text), HumanMessage(content=user_text)])
+    new_summary = getattr(resp, "content", "") or str(resp)
+    new_summary = new_summary.strip()
+
+    summary_msg = ("system", f"对话摘要（用于延续上下文）：\n{new_summary}")
+    if rest:
+        return [summary_msg] + rest
+    return [summary_msg]
 
 def enable_dpi_awareness():
     if platform.system() != "Windows":
@@ -110,6 +158,7 @@ def main():
     print("正在初始化 Agent...")
     try:
         agent_executor = create_agent_executor()
+        summary_llm = create_llm()
     except Exception as e:
         print(f"初始化失败: {e}")
         return
@@ -159,6 +208,7 @@ def main():
 
             auto_input = user_input
             for step in range(max_auto_steps):
+                chat_history = maybe_summarize_history(chat_history, summary_llm, max_turns=20)
                 response = agent_executor.invoke({
                     "input": auto_input,
                     "chat_history": chat_history
@@ -175,9 +225,10 @@ def main():
                 if reload_requested:
                     try:
                         agent_executor = create_agent_executor()
+                        summary_llm = create_llm()
                         print("Agent: 已重载技能\n")
                         # 主动发起一轮对话，告知 Agent 技能已重载，让其决定下一步
-                        auto_input = "系统消息：技能热加载已完成。请确认新技能是否可用，并简要回复“新技能已加载完毕”或继续执行上一步未完成的任务。"
+                        auto_input = "系统消息：技能热加载已完成。请确认新技能是否可用继续执行上一步未完成的任务。"
                         continue # 跳过后续的状态检查，直接进入下一轮循环（使用新的 auto_input）
                     except Exception as e:
                         print(f"Agent: 技能重载失败: {e}\n")

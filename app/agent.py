@@ -9,10 +9,7 @@ from app.prompts import get_agent_prompt
 # 加载环境变量
 load_dotenv()
 
-def create_agent_executor():
-    """
-    创建并配置 Agent Executor
-    """
+def create_llm():
     provider = (os.getenv("LLM_PROVIDER") or "deepseek").strip().lower()
 
     if provider == "deepseek":
@@ -21,37 +18,40 @@ def create_agent_executor():
         model_name = os.getenv("DEEPSEEK_MODEL_NAME") or "deepseek-chat"
         if not api_key:
             raise ValueError("请确保 .env 文件中配置了 DEEPSEEK_API_KEY")
-        llm = ChatOpenAI(
+        return ChatOpenAI(
             model=model_name,
             openai_api_key=api_key,
             openai_api_base=base_url,
             temperature=0.7,
         )
-    elif provider == "qwen":
+
+    if provider == "qwen":
         api_key = os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
         base_url = os.getenv("QWEN_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
         model_name = os.getenv("QWEN_MODEL_NAME") or "qwen-plus"
         if not api_key:
             raise ValueError("请确保 .env 文件中配置了 QWEN_API_KEY (或 DASHSCOPE_API_KEY)")
-        llm = ChatOpenAI(
+        return ChatOpenAI(
             model=model_name,
             openai_api_key=api_key,
             openai_api_base=base_url,
             temperature=0.7,
         )
-    elif provider == "openai":
+
+    if provider == "openai":
         api_key = os.getenv("OPENAI_API_KEY")
         base_url = os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
         model_name = os.getenv("OPENAI_MODEL_NAME") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
         if not api_key:
             raise ValueError("请确保 .env 文件中配置了 OPENAI_API_KEY")
-        llm = ChatOpenAI(
+        return ChatOpenAI(
             model=model_name,
             openai_api_key=api_key,
             openai_api_base=base_url,
             temperature=0.7,
         )
-    elif provider in {"nim_minimax_m2", "nim_glm47"}:
+
+    if provider in {"nim_minimax_m2", "nim_glm47"}:
         api_key = os.getenv("NIM_API_KEY") or os.getenv("NVIDIA_NIM_API_KEY") or os.getenv("NVIDIA_API_KEY")
         base_url = os.getenv("NIM_BASE_URL") or "https://integrate.api.nvidia.com/v1"
         if provider == "nim_minimax_m2":
@@ -60,14 +60,20 @@ def create_agent_executor():
             model_name = os.getenv("NIM_GLM47_MODEL_NAME") or "z-ai/glm4.7"
         if not api_key:
             raise ValueError("请确保 .env 文件中配置了 NIM_API_KEY（NVIDIA API Catalog Key；自建 NIM 可填 no-key-required）")
-        llm = ChatOpenAI(
+        return ChatOpenAI(
             model=model_name,
             openai_api_key=api_key,
             openai_api_base=base_url,
             temperature=0.7,
         )
-    else:
-        raise ValueError(f"不支持的 LLM_PROVIDER: {provider}")
+
+    raise ValueError(f"不支持的 LLM_PROVIDER: {provider}")
+
+def create_agent_executor():
+    """
+    创建并配置 Agent Executor
+    """
+    llm = create_llm()
 
     # 2. 动态加载工具列表 (Skills)
     # 自动扫描 app.skills 包下的多 Skill 子包
