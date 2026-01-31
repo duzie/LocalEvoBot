@@ -328,6 +328,62 @@
             flex-wrap:wrap;
         }
         .cfgFooter .input{flex: 1 1 240px; min-width: 220px;}
+        .tmplList{
+            padding: 12px;
+            display:flex;
+            flex-direction:column;
+            gap:12px;
+        }
+        .tmplCard{
+            border: 1px solid rgba(255,255,255,.35);
+            background: rgba(255,255,255,.7);
+            border-radius: 12px;
+            padding: 12px;
+            display:flex;
+            flex-direction:column;
+            gap:10px;
+        }
+        .tmplHeader{
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:8px;
+            flex-wrap:wrap;
+        }
+        .tmplName{
+            font-weight: 800;
+            font-size: 14px;
+        }
+        .tmplMeta{
+            display:flex;
+            gap:6px;
+            flex-wrap:wrap;
+        }
+        .tmplBadge{
+            font-size: 12px;
+            color: var(--muted);
+            background: rgba(255,255,255,.55);
+            border: 1px solid rgba(255,255,255,.35);
+            padding: 4px 8px;
+            border-radius: 999px;
+        }
+        .tmplTextarea{
+            width: 100%;
+            min-height: 160px;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,.35);
+            background: rgba(255,255,255,.75);
+            padding: 10px;
+            font-family: var(--mono);
+            font-size: 12px;
+            outline: none;
+        }
+        .tmplActions{
+            display:flex;
+            gap:8px;
+            flex-wrap:wrap;
+            justify-content:flex-end;
+        }
         @media (max-width: 640px){
             .brand{font-size: 16px}
             .header{flex-wrap:wrap; gap:10px}
@@ -393,6 +449,7 @@
             <button class="tab active" data-tab="chat" type="button">对话交互</button>
             <button class="tab" data-tab="logs" type="button">运行日志</button>
             <button class="tab" data-tab="config" type="button">配置管理</button>
+            <button class="tab" data-tab="templates" type="button">模板管理</button>
         </nav>
 
         <main class="main">
@@ -431,6 +488,14 @@
                     <input id="newValue" class="input" type="text" placeholder="值" autocomplete="off" />
                     <button id="addConfigBtn" class="btn primary" type="button">添加</button>
                 </div>
+            </section>
+
+            <section id="panel-templates" class="card panel">
+                <div class="panelHeader">
+                    <div class="panelTitle">模板管理</div>
+                    <button id="refreshTemplatesBtn" class="btn ghost" type="button">刷新</button>
+                </div>
+                <div id="templateBody" class="tmplList"></div>
             </section>
         </main>
     </div>
@@ -505,6 +570,7 @@
                 Array.prototype.forEach.call(document.querySelectorAll('.panel'), function(panel){
                     panel.classList.toggle('active', panel.id === ('panel-' + next))
                 })
+                if (next === 'templates') loadTemplates()
             }
 
             function wsUrl(path){
@@ -699,6 +765,144 @@
                 }).catch(function(e){
                     appendChatMessage('>>> 系统: 添加配置出错 ' + e)
                 })
+            }
+
+            function loadTemplates(){
+                var body = el('templateBody')
+                body.textContent = ''
+                var loading = document.createElement('div')
+                loading.className = 'pill'
+                loading.textContent = '加载中'
+                body.appendChild(loading)
+                fetch('/api/config/templates').then(function(r){return r.json()}).then(function(data){
+                    var list = (data && data.templates) ? data.templates : []
+                    body.textContent = ''
+                    if (!list.length){
+                        var empty = document.createElement('div')
+                        empty.className = 'pill'
+                        empty.textContent = '暂无模板'
+                        body.appendChild(empty)
+                        return
+                    }
+                    list.forEach(function(item){
+                        var card = document.createElement('div')
+                        card.className = 'tmplCard'
+
+                        var header = document.createElement('div')
+                        header.className = 'tmplHeader'
+
+                        var name = document.createElement('div')
+                        name.className = 'tmplName'
+                        name.textContent = item.name || '未命名模板'
+
+                        var meta = document.createElement('div')
+                        meta.className = 'tmplMeta'
+                        if (item.project_id) meta.appendChild(buildTemplateBadge('项目: ' + item.project_id))
+                        if (item.user_id) meta.appendChild(buildTemplateBadge('用户: ' + item.user_id))
+                        if (item.created_at) meta.appendChild(buildTemplateBadge(item.created_at))
+                        if (item.tags && item.tags.length) meta.appendChild(buildTemplateBadge('标签: ' + item.tags.join(', ')))
+
+                        header.appendChild(name)
+                        header.appendChild(meta)
+
+                        var textarea = document.createElement('textarea')
+                        textarea.className = 'tmplTextarea'
+                        textarea.spellcheck = false
+                        var rawText = item.raw || ''
+                        if (!rawText && item.template){
+                            try{ rawText = JSON.stringify(item.template, null, 2) }catch(e){}
+                        }
+                        if (rawText){
+                            try{ rawText = JSON.stringify(JSON.parse(rawText), null, 2) }catch(e){}
+                        }
+                        textarea.value = rawText
+
+                        var actions = document.createElement('div')
+                        actions.className = 'tmplActions'
+                        var saveBtn = document.createElement('button')
+                        saveBtn.className = 'btn primary'
+                        saveBtn.type = 'button'
+                        saveBtn.textContent = '保存'
+                        saveBtn.disabled = true
+
+                        var delBtn = document.createElement('button')
+                        delBtn.className = 'btn ghost'
+                        delBtn.type = 'button'
+                        delBtn.textContent = '删除'
+
+                        var original = textarea.value
+                        textarea.addEventListener('input', function(){
+                            saveBtn.disabled = textarea.value === original
+                        })
+
+                        saveBtn.addEventListener('click', function(){
+                            var text = (textarea.value || '').trim()
+                            if (!text){
+                                alert('模板内容不能为空')
+                                return
+                            }
+                            var parsed
+                            try{
+                                parsed = JSON.parse(text)
+                            }catch(e){
+                                alert('模板格式错误，需要有效 JSON')
+                                return
+                            }
+                            saveBtn.disabled = true
+                            fetch('/api/config/templates/' + encodeURIComponent(item.id), {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ template: parsed })
+                            }).then(function(res){
+                                if (res.ok){
+                                    loadTemplates()
+                                }else{
+                                    saveBtn.disabled = false
+                                    alert('保存失败')
+                                }
+                            }).catch(function(){
+                                saveBtn.disabled = false
+                                alert('保存出错')
+                            })
+                        })
+
+                        delBtn.addEventListener('click', function(){
+                            if (!confirm('确认删除该模板吗？')) return
+                            fetch('/api/config/templates/' + encodeURIComponent(item.id), {
+                                method: 'DELETE'
+                            }).then(function(res){
+                                if (res.ok){
+                                    loadTemplates()
+                                }else{
+                                    alert('删除失败')
+                                }
+                            }).catch(function(){
+                                alert('删除出错')
+                            })
+                        })
+
+                        actions.appendChild(saveBtn)
+                        actions.appendChild(delBtn)
+
+                        card.appendChild(header)
+                        card.appendChild(textarea)
+                        card.appendChild(actions)
+                        body.appendChild(card)
+                    })
+                }).catch(function(e){
+                    body.textContent = ''
+                    var err = document.createElement('div')
+                    err.className = 'pill'
+                    err.textContent = '加载模板失败: ' + e
+                    body.appendChild(err)
+                })
+            }
+
+            function buildTemplateBadge(text){
+                var span = document.createElement('span')
+                span.className = 'tmplBadge'
+                span.textContent = text
+                return span
             }
 
             function setAccessUrl(url){
@@ -1372,6 +1576,7 @@
             el('clearLogsBtn').addEventListener('click', function(){ el('logsPre').textContent = '' })
             el('reloadConfigBtn').addEventListener('click', loadConfig)
             el('addConfigBtn').addEventListener('click', addConfig)
+            el('refreshTemplatesBtn').addEventListener('click', loadTemplates)
             el('copyUrlBtn').addEventListener('click', copyAccessUrl)
             el('saveUrlBtn').addEventListener('click', saveAccessUrl)
             el('refreshLanBtn').addEventListener('click', loadLanHosts)

@@ -44,6 +44,7 @@ def get_agent_prompt(tools: List[BaseTool] = None):
    - 复杂任务 (>3步)：**必须**先调用 `get_operation_experience` 检索经验，然后调用 `create_task_plan` 创建计划。
 2. **拆解与规划 (Plan - 仅复杂任务)**：
    - **循环执行机制**：每次调用 `read_task_plan` 获取一个子任务 -> 执行该子任务 -> **执行完后必须立即调用 `mark_task_completed`** (否则会无限重复执行该子任务)。
+   - 若用户输入“继续/continue”，必须先调用 `read_task_plan`，从未完成的步骤继续，并在完成后标记。
    - **结束条件**：当所有子任务都完成后，输出 `STATE: DONE`。
 3. **技能检查 (Check)**：
    - 对比任务需求与现有 `Skills`。

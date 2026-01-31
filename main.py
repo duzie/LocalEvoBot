@@ -49,6 +49,28 @@ def _extract_project_id():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     return os.path.basename(base_dir)
 
+def _get_task_plan_path():
+    return os.path.join(os.path.dirname(__file__), "app", "skills", "system_skill", "scripts", "current_task_plan.json")
+
+def _load_task_plan():
+    path = _get_task_plan_path()
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+def _get_next_pending_step(plan):
+    if not plan:
+        return None
+    steps = plan.get("steps") or []
+    for step in steps:
+        if step.get("status") == "pending":
+            return step
+    return None
+
 def _normalize_tags(tags):
     if not tags:
         return []
@@ -63,12 +85,140 @@ def _normalize_tags(tags):
 
 def _build_cognition_summary(chat_history, llm, project_id, user_id):
     transcript = _format_history_for_summary(chat_history[-40:])
-    system_text = "你是个人认知总结器。基于对话内容抽取稳定偏好与可复用经验，输出严格 JSON。字段: summary_type, project, user_id, items{behavior_preferences, code_style_preferences, task_experiences}, task_templates, sources, proposed_tags。若对话包含明确完成的可复用流程，必须在 task_experiences 提供 1-3 条，描述流程与关键决策，不包含一次性数据。若可抽象为模板，task_templates 输出 1-2 个对象，字段: name, trigger_keywords, steps, inputs, outputs, constraints, tags。没有内容的数组输出空数组。只输出 JSON，不要额外文本。"
+    system_text = "你是个人认知总结器。基于对话内容抽取稳定偏好与可复用经验，输出严格 JSON。字段: summary_type, project, user_id, items{behavior_preferences, code_style_preferences, task_experiences}, task_templates, sources, proposed_tags。若对话包含明确完成的可复用流程，必须在 task_experiences 提供 1-3 条，描述流程与关键决策，不包含一次性数据。若 task_experiences 非空且流程可抽象，task_templates 必须输出至少 1 个对象，字段: name, trigger_keywords, steps, inputs, outputs, constraints, tags。没有内容的数组输出空数组。只输出 JSON，不要额外文本。"
     user_text = f"项目: {project_id}\n用户: {user_id}\n对话:\n{transcript}\n\n请输出 JSON："
     from langchain_core.messages import SystemMessage, HumanMessage
     resp = llm.invoke([SystemMessage(content=system_text), HumanMessage(content=user_text)])
     content = getattr(resp, "content", "") or str(resp)
     return content.strip()
+
+def _ensure_task_templates(summary_data, chat_history, llm, project_id, user_id):
+    if not isinstance(summary_data, dict):
+        return summary_data
+    items = summary_data.get("items") or {}
+    tasks = items.get("task_experiences") or []
+    templates = summary_data.get("task_templates") or []
+    if templates:
+        return summary_data
+    if not tasks:
+        plan = _load_task_plan()
+        tasks = _build_task_experiences_from_plan(plan)
+        if tasks:
+            if "items" not in summary_data or not isinstance(summary_data.get("items"), dict):
+                summary_data["items"] = {}
+            summary_data["items"]["task_experiences"] = tasks
+        else:
+            return summary_data
+    transcript = _format_history_for_summary(chat_history[-40:])
+    system_text = "你是任务模板抽象器。根据对话与任务经验抽象 1-2 个可复用模板，输出严格 JSON 数组。每个对象字段: name, trigger_keywords, steps, inputs, outputs, constraints, tags。若无法抽象则输出空数组。只输出 JSON，不要额外文本。"
+    user_text = f"项目: {project_id}\n用户: {user_id}\n任务经验:\n{json.dumps(tasks, ensure_ascii=False)}\n\n对话:\n{transcript}\n\n请输出 JSON 数组："
+    from langchain_core.messages import SystemMessage, HumanMessage
+    resp = llm.invoke([SystemMessage(content=system_text), HumanMessage(content=user_text)])
+    content = getattr(resp, "content", "") or str(resp)
+    data = _parse_json_list_from_text(content)
+    if isinstance(data, dict):
+        data = data.get("task_templates")
+    if not isinstance(data, list):
+        return summary_data
+    cleaned = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        steps = item.get("steps") or []
+        if not name or not isinstance(steps, list) or not steps:
+            continue
+        cleaned.append(item)
+    if cleaned:
+        summary_data["task_templates"] = cleaned
+    return summary_data
+
+def _parse_json_list_from_text(text):
+    if not text:
+        return None
+    cleaned = str(text).strip()
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        pass
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if lines:
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+        try:
+            return json.loads(cleaned)
+        except Exception:
+            pass
+    start = cleaned.find("[")
+    end = cleaned.rfind("]")
+    if start != -1 and end != -1 and end > start:
+        candidate = cleaned[start:end + 1]
+        try:
+            return json.loads(candidate)
+        except Exception:
+            return None
+    return None
+
+def _parse_json_object_from_text(text):
+    if not text:
+        return None
+    cleaned = str(text).strip()
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if lines:
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+        try:
+            data = json.loads(cleaned)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = cleaned[start:end + 1]
+        try:
+            data = json.loads(candidate)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            return None
+    return None
+
+def _build_task_experiences_from_plan(plan):
+    if not isinstance(plan, dict):
+        return []
+    steps = plan.get("steps") or []
+    if not steps:
+        return []
+    parts = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        desc = str(step.get("desc") or "").strip()
+        if not desc:
+            continue
+        result = str(step.get("result") or "").strip()
+        if result:
+            parts.append(f"{desc} -> {result}")
+        else:
+            parts.append(desc)
+    if not parts:
+        return []
+    summary = "任务计划步骤: " + "; ".join(parts)
+    return [summary]
 
 def _save_cognition_summary(summary, project_id, user_id):
     items = summary.get("items") or {}
@@ -128,17 +278,15 @@ def _save_task_templates(task_templates, project_id, user_id, base_tags, saved):
         saved.append(result)
 
 def _should_prompt_save(summary_text):
-    try:
-        data = json.loads(summary_text)
-    except Exception:
+    data = _parse_json_object_from_text(summary_text)
+    if not data:
         return False, None
     items = data.get("items") or {}
     behavior = items.get("behavior_preferences") or []
     code_style = items.get("code_style_preferences") or []
-    tasks = items.get("task_experiences") or []
     templates = data.get("task_templates") or []
     proposed_tags = data.get("proposed_tags") or []
-    has_items = any([behavior, code_style, tasks, templates])
+    has_items = any([behavior, code_style, templates])
     has_tags = len(_normalize_tags(proposed_tags)) > 0
     return has_items or has_tags, data
 
@@ -399,7 +547,16 @@ def main():
 
             project_id = _extract_project_id()
             user_id = os.getenv("LOCAL_USER_ID", "local_user")
-            auto_input = _maybe_apply_template(user_input, project_id, user_id)
+            resume_keywords = {"继续", "继续执行", "继续做", "continue"}
+            if user_input.strip().lower() in resume_keywords:
+                plan = _load_task_plan()
+                step = _get_next_pending_step(plan)
+                if step:
+                    auto_input = f"继续执行任务计划第{step.get('id')}步：{step.get('desc')}。完成后调用 mark_task_completed 标记，并继续 read_task_plan 获取下一步。"
+                else:
+                    auto_input = "继续执行，基于当前屏幕状态完成任务。"
+            else:
+                auto_input = _maybe_apply_template(user_input, project_id, user_id)
             for step in range(max_auto_steps):
                 chat_history = maybe_summarize_history(chat_history, summary_llm, max_turns=20)
                 response = agent_executor.invoke({
@@ -432,6 +589,10 @@ def main():
                     try:
                         summary_text = _build_cognition_summary(chat_history, summary_llm, project_id, user_id)
                         should_prompt, summary_json = _should_prompt_save(summary_text)
+                        if summary_json:
+                            summary_json = _ensure_task_templates(summary_json, chat_history, summary_llm, project_id, user_id)
+                            summary_text = json.dumps(summary_json, ensure_ascii=False, indent=2)
+                            should_prompt, summary_json = _should_prompt_save(summary_text)
                         if should_prompt:
                             print("Agent: 已生成个人认知总结（待确认）\n")
                             print(summary_text + "\n")
@@ -461,12 +622,18 @@ def main():
                                 print("Agent: 已放弃保存。\n")
                     except Exception as e:
                         print(f"Agent: 生成总结失败: {e}\n")
+                    try:
+                        plan_path = _get_task_plan_path()
+                        if os.path.exists(plan_path):
+                            os.remove(plan_path)
+                    except Exception as e:
+                        print(f"Agent: 清理任务计划失败: {e}\n")
                     break
                 if state != "CONTINUE":
                     break
                 auto_input = "继续执行，基于当前屏幕状态完成任务。"
                 if step == max_auto_steps - 1:
-                    print("Agent: 已达到自动执行步数上限。\n")
+                    print("Agent: 已达到自动执行步数上限。输入“继续”将从任务计划的当前步骤继续。\n")
                     break
 
         except KeyboardInterrupt:
