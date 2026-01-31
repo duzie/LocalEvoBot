@@ -51,6 +51,28 @@ def create_llm():
             temperature=0.7,
         )
 
+    if provider == "local":
+        model_path = os.getenv("LOCAL_MODEL_PATH")
+        if not model_path:
+            raise ValueError("请确保 .env 文件中配置了 LOCAL_MODEL_PATH")
+        try:
+            from langchain_community.chat_models import ChatLlamaCpp
+        except Exception as e:
+            raise ValueError("请安装 llama-cpp-python 以启用本地模型") from e
+        n_ctx = int(os.getenv("LOCAL_CTX_SIZE") or 4096)
+        n_gpu_layers = int(os.getenv("LOCAL_GPU_LAYERS") or 0)
+        n_threads = int(os.getenv("LOCAL_THREADS") or 8)
+        n_batch = int(os.getenv("LOCAL_BATCH_SIZE") or 512)
+        temperature = float(os.getenv("LOCAL_TEMPERATURE") or 0.7)
+        return ChatLlamaCpp(
+            model_path=model_path,
+            n_ctx=n_ctx,
+            n_gpu_layers=n_gpu_layers,
+            n_threads=n_threads,
+            n_batch=n_batch,
+            temperature=temperature,
+        )
+
     if provider in {"nim_minimax_m2", "nim_glm47"}:
         api_key = os.getenv("NIM_API_KEY") or os.getenv("NVIDIA_NIM_API_KEY") or os.getenv("NVIDIA_API_KEY")
         base_url = os.getenv("NIM_BASE_URL") or "https://integrate.api.nvidia.com/v1"
