@@ -92,7 +92,7 @@ def _migrate_from_json():
         print(f"Migration failed: {e}")
 
 @tool
-def add_operation_experience(system_name: str, content: str, tags: list = None, url: str = None):
+def add_operation_experience(system_name: str, content: str, tags: list = None, url: str = None, scope: str = None, project_id: str = None, user_id: str = None, memory_type: str = None):
     """
     记录系统操作经验到向量知识库 (RAG)。
     
@@ -106,13 +106,19 @@ def add_operation_experience(system_name: str, content: str, tags: list = None, 
     store = _init_components()
     if not store: return "Error: RAG dependencies missing."
     
-    tags_str = ", ".join(tags) if tags else ""
-    page_content = f"System: {system_name}\nContent: {content}\nTags: {tags_str}"
+    tags_list = tags if isinstance(tags, list) else []
+    tags_str = ", ".join(tags_list) if tags_list else ""
+    page_content = f"System: {system_name}\nContent: {content}\nTags: {tags_str}\nScope: {scope or ''}\nProject: {project_id or ''}\nUser: {user_id or ''}\nType: {memory_type or ''}"
     
     metadata = {
         "system": system_name,
         "tags": tags_str,
+        "tags_list": ", ".join(tags_list),
         "url": url or "",
+        "scope": scope or "",
+        "project_id": project_id or "",
+        "user_id": user_id or "",
+        "memory_type": memory_type or "",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "original_content": content
     }
@@ -121,7 +127,7 @@ def add_operation_experience(system_name: str, content: str, tags: list = None, 
     return "已存入向量知识库。"
 
 @tool
-def get_operation_experience(query: str, system_filter: str = None, n_results: int = 3):
+def get_operation_experience(query: str, system_filter: str = None, n_results: int = 3, scope: str = None, project_id: str = None, user_id: str = None, memory_type: str = None, tags: list = None):
     """
     语义检索操作经验。
     
@@ -133,17 +139,46 @@ def get_operation_experience(query: str, system_filter: str = None, n_results: i
     store = _init_components()
     if not store: return "Error: RAG dependencies missing."
     
-    filter_dict = {"system": system_filter} if system_filter else None
-    results = store.similarity_search(query, k=n_results, filter=filter_dict)
+    filter_dict = {}
+    if system_filter:
+        filter_dict["system"] = system_filter
+    if scope:
+        filter_dict["scope"] = scope
+    if project_id:
+        filter_dict["project_id"] = project_id
+    if user_id:
+        filter_dict["user_id"] = user_id
+    if memory_type:
+        filter_dict["memory_type"] = memory_type
+    where = None
+    if filter_dict:
+        clauses = []
+        for k, v in filter_dict.items():
+            if v is None or v == "":
+                continue
+            clauses.append({k: {"$eq": v}})
+        if clauses:
+            where = {"$and": clauses} if len(clauses) > 1 else clauses[0]
+    results = store.similarity_search(query, k=n_results, filter=where)
     
     if not results: return "知识库中未找到相关经验。"
     
+    tag_filters = tags if isinstance(tags, list) else []
     formatted = []
     for doc in results:
+        if tag_filters:
+            doc_tags = doc.metadata.get("tags_list") or []
+            doc_tags_str = doc.metadata.get("tags") or ""
+            if not all(tag in doc_tags or tag in doc_tags_str for tag in tag_filters):
+                continue
         formatted.append({
             "content": doc.metadata.get("original_content"),
             "system": doc.metadata.get("system"),
-            "tags": doc.metadata.get("tags")
+            "tags": doc.metadata.get("tags"),
+            "scope": doc.metadata.get("scope"),
+            "project_id": doc.metadata.get("project_id"),
+            "user_id": doc.metadata.get("user_id"),
+            "memory_type": doc.metadata.get("memory_type")
         })
     return json.dumps(formatted, ensure_ascii=False, indent=2)
 

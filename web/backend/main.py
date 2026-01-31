@@ -41,7 +41,7 @@ def start():
     print(f"Starting Web Console at http://{host}:{port}")
     
     # Use Config and Server to control signal handlers
-    config = uvicorn.Config(app, host=host, port=port)
+    config = uvicorn.Config(app, host=host, port=port, access_log=False, log_level="warning")
     server = uvicorn.Server(config)
     
     # Disable signal handlers to allow running in a thread
