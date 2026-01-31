@@ -9,6 +9,7 @@ venv/
 .idea/
 *.json
 *.txt
+QQ截图20260129145008.png
 # ChromaDB 数据与索引
 app/data/experience_db/**/*.sqlite3
 app/data/experience_db/**/*.bin
