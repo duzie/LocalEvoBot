@@ -279,6 +279,11 @@
             height: 42px;
         }
         .chatInput .btn{height: 42px;border-radius: var(--radius2)}
+        .btn.recording{
+            background: linear-gradient(135deg, rgba(239,68,68,.9) 0%, rgba(248,113,113,.95) 100%);
+            border-color: rgba(239,68,68,.6);
+            color: #fff;
+        }
         .logs{
             flex: 1 1 auto;
             overflow:auto;
@@ -465,6 +470,7 @@
                 <div id="chatList" class="chatList"></div>
                 <div class="chatInput">
                     <input id="chatInput" class="input" type="text" placeholder="输入指令..." autocomplete="off" />
+                    <button id="voiceBtn" class="btn ghost" type="button">按住说话</button>
                     <button id="sendBtn" class="btn primary" type="button">发送</button>
                 </div>
             </section>
@@ -625,20 +631,171 @@
                 }
             }
 
+            function sendMessageText(msg){
+                var text = (msg || '').trim()
+                if (!text || !state.chatConnected) return
+                appendChatMessage('User: ' + text)
+                fetch('/api/chat/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text })
+                }).then(function(res){
+                    if (!res.ok) appendChatMessage('>>> 系统: 发送失败')
+                }).catch(function(e){
+                    appendChatMessage('>>> 系统: 发送出错 ' + e)
+                })
+            }
+
             function sendMessage(){
                 var input = el('chatInput')
                 var msg = (input.value || '').trim()
                 if (!msg || !state.chatConnected) return
                 input.value = ''
-                appendChatMessage('User: ' + msg)
-                fetch('/api/chat/send', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: msg })
-                }).then(function(res){
-                    if (!res.ok) appendChatMessage('>>> 系统: 发送失败')
+                sendMessageText(msg)
+            }
+
+            function mergeBuffers(buffers){
+                var length = 0
+                buffers.forEach(function(b){ length += b.length })
+                var result = new Float32Array(length)
+                var offset = 0
+                buffers.forEach(function(b){
+                    result.set(b, offset)
+                    offset += b.length
+                })
+                return result
+            }
+
+            function downsampleBuffer(buffer, inputRate, outputRate){
+                if (outputRate === inputRate) return buffer
+                var ratio = inputRate / outputRate
+                var newLength = Math.round(buffer.length / ratio)
+                var result = new Float32Array(newLength)
+                var offsetResult = 0
+                var offsetBuffer = 0
+                while (offsetResult < result.length){
+                    var nextOffsetBuffer = Math.round((offsetResult + 1) * ratio)
+                    var accum = 0
+                    var count = 0
+                    for (var i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++){
+                        accum += buffer[i]
+                        count++
+                    }
+                    result[offsetResult] = count ? (accum / count) : 0
+                    offsetResult++
+                    offsetBuffer = nextOffsetBuffer
+                }
+                return result
+            }
+
+            function encodeWav(buffer, sampleRate){
+                var length = buffer.length
+                var bufferLength = 44 + length * 2
+                var view = new DataView(new ArrayBuffer(bufferLength))
+                function writeString(offset, str){
+                    for (var i = 0; i < str.length; i++){
+                        view.setUint8(offset + i, str.charCodeAt(i))
+                    }
+                }
+                writeString(0, 'RIFF')
+                view.setUint32(4, 36 + length * 2, true)
+                writeString(8, 'WAVE')
+                writeString(12, 'fmt ')
+                view.setUint32(16, 16, true)
+                view.setUint16(20, 1, true)
+                view.setUint16(22, 1, true)
+                view.setUint32(24, sampleRate, true)
+                view.setUint32(28, sampleRate * 2, true)
+                view.setUint16(32, 2, true)
+                view.setUint16(34, 16, true)
+                writeString(36, 'data')
+                view.setUint32(40, length * 2, true)
+                var offset = 44
+                for (var i2 = 0; i2 < length; i2++, offset += 2){
+                    var s = Math.max(-1, Math.min(1, buffer[i2]))
+                    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true)
+                }
+                return new Blob([view], { type: 'audio/wav' })
+            }
+
+            var recordState = {
+                active: false,
+                context: null,
+                stream: null,
+                source: null,
+                processor: null,
+                buffers: [],
+                sampleRate: 16000
+            }
+
+            function setVoiceButtonRecording(recording){
+                var btn = el('voiceBtn')
+                if (!btn) return
+                btn.classList.toggle('recording', recording)
+                btn.textContent = recording ? '松开发送' : '按住说话'
+            }
+
+            function startVoiceRecord(){
+                if (recordState.active || !state.chatConnected) return
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+                    appendChatMessage('>>> 系统: 浏览器不支持录音')
+                    return
+                }
+                navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream){
+                    recordState.active = true
+                    recordState.buffers = []
+                    recordState.stream = stream
+                    var ctx = new (window.AudioContext || window.webkitAudioContext)()
+                    recordState.context = ctx
+                    recordState.sampleRate = ctx.sampleRate
+                    var source = ctx.createMediaStreamSource(stream)
+                    recordState.source = source
+                    var processor = ctx.createScriptProcessor(4096, 1, 1)
+                    recordState.processor = processor
+                    processor.onaudioprocess = function(ev){
+                        if (!recordState.active) return
+                        var data = ev.inputBuffer.getChannelData(0)
+                        recordState.buffers.push(new Float32Array(data))
+                    }
+                    source.connect(processor)
+                    processor.connect(ctx.destination)
+                    setVoiceButtonRecording(true)
                 }).catch(function(e){
-                    appendChatMessage('>>> 系统: 发送出错 ' + e)
+                    appendChatMessage('>>> 系统: 无法获取麦克风权限 ' + e)
+                })
+            }
+
+            function stopVoiceRecord(){
+                if (!recordState.active) return
+                recordState.active = false
+                setVoiceButtonRecording(false)
+                try{ if (recordState.processor) recordState.processor.disconnect() }catch(e){}
+                try{ if (recordState.source) recordState.source.disconnect() }catch(e){}
+                try{ if (recordState.context) recordState.context.close() }catch(e){}
+                if (recordState.stream){
+                    recordState.stream.getTracks().forEach(function(t){ t.stop() })
+                }
+                var merged = mergeBuffers(recordState.buffers)
+                if (!merged.length){
+                    appendChatMessage('>>> 系统: 未捕获到语音')
+                    return
+                }
+                var downsampled = downsampleBuffer(merged, recordState.sampleRate, 16000)
+                var wavBlob = encodeWav(downsampled, 16000)
+                var fd = new FormData()
+                fd.append('audio', wavBlob, 'speech.wav')
+                fetch('/api/chat/asr', { method: 'POST', body: fd }).then(function(res){
+                    if (!res.ok) throw new Error('状态码 ' + res.status)
+                    return res.json()
+                }).then(function(data){
+                    var text = (data && data.text) ? String(data.text).trim() : ''
+                    if (!text){
+                        appendChatMessage('>>> 系统: 未识别到内容')
+                        return
+                    }
+                    sendMessageText(text)
+                }).catch(function(e){
+                    appendChatMessage('>>> 系统: 语音识别失败 ' + e)
                 })
             }
 
@@ -1572,6 +1729,25 @@
             el('chatInput').addEventListener('keydown', function(e){
                 if (e.key === 'Enter') sendMessage()
             })
+            var voiceBtn = el('voiceBtn')
+            if (voiceBtn){
+                voiceBtn.addEventListener('pointerdown', function(e){
+                    e.preventDefault()
+                    startVoiceRecord()
+                })
+                voiceBtn.addEventListener('pointerup', function(e){
+                    e.preventDefault()
+                    stopVoiceRecord()
+                })
+                voiceBtn.addEventListener('pointerleave', function(e){
+                    e.preventDefault()
+                    stopVoiceRecord()
+                })
+                voiceBtn.addEventListener('pointercancel', function(e){
+                    e.preventDefault()
+                    stopVoiceRecord()
+                })
+            }
             el('modelSelect').addEventListener('change', changeModel)
             el('clearLogsBtn').addEventListener('click', function(){ el('logsPre').textContent = '' })
             el('reloadConfigBtn').addEventListener('click', loadConfig)

@@ -1,7 +1,16 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from ..shared import shared
 import asyncio
+import base64
+import hashlib
+import hmac
+import io
+import json
+import wave
+import datetime
+from urllib.parse import quote
+import websockets
 import os
 from dotenv import dotenv_values, set_key
 from typing import List
@@ -54,6 +63,129 @@ async def send_message(chat: ChatMessage):
     shared.put_input(chat.message)
     # Echo back to chat history (optional, or handle in frontend)
     return {"status": "sent"}
+
+def _get_xf_config():
+    env_path = _get_env_path()
+    env = dotenv_values(env_path) if os.path.exists(env_path) else {}
+    app_id = os.getenv("XF_APP_ID") or os.getenv("XF_APPID") or env.get("XF_APP_ID") or env.get("XF_APPID")
+    api_key = os.getenv("XF_API_KEY") or os.getenv("XFAPI_KEY") or env.get("XF_API_KEY") or env.get("XFAPI_KEY")
+    api_secret = os.getenv("XF_API_SECRET") or os.getenv("XFAPI_SECRET") or os.getenv("XFapi_secret") or env.get("XF_API_SECRET") or env.get("XFAPI_SECRET") or env.get("XFapi_secret")
+    return (app_id or "").strip(), (api_key or "").strip(), (api_secret or "").strip()
+
+def _wav_to_pcm16_mono_16k(wav_bytes: bytes):
+    with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
+        channels = wf.getnchannels()
+        sampwidth = wf.getsampwidth()
+        framerate = wf.getframerate()
+        frames = wf.readframes(wf.getnframes())
+    if channels != 1 or sampwidth != 2 or framerate != 16000:
+        raise ValueError("Unsupported wav format")
+    return frames
+
+def _build_xf_url(api_key: str, api_secret: str):
+    host = "iat-api.xfyun.cn"
+    path = "/v2/iat"
+    date = datetime.datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
+    signature_origin = f"host: {host}\ndate: {date}\nGET {path} HTTP/1.1"
+    signature_sha = hmac.new(api_secret.encode("utf-8"), signature_origin.encode("utf-8"), hashlib.sha256).digest()
+    signature = base64.b64encode(signature_sha).decode("utf-8")
+    authorization_origin = f'api_key="{api_key}", algorithm="hmac-sha256", headers="host date request-line", signature="{signature}"'
+    authorization = base64.b64encode(authorization_origin.encode("utf-8")).decode("utf-8")
+    return f"wss://{host}{path}?authorization={authorization}&date={quote(date)}&host={host}"
+
+def _extract_text_from_result(data):
+    text = ""
+    if not isinstance(data, dict):
+        return text
+    if data.get("data") and isinstance(data["data"], dict):
+        result = data["data"].get("result") or {}
+        ws = result.get("ws") or []
+        for item in ws:
+            for cw in item.get("cw") or []:
+                text += cw.get("w") or ""
+    if not text and data.get("payload") and isinstance(data["payload"], dict):
+        payload = data["payload"].get("result") or {}
+        encoded = payload.get("text")
+        if encoded:
+            try:
+                decoded = base64.b64decode(encoded).decode("utf-8")
+                inner = json.loads(decoded)
+                ws = inner.get("ws") or []
+                for item in ws:
+                    for cw in item.get("cw") or []:
+                        text += cw.get("w") or ""
+            except Exception:
+                pass
+    return text
+
+async def _xf_asr(pcm: bytes, app_id: str, api_key: str, api_secret: str):
+    url = _build_xf_url(api_key, api_secret)
+    result_text = ""
+    async with websockets.connect(url) as ws:
+        frame_size = 1280
+        chunks = [pcm[i:i + frame_size] for i in range(0, len(pcm), frame_size)]
+        for idx, chunk in enumerate(chunks):
+            status = 0 if idx == 0 else 1
+            if idx == len(chunks) - 1:
+                status = 2
+            payload = {
+                "common": {"app_id": app_id},
+                "business": {"language": "zh_cn", "domain": "iat", "accent": "mandarin"},
+                "data": {
+                    "status": status,
+                    "format": "audio/L16;rate=16000",
+                    "encoding": "raw",
+                    "audio": base64.b64encode(chunk).decode("utf-8")
+                }
+            }
+            await ws.send(json.dumps(payload))
+            if status == 0:
+                break
+        if len(chunks) > 1:
+            for idx in range(1, len(chunks)):
+                status = 1
+                if idx == len(chunks) - 1:
+                    status = 2
+                payload = {
+                    "data": {
+                        "status": status,
+                        "format": "audio/L16;rate=16000",
+                        "encoding": "raw",
+                        "audio": base64.b64encode(chunks[idx]).decode("utf-8")
+                    }
+                }
+                await ws.send(json.dumps(payload))
+        while True:
+            msg = await ws.recv()
+            data = json.loads(msg)
+            if int(data.get("code", 0)) != 0:
+                raise HTTPException(status_code=500, detail=data.get("message") or "ASR failed")
+            result_text += _extract_text_from_result(data)
+            status = None
+            if data.get("data") and isinstance(data["data"], dict):
+                status = data["data"].get("status")
+            if status is None and data.get("payload") and isinstance(data["payload"], dict):
+                status = data["payload"].get("status")
+            if status == 2:
+                break
+    return result_text.strip()
+
+@router.post("/asr")
+async def speech_to_text(audio: UploadFile = File(...)):
+    app_id, api_key, api_secret = _get_xf_config()
+    if not app_id or not api_key or not api_secret:
+        raise HTTPException(status_code=400, detail="Missing XF credentials")
+    if not audio:
+        raise HTTPException(status_code=400, detail="Audio required")
+    data = await audio.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty audio")
+    try:
+        pcm = _wav_to_pcm16_mono_16k(data)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid wav audio")
+    text = await _xf_asr(pcm, app_id, api_key, api_secret)
+    return {"text": text}
 
 def _get_env_path():
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
