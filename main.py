@@ -285,10 +285,9 @@ def _should_prompt_save(summary_text):
     behavior = items.get("behavior_preferences") or []
     code_style = items.get("code_style_preferences") or []
     templates = data.get("task_templates") or []
-    proposed_tags = data.get("proposed_tags") or []
-    has_items = any([behavior, code_style, templates])
-    has_tags = len(_normalize_tags(proposed_tags)) > 0
-    return has_items or has_tags, data
+    task_experiences = items.get("task_experiences") or []
+    has_items = any([behavior, code_style, task_experiences, templates])
+    return has_items, data
 
 def _parse_template_results(raw_text):
     try:
@@ -358,6 +357,8 @@ def _format_experiences_for_prompt(experiences):
     return "\n".join(parts)
 
 def _maybe_apply_template(user_input, project_id, user_id):
+    if _should_skip_template(user_input):
+        return user_input
     raw = get_operation_experience.invoke({
         "query": user_input,
         "n_results": 3,
@@ -381,6 +382,30 @@ def _maybe_apply_template(user_input, project_id, user_id):
         exp_block = f"\n\n{exp_text}" if exp_text else ""
         return f"请按以下模板执行任务，并结合用户需求与相关经验补充细节：\n{preview}{exp_block}\n\n用户需求：{user_input}"
     return user_input
+
+def _is_lightweight_user_input(text):
+    if not text:
+        return True
+    if len(text) < 6:
+        return True
+    lower = text.lower()
+    short_greetings = {"hi", "hello", "hey", "yo", "ok", "thanks", "thx"}
+    if lower in short_greetings:
+        return True
+    zh_greetings = {"你好", "您好", "在吗", "谢谢", "多谢", "早上好", "晚上好"}
+    if text in zh_greetings:
+        return True
+    lightweight_phrases = {"你是谁", "你叫什么", "自我介绍", "介绍一下你", "你是谁啊", "你是谁呀"}
+    if any(p in text for p in lightweight_phrases) and len(text) <= 20:
+        return True
+    emotion_keywords = {"难过", "开心", "郁闷", "生气", "烦", "焦虑", "压力", "emo", "安慰", "倾诉", "发泄"}
+    if any(k in text for k in emotion_keywords) and len(text) <= 20:
+        return True
+    return False
+
+def _should_skip_template(user_input):
+    text = str(user_input or "").strip()
+    return _is_lightweight_user_input(text)
 
 def _is_summary_message(msg):
     if not msg:
