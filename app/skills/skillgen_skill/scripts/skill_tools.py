@@ -4,6 +4,7 @@ import sys
 import json
 import re
 import platform
+import subprocess
 try:
     import importlib.metadata as metadata
 except Exception:
@@ -69,6 +70,46 @@ def inspect_environment(max_packages: int = 120):
         "skills": sorted(skills),
         "auto_skills": sorted(auto_skills)
     }, ensure_ascii=False, indent=2)
+
+@tool
+def install_packages(packages: list, upgrade: bool = False):
+    """
+    安装 Python 依赖包。
+
+    Args:
+        packages: 依赖包列表，例如 ["python-pptx"]
+        upgrade: 是否升级到最新版本
+    """
+    if not packages:
+        return "packages 不能为空"
+    if isinstance(packages, str):
+        packages = [packages]
+    if not isinstance(packages, list):
+        return "packages 必须为列表或字符串"
+    clean = []
+    for item in packages:
+        if not item:
+            continue
+        name = str(item).strip()
+        if not name:
+            continue
+        if any(ch in name for ch in [";", "&", "|", "`"]):
+            return f"非法包名: {name}"
+        clean.append(name)
+    if not clean:
+        return "packages 不能为空"
+    cmd = [sys.executable, "-m", "pip", "install"]
+    if upgrade:
+        cmd.append("--upgrade")
+    cmd.extend(clean)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        output = (result.stdout or "") + (result.stderr or "")
+        if result.returncode != 0:
+            return f"安装失败:\n{output.strip()}"
+        return f"安装成功:\n{output.strip()}"
+    except Exception as e:
+        return f"安装失败: {e}"
 
 @tool
 def scaffold_skill(skill_name: str, tools: list, description: str = None, overwrite: bool = False):

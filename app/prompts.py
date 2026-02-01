@@ -50,6 +50,7 @@ def get_agent_prompt(tools: List[BaseTool] = None):
    - 对比任务需求与现有 `Skills`。
    - **若缺失技能**：立即暂停业务逻辑，按序执行 `scaffold_skill` -> `write_tool_code` -> `reload_skills`。
    - **严禁**在无代码变更时单纯调用 `reload_skills` (防止死循环)。
+   - **若依赖缺失**：工具报错提示缺少模块时，先调用 `install_packages` 安装依赖，再重试工具。
 4. **执行 (Execute)**：仅在技能齐备时执行业务逻辑。
 5. **沉淀 (Record)**：任务完成后调用 `add_operation_experience` 记录经验。
 6. **如果中间生成了测试文件或者测试突破，结束需要删除测试文件**。

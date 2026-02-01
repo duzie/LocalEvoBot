@@ -14,6 +14,7 @@ app.skills.skillgen_skill.scripts
 
 ## Tools
 - inspect_environment: 获取环境与技能信息
+- install_packages: 安装 Python 依赖包
 - scaffold_skill: 生成新技能脚手架
 - reload_skills: 触发技能热加载
 - write_tool_code: 写入工具实现代码
