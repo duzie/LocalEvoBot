@@ -19,15 +19,41 @@ SET_MODEL_PREFIX = "__SET_MODEL__:"
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[ -/]*[@-~]")
 
 def parse_state(output: str):
-    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    def normalize_state(value: str):
+        if value is None:
+            return None
+        v = str(value).strip().upper()
+        v = re.sub(r"[^\w]+$", "", v)
+        if v.startswith("DONE"):
+            return "DONE"
+        if v.startswith("CONTINUE"):
+            return "CONTINUE"
+        return v or None
+
+    lines = [line.rstrip("\n") for line in output.splitlines() if line.strip()]
     if not lines:
         return None, output
-    last_line = lines[-1]
-    if last_line.upper().startswith("STATE:"):
-        state = last_line.split(":", 1)[1].strip().upper()
-        cleaned = "\n".join(lines[:-1]).strip()
-        return state, cleaned
-    return None, output
+
+    state = None
+    state_idx = None
+    for i in range(len(lines) - 1, -1, -1):
+        m = re.match(r"^\s*STATE\s*[:：]\s*(.+?)\s*$", lines[i], flags=re.IGNORECASE)
+        if not m:
+            continue
+        state = normalize_state(m.group(1))
+        state_idx = i
+        break
+
+    if state is None or state_idx is None:
+        return None, output
+
+    kept = []
+    for idx, line in enumerate(lines):
+        if idx == state_idx:
+            continue
+        kept.append(line.strip())
+    cleaned = "\n".join([l for l in kept if l]).strip()
+    return state, cleaned
 
 def strip_reload_signal(output: str):
     if not output:
@@ -691,7 +717,7 @@ def main():
                     try:
                         summary_text = _build_cognition_summary(chat_history, summary_llm, project_id, user_id)
                         should_prompt, summary_json = _should_prompt_save(summary_text)
-                        if summary_json:
+                        if summary_json is not None:
                             summary_json = _ensure_task_templates(summary_json, chat_history, summary_llm, project_id, user_id)
                             summary_text = json.dumps(summary_json, ensure_ascii=False, indent=2)
                             should_prompt, summary_json = _should_prompt_save(summary_text)

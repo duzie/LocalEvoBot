@@ -1,1 +1,1 @@
-invalid type: string "## 采购入库系统开发文档编写经验\n\n### 1. 文档分析流程\n1. **文件识别**: 首先识别ASP.NET Web Forms文件（.aspx）\n2. **API提取**: 从页面中提取所有AJAX API调用（ErrorCodeHandler.ashx?methodName=xxx）\n3. **代码分析**: 分析App_Code目录中的C#后端逻辑\n�具。\", \"uled_task.bat - 一键创建工具\n   - D:\\������������
+invalid type: string "System: PPT制作\nContent: 菜么么餐饮软件介绍PPT制作经验总结：\n\n🎯 用户需求：制作一份菜么么餐饮软件介绍的PPT，要求图文并茂\n\n📋 成功完成的任务：\n1. 分析了菜么么项目结构（D:\\Program Files\\Caimomo\\CaimomoV2）\n2. 收集了菜么么软件最新信息（SaaS云餐饮管理系统，服务15000+客户）\n���

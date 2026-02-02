@@ -389,6 +389,45 @@
             flex-wrap:wrap;
             justify-content:flex-end;
         }
+        .modalMask{
+            position: fixed;
+            inset: 0;
+            background: rgba(15,23,42,.35);
+            display:none;
+            align-items:center;
+            justify-content:center;
+            z-index: 60;
+            padding: 20px;
+        }
+        .modalMask.active{display:flex}
+        .modalCard{
+            width: min(520px, 92vw);
+            background: rgba(255,255,255,.95);
+            border-radius: 16px;
+            border: 1px solid rgba(255,255,255,.6);
+            box-shadow: 0 18px 40px rgba(15,23,42,.25);
+            padding: 18px;
+            display:flex;
+            flex-direction:column;
+            gap:14px;
+        }
+        .modalTitle{
+            font-weight: 800;
+            font-size: 16px;
+            color: rgba(31,41,55,.9);
+        }
+        .modalContent{
+            font-size: 14px;
+            color: rgba(55,65,81,.95);
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .modalActions{
+            display:flex;
+            gap:10px;
+            justify-content:flex-end;
+            flex-wrap:wrap;
+        }
         @media (max-width: 640px){
             .brand{font-size: 16px}
             .header{flex-wrap:wrap; gap:10px}
@@ -505,6 +544,16 @@
             </section>
         </main>
     </div>
+    <div id="confirmMask" class="modalMask">
+        <div class="modalCard">
+            <div id="confirmTitle" class="modalTitle">提示</div>
+            <div id="confirmContent" class="modalContent"></div>
+            <div class="modalActions">
+                <button id="confirmCancel" class="btn ghost" type="button">否</button>
+                <button id="confirmOk" class="btn primary" type="button">是</button>
+            </div>
+        </div>
+    </div>
 
     <script>
         (function(){
@@ -548,6 +597,11 @@
             function appendChatMessage(raw){
                 var msg = (raw == null ? '' : String(raw))
                 if (!msg) return
+                var confirmInfo = parseConfirmPrompt(msg)
+                if (confirmInfo){
+                    showConfirmDialog(confirmInfo)
+                    return
+                }
                 var type = 'system'
                 var isUser = msg.startsWith('User:') || msg.startsWith('User :')
                 var isAgent = msg.startsWith('Agent:')
@@ -663,6 +717,75 @@
                 }).catch(function(e){
                     appendChatMessage('>>> 系统: 发送出错 ' + e)
                 })
+            }
+
+            function sendMessageSilent(msg){
+                var text = (msg || '').trim()
+                if (!text || !state.chatConnected) return
+                fetch('/api/chat/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text })
+                }).then(function(res){
+                    if (!res.ok) appendChatMessage('>>> 系统: 发送失败')
+                }).catch(function(e){
+                    appendChatMessage('>>> 系统: 发送出错 ' + e)
+                })
+            }
+
+            function parseConfirmPrompt(msg){
+                var text = String(msg || '')
+                text = text.replace(/\r/g, '')
+                text = text.replace(/^\s*User\s*:?\s*/i, '').trim()
+                if (text.indexOf('是否保存以上总结？') !== -1) {
+                    return {
+                        title: '保存总结确认',
+                        content: text,
+                        okText: '保存',
+                        cancelText: '不保存',
+                        okValue: 'yes',
+                        cancelValue: 'no'
+                    }
+                }
+                if (text.indexOf('是否使用该模板执行？') !== -1) {
+                    return {
+                        title: '模板确认',
+                        content: text,
+                        okText: '使用',
+                        cancelText: '不使用',
+                        okValue: 'yes',
+                        cancelValue: 'no'
+                    }
+                }
+                return null
+            }
+
+            function showConfirmDialog(info){
+                var mask = el('confirmMask')
+                var title = el('confirmTitle')
+                var content = el('confirmContent')
+                var ok = el('confirmOk')
+                var cancel = el('confirmCancel')
+                title.textContent = info.title || '提示'
+                content.textContent = info.content || ''
+                ok.textContent = info.okText || '是'
+                cancel.textContent = info.cancelText || '否'
+                mask.classList.add('active')
+                var close = function(){
+                    mask.classList.remove('active')
+                    ok.onclick = null
+                    cancel.onclick = null
+                }
+                ok.onclick = function(){
+                    close()
+                    sendMessageSilent(info.okValue || 'yes')
+                    appendChatMessage('>>> 系统: 已选择' + (info.okText || '是'))
+                }
+                cancel.onclick = function(){
+                    close()
+                    sendMessageSilent(info.cancelValue || 'no')
+                    appendChatMessage('>>> 系统: 已选择' + (info.cancelText || '否'))
+                }
             }
 
             function sendMessage(){
