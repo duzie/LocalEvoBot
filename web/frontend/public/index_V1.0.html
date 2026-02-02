@@ -144,6 +144,7 @@
                 const modelChanging = ref(false);
                 let logWs = null;
                 let chatWs = null;
+                let lastAgentIndex = -1;
 
                 // Load Config
                 const loadConfig = async () => {
@@ -229,9 +230,19 @@
                     
                     chatWs.onmessage = (event) => {
                         const msg = event.data;
-                        // Avoid duplicates if echoed
-                        chatMessages.value.push(msg);
-                        // Auto scroll
+                        const isUser = msg.startsWith("User:") || msg.startsWith("User :");
+                        const isAgent = msg.startsWith("Agent:");
+                        const isSystem = msg.startsWith(">>>");
+                        if (!isUser && !isAgent && !isSystem && lastAgentIndex >= 0) {
+                            chatMessages.value[lastAgentIndex] += msg;
+                        } else {
+                            chatMessages.value.push(msg);
+                            if (isAgent) {
+                                lastAgentIndex = chatMessages.value.length - 1;
+                            } else {
+                                lastAgentIndex = -1;
+                            }
+                        }
                         nextTick(() => {
                             if (chatContainer.value) {
                                 chatContainer.value.scrollTop = chatContainer.value.scrollHeight;

@@ -288,23 +288,24 @@ def scaffold_skill(skill_name: str, tools: list, description: str = None, overwr
     }, ensure_ascii=False, indent=2)
 
 @tool
-def write_tool_code(file_path: str, code: str):
+def write_tool_code(file_path: str, code: str = None, content: str = None):
     """
     写入或覆盖工具实现代码。
     """
-    if not file_path or not code:
-        return "file_path 与 code 不能为空"
+    final_code = code if code is not None else content
+    if not file_path or not final_code:
+        return "file_path 与 code/content 不能为空"
     p = os.path.abspath(file_path)
     if not os.path.exists(p):
         return f"文件不存在: {p}"
     try:
-        content = code
-        if "def " in content:
-            lines = content.splitlines()
+        content_to_write = final_code
+        if "def " in content_to_write:
+            lines = content_to_write.splitlines()
             has_tool_import = any(l.strip() == "from langchain_core.tools import tool" for l in lines)
             if not has_tool_import:
                 lines.insert(0, "from langchain_core.tools import tool")
-            if "@tool" not in content:
+            if "@tool" not in content_to_write:
                 insert_idx = None
                 for idx, line in enumerate(lines):
                     if line.strip().startswith("def "):
@@ -312,9 +313,9 @@ def write_tool_code(file_path: str, code: str):
                         break
                 if insert_idx is not None:
                     lines.insert(insert_idx, "@tool")
-            content = "\n".join(lines)
+            content_to_write = "\n".join(lines)
         with open(p, "w", encoding="utf-8") as f:
-            f.write(content)
+            f.write(content_to_write)
         return f"已写入: {p}"
     except Exception as e:
         return f"写入失败: {e}"

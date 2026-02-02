@@ -23,6 +23,7 @@ def create_llm():
             openai_api_key=api_key,
             openai_api_base=base_url,
             temperature=0.7,
+            streaming=True,
         )
 
     if provider == "qwen":
@@ -36,6 +37,7 @@ def create_llm():
             openai_api_key=api_key,
             openai_api_base=base_url,
             temperature=0.7,
+            streaming=True,
         )
 
     if provider == "openai":
@@ -49,6 +51,7 @@ def create_llm():
             openai_api_key=api_key,
             openai_api_base=base_url,
             temperature=0.7,
+            streaming=True,
         )
 
     if provider == "local":
@@ -87,6 +90,7 @@ def create_llm():
             openai_api_key=api_key,
             openai_api_base=base_url,
             temperature=0.7,
+            streaming=True,
         )
 
     raise ValueError(f"不支持的 LLM_PROVIDER: {provider}")

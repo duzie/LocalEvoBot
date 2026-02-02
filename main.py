@@ -279,7 +279,7 @@ def _save_task_templates(task_templates, project_id, user_id, base_tags, saved):
 
 def _should_prompt_save(summary_text):
     data = _parse_json_object_from_text(summary_text)
-    if not data:
+    if not data or not isinstance(data, dict):
         return False, None
     items = data.get("items") or {}
     behavior = items.get("behavior_preferences") or []
@@ -356,6 +356,45 @@ def _format_experiences_for_prompt(experiences):
     parts.extend([f"- {e}" for e in experiences])
     return "\n".join(parts)
 
+def _contains_task_intent(text):
+    if not text:
+        return False
+    keywords = {
+        "发送", "邮件", "邮箱", "通知", "提醒", "生成", "制作", "整理", "搜索", "查询", "下载",
+        "导出", "保存", "统计", "分析", "报告", "自动化", "爬取", "抓取", "写入", "提交",
+        "执行", "创建", "配置", "部署", "重构", "修复", "优化", "转换", "翻译"
+    }
+    return any(k in text for k in keywords)
+
+def _looks_like_small_talk(text):
+    if not text:
+        return True
+    casual = {
+        "今天吃什么", "今天吃啥", "吃什么", "吃啥", "吃点啥", "吃点什么",
+        "喝什么", "喝点什么", "晚饭吃什么", "午饭吃什么", "早餐吃什么",
+        "好无聊", "想睡觉", "累了", "冷不冷", "热不热", "天气怎么样"
+    }
+    if text in casual:
+        return True
+    if len(text) <= 12 and any(p in text for p in ["吃什么", "吃啥", "喝什么", "干嘛"]):
+        return True
+    return False
+
+def _template_matches_input(template, user_input):
+    text = str(user_input or "").strip()
+    if not text:
+        return False
+    if not _contains_task_intent(text):
+        return False
+    steps = template.get("steps") or []
+    outputs = template.get("outputs") or []
+    constraints = template.get("constraints") or []
+    template_text = json.dumps({"steps": steps, "outputs": outputs, "constraints": constraints}, ensure_ascii=False)
+    if "邮件" in template_text or "邮箱" in template_text:
+        if "邮件" not in text and "邮箱" not in text and "发送" not in text:
+            return False
+    return True
+
 def _maybe_apply_template(user_input, project_id, user_id):
     if _should_skip_template(user_input):
         return user_input
@@ -370,6 +409,8 @@ def _maybe_apply_template(user_input, project_id, user_id):
     results = _parse_template_results(raw) if isinstance(raw, str) else []
     template = _select_template(results)
     if not template:
+        return user_input
+    if not _template_matches_input(template, user_input):
         return user_input
     preview = _format_template_for_prompt(template)
     print("Agent: 检索到可用模板\n")
@@ -405,7 +446,13 @@ def _is_lightweight_user_input(text):
 
 def _should_skip_template(user_input):
     text = str(user_input or "").strip()
-    return _is_lightweight_user_input(text)
+    if _is_lightweight_user_input(text):
+        return True
+    if _looks_like_small_talk(text):
+        return True
+    if len(text) < 12 and not _contains_task_intent(text):
+        return True
+    return False
 
 def _is_summary_message(msg):
     if not msg:
@@ -584,15 +631,45 @@ def main():
                 auto_input = _maybe_apply_template(user_input, project_id, user_id)
             for step in range(max_auto_steps):
                 chat_history = maybe_summarize_history(chat_history, summary_llm, max_turns=20)
-                response = agent_executor.invoke({
+                raw_output = ""
+                print("Agent: ", end="", flush=True)
+                buffer = ""
+                for chunk in agent_executor.stream({
                     "input": auto_input,
                     "chat_history": chat_history
-                })
+                }):
+                    if not isinstance(chunk, dict):
+                        continue
+                    text = chunk.get("output")
+                    if text is None:
+                        continue
+                    if text.startswith(raw_output):
+                        delta = text[len(raw_output):]
+                        raw_output = text
+                    else:
+                        delta = text
+                        raw_output += delta
+                    if not delta:
+                        continue
+                    buffer += delta
+                    if RELOAD_SIGNAL in buffer:
+                        buffer = buffer.replace(RELOAD_SIGNAL, "")
+                    while True:
+                        idx = buffer.find("\n")
+                        if idx == -1:
+                            break
+                        line = buffer[:idx + 1]
+                        buffer = buffer[idx + 1:]
+                        if line.strip().upper().startswith("STATE:"):
+                            continue
+                        print(line, end="", flush=True)
+                if buffer and not buffer.strip().upper().startswith("STATE:"):
+                    print(buffer, end="", flush=True)
+                print("\n")
 
-                output = response.get("output", "")
+                output = raw_output
                 output, reload_requested = strip_reload_signal(output)
                 state, cleaned_output = parse_state(output)
-                print(f"Agent: {cleaned_output}\n")
                 chat_history.extend([
                     ("user", auto_input),
                     ("assistant", output)

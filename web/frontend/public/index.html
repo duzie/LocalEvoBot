@@ -518,7 +518,8 @@
                 logWs: null,
                 modelChanging: false,
                 modelCurrent: 'deepseek',
-                modelOptions: []
+                modelOptions: [],
+                lastAgentBubble: null
             }
 
             function setOnline(online){
@@ -546,16 +547,34 @@
 
             function appendChatMessage(raw){
                 var msg = (raw == null ? '' : String(raw))
+                if (!msg) return
                 var type = 'system'
-                if (msg.startsWith('User:') || msg.startsWith('User :')) type = 'user'
-                else if (msg.startsWith('Agent:')) type = 'agent'
-                else if (msg.startsWith('>>>')) type = 'system'
+                var isUser = msg.startsWith('User:') || msg.startsWith('User :')
+                var isAgent = msg.startsWith('Agent:')
+                var isSystem = msg.startsWith('>>>')
+                if (isUser) type = 'user'
+                else if (isAgent) type = 'agent'
+                else if (isSystem) type = 'system'
+
+                if (!isUser && !isAgent && !isSystem && state.lastAgentBubble){
+                    state.lastAgentBubble.textContent += msg
+                    el('chatList').scrollTop = el('chatList').scrollHeight
+                    return
+                }
 
                 var wrap = document.createElement('div')
                 wrap.className = 'msg' + (type === 'user' ? ' user' : '')
                 var bubble = document.createElement('div')
                 bubble.className = 'bubble ' + type
-                bubble.textContent = msg
+                if (isAgent){
+                    var content = msg.slice('Agent:'.length)
+                    if (content.startsWith(' ')) content = content.slice(1)
+                    bubble.textContent = content
+                    state.lastAgentBubble = bubble
+                }else{
+                    bubble.textContent = msg
+                    state.lastAgentBubble = null
+                }
                 wrap.appendChild(bubble)
                 el('chatList').appendChild(wrap)
                 el('chatList').scrollTop = el('chatList').scrollHeight
