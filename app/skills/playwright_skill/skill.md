@@ -7,8 +7,7 @@ playwright_skill
 1.0.0
 
 ## Description
-基于 Playwright 的现代浏览器自动化与测试执行。
-相比 Selenium，它更快、更稳定，且支持自动等待。
+基于 Playwright 的现代浏览器自动化。
 
 ## Entry
 app.skills.playwright_skill.scripts
