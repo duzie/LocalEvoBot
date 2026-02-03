@@ -231,7 +231,79 @@
             overflow:auto;
             flex: 1 1 auto;
             max-height: 60vh;
+            min-height: 0;
             overscroll-behavior: contain;
+        }
+        .chatSplit{
+            padding: 12px;
+            display:flex;
+            gap:12px;
+            flex: 1 1 auto;
+            height: 60vh;
+            min-height: 0;
+            overflow:hidden;
+        }
+        .chatPane{
+            display:flex;
+            flex-direction:column;
+            flex: 2 1 0;
+            min-height: 0;
+            min-width: 0;
+            border: 1px solid rgba(255,255,255,.35);
+            background: rgba(255,255,255,.55);
+            border-radius: var(--radius);
+            overflow:hidden;
+        }
+        .auxPane{
+            display:flex;
+            flex-direction:column;
+            flex: 1 1 0;
+            min-height: 0;
+            min-width: 0;
+            border: 1px solid rgba(255,255,255,.35);
+            background: rgba(255,255,255,.55);
+            border-radius: var(--radius);
+            overflow:hidden;
+        }
+        .chatPane .chatList,
+        .auxPane .chatList{
+            max-height: none;
+        }
+        .auxHeader{
+            padding: 10px 12px;
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            border-bottom: 1px solid rgba(255,255,255,.32);
+            background: rgba(255,255,255,.5);
+        }
+        .auxTitle{
+            font-weight: 800;
+            font-size: 13px;
+            color: rgba(31,41,55,.9);
+        }
+        .auxList{
+            padding: 12px;
+            overflow:auto;
+            flex: 1 1 auto;
+            min-height: 0;
+            overscroll-behavior: contain;
+        }
+        .auxMsg{
+            display:flex;
+            margin: 10px 0;
+        }
+        .auxBubble{
+            width: 100%;
+            padding: 10px 12px;
+            border-radius: 14px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            box-shadow: 0 6px 20px rgba(31,38,135,.10);
+            background: rgba(255,255,255,.6);
+            color: #4b5563;
+            font-size: 12px;
+            font-style: italic;
         }
         .msg{
             display:flex;
@@ -271,12 +343,18 @@
             background: rgba(255,255,255,.5);
             border-bottom-left-radius: var(--radius);
             border-bottom-right-radius: var(--radius);
+            align-items:flex-end;
         }
         .chatInput .input{
             flex: 1 1 auto;
             min-width: 0;
             border-radius: var(--radius2);
-            height: 42px;
+            height: auto;
+            min-height: 42px;
+            padding-top: 10px;
+            padding-bottom: 10px;
+            line-height: 1.35;
+            resize: vertical;
         }
         .chatInput .btn{height: 42px;border-radius: var(--radius2)}
         .btn.recording{
@@ -428,6 +506,39 @@
             justify-content:flex-end;
             flex-wrap:wrap;
         }
+        .confirmInline{
+            display:none;
+            margin: 12px;
+            padding: 12px;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,.4);
+            background: rgba(255,255,255,.75);
+            box-shadow: 0 10px 25px rgba(15,23,42,.12);
+            flex-direction:column;
+            gap:10px;
+        }
+        .confirmInline.active{display:flex}
+        .confirmInlineTitle{
+            font-weight: 800;
+            font-size: 13px;
+            color: rgba(31,41,55,.9);
+        }
+        .confirmInlineContent{
+            font-size: 13px;
+            color: rgba(55,65,81,.95);
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .confirmInlineActions{
+            display:flex;
+            gap:10px;
+            justify-content:flex-end;
+            flex-wrap:wrap;
+        }
+        .confirmInlineStatus{
+            font-size: 12px;
+            color: var(--muted);
+        }
         @media (max-width: 640px){
             .brand{font-size: 16px}
             .header{flex-wrap:wrap; gap:10px}
@@ -449,6 +560,7 @@
             .panelHeader{flex-wrap:wrap; gap:10px}
             .panelTitle{flex-wrap:wrap}
             .bubble{max-width: 92vw}
+            .chatSplit{flex-direction:column;}
             .chatList{max-height: 45dvh;}
             .cfgKey{width: 100%}
         }
@@ -506,11 +618,31 @@
                     </div>
                     <span id="chatConn" class="pill">未连接</span>
                 </div>
-                <div id="chatList" class="chatList"></div>
-                <div class="chatInput">
-                    <input id="chatInput" class="input" type="text" placeholder="输入指令..." autocomplete="off" />
-                    <button id="voiceBtn" class="btn ghost" type="button">按住说话</button>
-                    <button id="sendBtn" class="btn primary" type="button">发送</button>
+                <div class="chatSplit">
+                    <div class="chatPane">
+                        <div id="chatList" class="chatList"></div>
+                        <div class="chatInput">
+                            <textarea id="chatInput" class="input" rows="3" placeholder="输入指令...（Enter 发送，Shift+Enter 换行）" autocomplete="off"></textarea>
+                            <button id="voiceBtn" class="btn ghost" type="button">按住说话</button>
+                            <button id="sendBtn" class="btn primary" type="button">发送</button>
+                        </div>
+                    </div>
+                    <div class="auxPane">
+                        <div class="auxHeader">
+                            <div class="auxTitle">提示窗口（总结/模板/系统）</div>
+                            <button id="clearAuxBtn" class="btn ghost" type="button">清空</button>
+                        </div>
+                        <div id="confirmInline" class="confirmInline">
+                            <div id="confirmInlineTitle" class="confirmInlineTitle">确认</div>
+                            <div id="confirmInlineContent" class="confirmInlineContent"></div>
+                            <div class="confirmInlineActions">
+                                <button id="confirmInlineCancel" class="btn ghost" type="button">否</button>
+                                <button id="confirmInlineOk" class="btn primary" type="button">是</button>
+                            </div>
+                            <div id="confirmInlineStatus" class="confirmInlineStatus"></div>
+                        </div>
+                        <div id="auxList" class="auxList"></div>
+                    </div>
                 </div>
             </section>
 
@@ -568,7 +700,8 @@
                 modelChanging: false,
                 modelCurrent: 'doubao',
                 modelOptions: [],
-                lastAgentBubble: null
+                lastAgentBubble: null,
+                auxCapture: false
             }
 
             function setOnline(online){
@@ -594,6 +727,21 @@
                 el('modelInfo').textContent = text || ''
             }
 
+            function appendAuxMessage(raw){
+                var msg = (raw == null ? '' : String(raw))
+                if (!msg) return
+                var list = el('auxList')
+                if (!list) return
+                var wrap = document.createElement('div')
+                wrap.className = 'auxMsg'
+                var bubble = document.createElement('div')
+                bubble.className = 'auxBubble'
+                bubble.textContent = msg
+                wrap.appendChild(bubble)
+                list.appendChild(wrap)
+                list.scrollTop = list.scrollHeight
+            }
+
             function appendChatMessage(raw, opts){
                 var msg = (raw == null ? '' : String(raw))
                 if (!msg) return
@@ -601,7 +749,9 @@
                 if (opts.allowConfirm !== false){
                     var confirmInfo = parseConfirmPrompt(msg)
                     if (confirmInfo){
-                        showConfirmDialog(confirmInfo)
+                        state.auxCapture = false
+                        appendAuxMessage(msg.replace(/\r/g, ''))
+                        showConfirmInline(confirmInfo)
                         return
                     }
                 }
@@ -613,9 +763,39 @@
                 else if (isAgent) type = 'agent'
                 else if (isSystem) type = 'system'
 
+                if (isSystem){
+                    state.auxCapture = false
+                    appendAuxMessage(msg.replace(/\r/g, ''))
+                    return
+                }
+
+                if (isAgent){
+                    var agentText = msg.slice('Agent:'.length).trim()
+                    if (agentText.indexOf('已生成个人认知总结') !== -1 || agentText.indexOf('检索到可用模板') !== -1){
+                        state.auxCapture = true
+                        state.lastAgentBubble = null
+                        appendAuxMessage(msg.replace(/\r/g, ''))
+                        return
+                    }
+                    state.auxCapture = false
+                }
+
+                if (isUser){
+                    state.auxCapture = false
+                }
+
                 if (!isUser && !isAgent && !isSystem && state.lastAgentBubble){
+                    if (state.auxCapture){
+                        appendAuxMessage(msg.replace(/\r/g, ''))
+                        return
+                    }
                     state.lastAgentBubble.textContent += msg
                     el('chatList').scrollTop = el('chatList').scrollHeight
+                    return
+                }
+
+                if (!isUser && !isAgent && !isSystem){
+                    appendAuxMessage(msg.replace(/\r/g, ''))
                     return
                 }
 
@@ -782,12 +962,52 @@
                 ok.onclick = function(){
                     close()
                     sendMessageSilent(info.okValue || 'yes')
-                    appendChatMessage('>>> 系统: 已选择' + (info.okText || '是'))
                 }
                 cancel.onclick = function(){
                     close()
                     sendMessageSilent(info.cancelValue || 'no')
-                    appendChatMessage('>>> 系统: 已选择' + (info.cancelText || '否'))
+                }
+            }
+
+            function showConfirmInline(info){
+                var box = el('confirmInline')
+                var title = el('confirmInlineTitle')
+                var content = el('confirmInlineContent')
+                var ok = el('confirmInlineOk')
+                var cancel = el('confirmInlineCancel')
+                var status = el('confirmInlineStatus')
+                title.textContent = info.title || '提示'
+                content.textContent = info.content || ''
+                ok.textContent = info.okText || '是'
+                cancel.textContent = info.cancelText || '否'
+                status.textContent = ''
+                box.classList.add('active')
+                var close = function(){
+                    box.classList.remove('active')
+                    ok.onclick = null
+                    cancel.onclick = null
+                }
+                ok.onclick = function(){
+                    sendMessageSilent(info.okValue || 'yes')
+                    status.textContent = '已选择：' + (info.okText || '是')
+                    ok.disabled = true
+                    cancel.disabled = true
+                    setTimeout(function(){
+                        ok.disabled = false
+                        cancel.disabled = false
+                        close()
+                    }, 1200)
+                }
+                cancel.onclick = function(){
+                    sendMessageSilent(info.cancelValue || 'no')
+                    status.textContent = '已选择：' + (info.cancelText || '否')
+                    ok.disabled = true
+                    cancel.disabled = true
+                    setTimeout(function(){
+                        ok.disabled = false
+                        cancel.disabled = false
+                        close()
+                    }, 1200)
                 }
             }
 
@@ -993,6 +1213,11 @@
                     if (!chatList) return
                     chatList.textContent = ''
                     state.lastAgentBubble = null
+                    state.auxCapture = false
+                    var auxList = el('auxList')
+                    if (auxList) auxList.textContent = ''
+                    var confirmBox = el('confirmInline')
+                    if (confirmBox) confirmBox.classList.remove('active')
                     list.forEach(function(item){
                         if (!item || !item.content) return
                         var role = item.role
@@ -1891,7 +2116,10 @@
 
             el('sendBtn').addEventListener('click', sendMessage)
             el('chatInput').addEventListener('keydown', function(e){
-                if (e.key === 'Enter') sendMessage()
+                if (e.key === 'Enter' && !e.shiftKey && !e.isComposing){
+                    e.preventDefault()
+                    sendMessage()
+                }
             })
             var voiceBtn = el('voiceBtn')
             if (voiceBtn){
@@ -1914,6 +2142,12 @@
             }
             el('modelSelect').addEventListener('change', changeModel)
             el('clearLogsBtn').addEventListener('click', function(){ el('logsPre').textContent = '' })
+            el('clearAuxBtn').addEventListener('click', function(){
+                var list = el('auxList')
+                if (list) list.textContent = ''
+                var box = el('confirmInline')
+                if (box) box.classList.remove('active')
+            })
             el('reloadConfigBtn').addEventListener('click', loadConfig)
             el('addConfigBtn').addEventListener('click', addConfig)
             el('refreshTemplatesBtn').addEventListener('click', loadTemplates)
