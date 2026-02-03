@@ -3,6 +3,7 @@ import os
 import json
 import shutil
 from datetime import datetime, timezone
+import sqlite3
 
 # Ensure HF mirror is used before any HF imports
 if "HF_ENDPOINT" not in os.environ:
@@ -20,6 +21,35 @@ def _get_db_path():
 
 def _get_json_path():
     return os.path.join(os.path.dirname(__file__), "experience_store.json")
+
+def _get_short_term_db_path():
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
+    data_dir = os.path.join(base_dir, "app", "data")
+    os.makedirs(data_dir, exist_ok=True)
+    return os.path.join(data_dir, "short_term_memory.sqlite3")
+
+def _init_short_term_db():
+    path = _get_short_term_db_path()
+    conn = sqlite3.connect(path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS short_term_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                project_id TEXT,
+                user_id TEXT
+            )
+            """
+        )
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_stm_created ON short_term_messages(created_at)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_stm_project_user ON short_term_messages(project_id, user_id)")
+        conn.commit()
+    finally:
+        conn.close()
 
 def _init_components():
     global _VECTOR_STORE, _EMBEDDINGS
@@ -186,3 +216,47 @@ def get_operation_experience(query: str, system_filter: str = None, n_results: i
 def compress_operation_experience():
     """[Deprecated] RAG模式下无需手动压缩。"""
     return "Feature deprecated: Using Vector DB now."
+
+@tool
+def search_short_term_memory(query: str, n_results: int = 8, project_id: str = None, user_id: str = None, role: str = None):
+    """
+    搜索本地短期记忆（对话消息），用于“搜索所有记忆”场景。
+    """
+    q = str(query or "").strip()
+    if not q:
+        return json.dumps([], ensure_ascii=False)
+    _init_short_term_db()
+    path = _get_short_term_db_path()
+    conn = sqlite3.connect(path)
+    try:
+        cur = conn.cursor()
+        conditions = ["content LIKE ?"]
+        params = [f"%{q}%"]
+        if project_id:
+            conditions.append("project_id = ?")
+            params.append(str(project_id))
+        if user_id:
+            conditions.append("user_id = ?")
+            params.append(str(user_id))
+        if role:
+            conditions.append("role = ?")
+            params.append(str(role))
+        where = " AND ".join(conditions)
+        limit = max(1, min(int(n_results or 8), 50))
+        sql = f"SELECT role, content, created_at, project_id, user_id FROM short_term_messages WHERE {where} ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        rows = cur.execute(sql, params).fetchall()
+        items = []
+        for r in rows:
+            items.append({
+                "role": r[0],
+                "content": r[1],
+                "created_at": r[2],
+                "project_id": r[3],
+                "user_id": r[4],
+                "source": "short_term"
+            })
+        items.reverse()
+        return json.dumps(items, ensure_ascii=False, indent=2)
+    finally:
+        conn.close()

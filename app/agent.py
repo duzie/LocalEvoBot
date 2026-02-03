@@ -10,7 +10,23 @@ from app.prompts import get_agent_prompt
 load_dotenv()
 
 def create_llm():
-    provider = (os.getenv("LLM_PROVIDER") or "deepseek").strip().lower()
+    provider = (os.getenv("LLM_PROVIDER") or "doubao").strip().strip("'\"").lower()
+
+    if provider == "doubao":
+        api_key = os.getenv("DOUBAO_API_KEY") or os.getenv("ARK_API_KEY") or os.getenv("OPENAI_API_KEY")
+        base_url = os.getenv("DOUBAO_BASE_URL") or os.getenv("ARK_BASE_URL") or os.getenv("OPENAI_BASE_URL") or "https://ark.cn-beijing.volces.com/api/v3"
+        model_name = os.getenv("DOUBAO_MODEL_NAME") or os.getenv("ARK_MODEL_NAME") or os.getenv("ARK_ENDPOINT_ID")
+        if not api_key:
+            raise ValueError("请确保 .env 文件中配置了 DOUBAO_API_KEY（或复用 OPENAI_API_KEY）")
+        if not model_name:
+            raise ValueError("请确保 .env 文件中配置了 DOUBAO_MODEL_NAME（填接入点 Endpoint ID）")
+        return ChatOpenAI(
+            model=model_name,
+            openai_api_key=api_key,
+            openai_api_base=base_url,
+            temperature=0.7,
+            streaming=True,
+        )
 
     if provider == "deepseek":
         api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")

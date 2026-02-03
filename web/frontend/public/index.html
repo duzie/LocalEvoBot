@@ -566,7 +566,7 @@
                 chatWs: null,
                 logWs: null,
                 modelChanging: false,
-                modelCurrent: 'deepseek',
+                modelCurrent: 'doubao',
                 modelOptions: [],
                 lastAgentBubble: null
             }
@@ -594,13 +594,16 @@
                 el('modelInfo').textContent = text || ''
             }
 
-            function appendChatMessage(raw){
+            function appendChatMessage(raw, opts){
                 var msg = (raw == null ? '' : String(raw))
                 if (!msg) return
-                var confirmInfo = parseConfirmPrompt(msg)
-                if (confirmInfo){
-                    showConfirmDialog(confirmInfo)
-                    return
+                opts = opts || {}
+                if (opts.allowConfirm !== false){
+                    var confirmInfo = parseConfirmPrompt(msg)
+                    if (confirmInfo){
+                        showConfirmDialog(confirmInfo)
+                        return
+                    }
                 }
                 var type = 'system'
                 var isUser = msg.startsWith('User:') || msg.startsWith('User :')
@@ -944,7 +947,7 @@
             function loadModels(){
                 fetch('/api/chat/models').then(function(r){return r.json()}).then(function(data){
                     state.modelOptions = data.models || []
-                    state.modelCurrent = data.current || 'deepseek'
+                    state.modelCurrent = data.current || 'doubao'
                     var sel = el('modelSelect')
                     sel.innerHTML = ''
                     state.modelOptions.forEach(function(m){
@@ -980,6 +983,25 @@
                 }).catch(function(e){
                     appendChatMessage('>>> 系统: 切换模型出错 ' + e)
                     setModelInfo('切换失败')
+                })
+            }
+
+            function loadHistory(){
+                fetch('/api/chat/history?limit=80').then(function(r){return r.json()}).then(function(data){
+                    var list = (data && data.messages) ? data.messages : []
+                    var chatList = el('chatList')
+                    if (!chatList) return
+                    chatList.textContent = ''
+                    state.lastAgentBubble = null
+                    list.forEach(function(item){
+                        if (!item || !item.content) return
+                        var role = item.role
+                        var content = String(item.content)
+                        if (role === 'user') appendChatMessage('User: ' + content, { allowConfirm: false })
+                        else if (role === 'assistant') appendChatMessage('Agent: ' + content, { allowConfirm: false })
+                    })
+                }).catch(function(e){
+                    appendChatMessage('>>> 系统: 加载历史对话失败 ' + e)
                 })
             }
 
@@ -1908,6 +1930,7 @@
             setModelInfo('')
             initAccessPanel()
             initAccessUrl()
+            loadHistory()
             loadModels()
             loadConfig()
             connectLogWS()

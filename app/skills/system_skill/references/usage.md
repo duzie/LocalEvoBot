@@ -13,6 +13,7 @@
 - read_notepad_text
 - add_operation_experience
 - get_operation_experience
+- search_short_term_memory
 - delete_image
 - compress_operation_experience
 - create_task_plan
@@ -26,6 +27,7 @@
 - 读取记事本内容进行后续分析
 - 记录系统操作经验到向量库 (RAG)
 - 语义检索过往经验辅助决策
+- 用户明确要求“搜索所有记忆”时，搜索本地短期记忆（对话消息）
 - 删除截图等临时图片
 - 创建任务计划拆解复杂任务 (Step-by-Step Plan)
 - 标记步骤完成并自动读取下一步

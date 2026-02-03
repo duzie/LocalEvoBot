@@ -12,6 +12,7 @@ import datetime
 from urllib.parse import quote
 import websockets
 import os
+import sqlite3
 from dotenv import dotenv_values, set_key
 from typing import List
 
@@ -54,6 +55,35 @@ shared.broadcast_func = broadcast_wrapper
 async def startup_event():
     shared.set_loop(asyncio.get_running_loop())
 
+def _get_short_term_db_path():
+    base_dir = os.path.dirname(_get_env_path())
+    data_dir = os.path.join(base_dir, "app", "data")
+    os.makedirs(data_dir, exist_ok=True)
+    return os.path.join(data_dir, "short_term_memory.sqlite3")
+
+def _init_short_term_db():
+    path = _get_short_term_db_path()
+    conn = sqlite3.connect(path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS short_term_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                project_id TEXT,
+                user_id TEXT
+            )
+            """
+        )
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_stm_created ON short_term_messages(created_at)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_stm_project_user ON short_term_messages(project_id, user_id)")
+        conn.commit()
+    finally:
+        conn.close()
+
 @router.post("/send")
 async def send_message(chat: ChatMessage):
     """Send a message to the Agent"""
@@ -63,6 +93,29 @@ async def send_message(chat: ChatMessage):
     shared.put_input(chat.message)
     # Echo back to chat history (optional, or handle in frontend)
     return {"status": "sent"}
+
+@router.get("/history")
+async def get_history(limit: int = 60):
+    env_path = _get_env_path()
+    env = dotenv_values(env_path) if os.path.exists(env_path) else {}
+    base_dir = os.path.dirname(env_path)
+    project_id = os.path.basename(base_dir)
+    user_id = (os.getenv("LOCAL_USER_ID") or env.get("LOCAL_USER_ID") or "local_user").strip().strip("'\"")
+    safe_limit = max(1, min(int(limit or 60), 200))
+    _init_short_term_db()
+    path = _get_short_term_db_path()
+    conn = sqlite3.connect(path)
+    try:
+        cur = conn.cursor()
+        rows = cur.execute(
+            "SELECT role, content, created_at FROM short_term_messages WHERE project_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?",
+            (project_id, user_id, safe_limit),
+        ).fetchall()
+        items = [{"role": r[0], "content": r[1], "created_at": r[2]} for r in rows]
+        items.reverse()
+        return {"messages": items}
+    finally:
+        conn.close()
 
 def _get_xf_config():
     env_path = _get_env_path()
@@ -195,8 +248,9 @@ def _get_env_path():
 async def list_models():
     env_path = _get_env_path()
     env = dotenv_values(env_path) if os.path.exists(env_path) else {}
-    current = (os.getenv("LLM_PROVIDER") or env.get("LLM_PROVIDER") or "deepseek").strip().lower()
+    current = (os.getenv("LLM_PROVIDER") or env.get("LLM_PROVIDER") or "doubao").strip().strip("'\"").lower()
     models = [
+        {"id": "doubao", "label": "豆包"},
         {"id": "deepseek", "label": "DeepSeek"},
         {"id": "qwen", "label": "千问"},
         {"id": "openai", "label": "OpenAI"},
@@ -209,7 +263,7 @@ async def list_models():
 @router.post("/model")
 async def set_model(selection: ModelSelect):
     provider = (selection.provider or "").strip().lower()
-    allowed = {"deepseek", "qwen", "openai", "local", "nim_minimax_m2", "nim_glm47"}
+    allowed = {"doubao", "deepseek", "qwen", "openai", "local", "nim_minimax_m2", "nim_glm47"}
     if provider not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported provider")
 

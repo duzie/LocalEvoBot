@@ -129,8 +129,13 @@ python main.py
 
 ### 核心技能 (app/skills)
 **1. 自进化 (SkillGen)**
+- `inspect_environment`: 查看环境、依赖与可用技能列表
 - `scaffold_skill`: 生成新技能目录结构
 - `write_tool_code`: 编写或修改工具代码
+- `list_change_versions`: 列出最近变更版本
+- `rollback_change`: 回滚到最近稳定版本或指定版本
+- `search_change_logs`: 关键词检索变更溯源日志
+- `export_change_logs`: 导出变更日志（JSON/CSV）
 - `promote_skill`: **技能转正**。将 `auto_skills` 中验证通过的技能一键迁移至 `app/skills`，成为永久核心能力
 - `reload_skills`: **热加载与自动回复**。运行时重载所有技能，并自动读取上一轮任务状态，无缝继续执行 (Auto-Resume)
 

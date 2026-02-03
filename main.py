@@ -5,6 +5,8 @@ import sys
 import re
 import threading
 import json
+import sqlite3
+from datetime import datetime, timezone
 from web.backend.main import start as start_web_server
 from web.backend.shared import shared
 
@@ -17,6 +19,59 @@ from app.skills.system_skill.scripts.experience_tools import add_operation_exper
 RELOAD_SIGNAL = "__RELOAD_SKILLS__"
 SET_MODEL_PREFIX = "__SET_MODEL__:"
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[ -/]*[@-~]")
+
+def _get_short_term_db_path():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(base_dir, "app", "data")
+    os.makedirs(data_dir, exist_ok=True)
+    return os.path.join(data_dir, "short_term_memory.sqlite3")
+
+def _init_short_term_db():
+    path = _get_short_term_db_path()
+    conn = sqlite3.connect(path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS short_term_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                project_id TEXT,
+                user_id TEXT
+            )
+            """
+        )
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_stm_created ON short_term_messages(created_at)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_stm_project_user ON short_term_messages(project_id, user_id)")
+        conn.commit()
+    finally:
+        conn.close()
+
+def _add_short_term_message(role: str, content: str, project_id: str, user_id: str):
+    text = str(content or "").strip()
+    if not text:
+        return
+    _init_short_term_db()
+    path = _get_short_term_db_path()
+    conn = sqlite3.connect(path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO short_term_messages(role, content, created_at, project_id, user_id) VALUES (?, ?, ?, ?, ?)",
+            (str(role or "").strip(), text, datetime.now(timezone.utc).isoformat(), project_id or "", user_id or ""),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+def _requests_all_memory_search(text: str):
+    t = str(text or "").strip()
+    if not t:
+        return False
+    keywords = ["搜索所有记忆", "搜所有记忆", "搜索全部记忆", "搜全部记忆", "全量搜索记忆", "搜索全量记忆"]
+    return any(k in t for k in keywords)
 
 def parse_state(output: str):
     def normalize_state(value: str):
@@ -480,45 +535,95 @@ def _should_skip_template(user_input):
         return True
     return False
 
-def _is_summary_message(msg):
+_SUMMARY_PREFIXES = {
+    "long": "对话摘要（长期）：",
+    "stage": "对话摘要（阶段）：",
+    "legacy": "对话摘要（用于延续上下文）："
+}
+
+def _parse_summary_message(msg):
     if not msg:
-        return False
+        return None
     role, content = msg
     if role != "system":
-        return False
-    return isinstance(content, str) and content.startswith("对话摘要（用于延续上下文）：")
+        return None
+    if not isinstance(content, str):
+        return None
+    for key, prefix in _SUMMARY_PREFIXES.items():
+        if content.startswith(prefix):
+            return key, content.split("：", 1)[1].strip()
+    return None
 
-def maybe_summarize_history(chat_history, llm, max_turns=20):
-    non_summary = chat_history[:]
-    rolling_summary = None
-    if non_summary and _is_summary_message(non_summary[0]):
-        rolling_summary = non_summary[0][1].split("：", 1)[1].strip()
-        non_summary = non_summary[1:]
+def _is_summary_message(msg):
+    return _parse_summary_message(msg) is not None
 
-    chunk_size = max_turns * 2
-    if len(non_summary) <= chunk_size:
-        return chat_history
+def _extract_summaries(chat_history):
+    summaries = {"long": None, "stage": None}
+    rest = chat_history[:]
+    while rest:
+        parsed = _parse_summary_message(rest[0])
+        if not parsed:
+            break
+        level, text = parsed
+        if level == "legacy":
+            level = "long"
+        summaries[level] = text
+        rest = rest[1:]
+    return summaries, rest
 
-    chunk = non_summary[:chunk_size]
-    rest = non_summary[chunk_size:]
-
+def _summarize_text(llm, transcript_text, existing_summary=None, summary_kind="阶段"):
     from langchain_core.messages import SystemMessage, HumanMessage
-
-    system_text = "你是对话摘要器。把对话压缩为可用于继续对话的摘要，保留关键信息、约束、已完成事项、未完成事项、关键决定、关键参数/路径/变量名,并给出最后一轮对话执行到哪一步了。只输出摘要正文。"
-    transcript = _format_history_for_summary(chunk)
+    system_text = (
+        "你是对话摘要器。输出用于继续执行任务的摘要，"
+        "要求分级结构，保留关键信息、约束、已完成事项、未完成事项、关键决定、关键路径/变量名、风险与下一步。"
+        "只输出摘要正文。"
+    )
     user_text = ""
-    if rolling_summary:
-        user_text += f"已有摘要：\n{rolling_summary}\n\n"
-    user_text += f"需要压缩的新增对话（按顺序）：\n{transcript}\n\n请输出更新后的摘要："
-
+    if existing_summary:
+        user_text += f"已有{summary_kind}摘要：\n{existing_summary}\n\n"
+    user_text += (
+        f"需要压缩的新增内容：\n{transcript_text}\n\n"
+        f"请输出更新后的{summary_kind}摘要（分级条目）："
+    )
     resp = llm.invoke([SystemMessage(content=system_text), HumanMessage(content=user_text)])
     new_summary = getattr(resp, "content", "") or str(resp)
-    new_summary = new_summary.strip()
+    return new_summary.strip()
 
-    summary_msg = ("system", f"对话摘要（用于延续上下文）：\n{new_summary}")
-    if rest:
-        return [summary_msg] + rest
-    return [summary_msg]
+def maybe_summarize_history(chat_history, llm, max_recent_turns=8, max_stage_chars=1200):
+    summaries, non_summary = _extract_summaries(chat_history)
+    long_summary = summaries.get("long")
+    stage_summary = summaries.get("stage")
+
+    chunk_size = max_recent_turns * 2
+    if len(non_summary) <= chunk_size:
+        history = []
+        if long_summary:
+            history.append(("system", f"对话摘要（长期）：\n{long_summary}"))
+        if stage_summary:
+            history.append(("system", f"对话摘要（阶段）：\n{stage_summary}"))
+        return history + non_summary
+
+    older = non_summary[:-chunk_size]
+    recent = non_summary[-chunk_size:]
+
+    transcript = _format_history_for_summary(older)
+    stage_summary = _summarize_text(llm, transcript, stage_summary, "阶段")
+
+    if long_summary:
+        if len(stage_summary) > max_stage_chars:
+            long_summary = _summarize_text(llm, stage_summary, long_summary, "长期")
+            stage_summary = None
+    else:
+        if len(stage_summary) > max_stage_chars:
+            long_summary = _summarize_text(llm, stage_summary, None, "长期")
+            stage_summary = None
+
+    history = []
+    if long_summary:
+        history.append(("system", f"对话摘要（长期）：\n{long_summary}"))
+    if stage_summary:
+        history.append(("system", f"对话摘要（阶段）：\n{stage_summary}"))
+    return history + recent
 
 def enable_dpi_awareness():
     if platform.system() != "Windows":
@@ -642,9 +747,13 @@ def main():
             
             if not user_input:
                 continue
+            
+            if user_input.strip().lower() in ["y", "yes", "n", "no"]:
+                continue
 
             project_id = _extract_project_id()
             user_id = os.getenv("LOCAL_USER_ID", "local_user")
+            _add_short_term_message("user", user_input, project_id, user_id)
             resume_keywords = {"继续", "继续执行", "继续做", "continue"}
             if user_input.strip().lower() in resume_keywords:
                 plan = _load_task_plan()
@@ -654,9 +763,12 @@ def main():
                 else:
                     auto_input = "继续执行，基于当前屏幕状态完成任务。"
             else:
-                auto_input = _maybe_apply_template(user_input, project_id, user_id)
+                if _requests_all_memory_search(user_input):
+                    auto_input = f"用户要求搜索所有记忆。请同时检索长期记忆(get_operation_experience)与短期记忆(search_short_term_memory)，并合并后给出结论与依据。\n\n用户原始输入：{user_input}"
+                else:
+                    auto_input = _maybe_apply_template(user_input, project_id, user_id)
             for step in range(max_auto_steps):
-                chat_history = maybe_summarize_history(chat_history, summary_llm, max_turns=20)
+                chat_history = maybe_summarize_history(chat_history, summary_llm, max_recent_turns=8)
                 raw_output = ""
                 print("Agent: ", end="", flush=True)
                 buffer = ""
@@ -696,6 +808,7 @@ def main():
                 output = raw_output
                 output, reload_requested = strip_reload_signal(output)
                 state, cleaned_output = parse_state(output)
+                _add_short_term_message("assistant", cleaned_output or output, project_id, user_id)
                 chat_history.extend([
                     ("user", auto_input),
                     ("assistant", output)
@@ -705,11 +818,31 @@ def main():
                         agent_executor = create_agent_executor()
                         summary_llm = create_llm()
                         print("Agent: 已重载技能\n")
-                        # 主动发起一轮对话，告知 Agent 技能已重载，让其决定下一步
-                        auto_input = "系统消息：技能热加载已完成。请确认新技能是否可用继续执行上一步未完成的任务。"
+                        chat_history.append(("system", "系统消息：技能热加载已完成，请继续上一轮任务，避免重复生成技能。"))
+                        auto_input = (
+                            "系统消息：技能热加载已完成。请继续执行上一轮未完成的任务，不要重复创建已存在的技能/目录/文件。"
+                            "如果你不确定新技能是否已创建成功，优先通过 inspect_environment 或检查目录确认；"
+                            "确认存在后，直接调用新工具完成任务。\n\n"
+                            f"上一轮任务输入：{auto_input}"
+                        )
                         continue # 跳过后续的状态检查，直接进入下一轮循环（使用新的 auto_input）
                     except Exception as e:
                         print(f"Agent: 技能重载失败: {e}\n")
+                        try:
+                            from app.skills.skillgen_skill.scripts.skill_tools import rollback_change
+                            msg = rollback_change(change_id=None)
+                            print(f"Agent: 已自动回滚到最近稳定版本: {msg}\n")
+                            agent_executor = create_agent_executor()
+                            summary_llm = create_llm()
+                            chat_history.append(("system", f"系统消息：热加载失败已自动回滚。{msg}"))
+                            auto_input = (
+                                "系统消息：热加载失败，已自动回滚到最近稳定版本。"
+                                "请继续上一轮未完成的任务，不要重复创建技能/目录/文件。\n\n"
+                                f"上一轮任务输入：{auto_input}"
+                            )
+                            continue
+                        except Exception as e2:
+                            print(f"Agent: 自动回滚失败: {e2}\n")
 
                 if state == "DONE":
                     project_id = _extract_project_id()

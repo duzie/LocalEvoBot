@@ -22,6 +22,7 @@ app.skills.system_skill.scripts
 - read_notepad_text: 读取记事本内容
 - add_operation_experience: 记录操作经验
 - get_operation_experience: 查询操作经验
+- search_short_term_memory: 搜索短期记忆（本地对话消息）
 - delete_image: 删除图片文件
 - compress_operation_experience: 压缩操作经验
 - create_task_plan: 创建任务计划
