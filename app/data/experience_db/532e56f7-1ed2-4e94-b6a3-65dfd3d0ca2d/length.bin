@@ -1,1 +1,0 @@
-invalid type: string "System: task_template\nContent: {\"name\": \"高效数据获取方案验证\", \"trigger_keywords\": [\"看看能不能获取到\", \"不用Playwright\", \"如何访问\", \"经验总结\"], \"steps\": [\"1. 明确要获取的数据目标和已知信息（如URL、ID）。\", \"2. 优先寻找服务提供的公开或文档化API端点。\", \"��关注认证和参数需求。�

@@ -10,7 +10,7 @@ venv/
 *.json
 *.txt
 /app/data
-QQ截图20260129145008.png
+*.png
 moltbook_documentation_saved.pptx
 moltbook_skill_documentation.md
 moltbook_documentation_no_images.pptx

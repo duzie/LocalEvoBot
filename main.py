@@ -437,6 +437,16 @@ def _format_experiences_for_prompt(experiences):
     parts.extend([f"- {e}" for e in experiences])
     return "\n".join(parts)
 
+def _read_yes_no_or_defer():
+    raw = shared.get_input()
+    text = str(raw or "").strip()
+    low = text.lower()
+    if low in ["y", "yes"] or text in ["是", "保存", "使用", "好", "ok"]:
+        return True, None
+    if low in ["n", "no"] or text in ["否", "不保存", "不使用", "不要", "算了", "取消"]:
+        return False, None
+    return None, text
+
 def _contains_task_intent(text):
     if not text:
         return False
@@ -497,8 +507,10 @@ def _maybe_apply_template(user_input, project_id, user_id):
     print("Agent: 检索到可用模板\n")
     print(preview + "\n")
     print("User: 是否使用该模板执行？(yes/no) ", end="", flush=True)
-    confirm_input = shared.get_input().strip().lower()
-    if confirm_input in ["y", "yes", "是", "使用", "好", "ok"]:
+    ok, deferred = _read_yes_no_or_defer()
+    if ok is None and deferred:
+        shared.put_back(deferred)
+    if ok is True:
         experiences = _get_task_experiences(user_input, project_id, user_id)
         exp_text = _format_experiences_for_prompt(experiences)
         exp_block = f"\n\n{exp_text}" if exp_text else ""
@@ -858,8 +870,10 @@ def main():
                             print("Agent: 已生成个人认知总结（待确认）\n")
                             print(summary_text + "\n")
                             print("User: 是否保存以上总结？(yes/no) ", end="", flush=True)
-                            confirm_input = shared.get_input().strip().lower()
-                            if confirm_input in ["y", "yes", "是", "保存", "好", "ok"]:
+                            ok, deferred = _read_yes_no_or_defer()
+                            if ok is None and deferred:
+                                shared.put_back(deferred)
+                            if ok is True:
                                 try:
                                     if summary_json is None:
                                         summary_json = json.loads(summary_text)
