@@ -17,7 +17,7 @@ app.skills.input_skill.scripts
 - press_key: 模拟按键
 - select_all: 全选文本
 - switch_input_method: 切换输入法
-- mouse_click: 鼠标点击
+<!-- - mouse_click: 鼠标点击 -->
 
 ## Platforms
 - Windows

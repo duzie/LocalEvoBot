@@ -467,6 +467,40 @@
             flex-wrap:wrap;
             justify-content:flex-end;
         }
+        .memoryFilters{
+            padding: 12px;
+            display:grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap:10px;
+            border-bottom: 1px solid rgba(255,255,255,.32);
+            background: rgba(255,255,255,.5);
+        }
+        .memoryTable{
+            padding: 12px;
+            display:flex;
+            flex-direction:column;
+            gap:8px;
+        }
+        .memoryRow{
+            display:grid;
+            grid-template-columns: 140px 120px 120px 140px 1fr 180px;
+            gap:8px;
+            align-items:start;
+            padding: 10px;
+            border: 1px solid rgba(255,255,255,.35);
+            background: rgba(255,255,255,.7);
+            border-radius: 10px;
+        }
+        .memoryRow.header{
+            font-weight: 700;
+            background: rgba(255,255,255,.85);
+        }
+        .memoryCell{
+            font-size: 12px;
+            color: rgba(31,41,55,.9);
+            word-break: break-word;
+        }
+        .memoryCell.mono{font-family: var(--mono)}
         .modalMask{
             position: fixed;
             inset: 0;
@@ -606,6 +640,7 @@
             <button class="tab" data-tab="logs" type="button">运行日志</button>
             <button class="tab" data-tab="config" type="button">配置管理</button>
             <button class="tab" data-tab="templates" type="button">模板管理</button>
+            <button class="tab" data-tab="memories" type="button">记忆管理</button>
         </nav>
 
         <main class="main">
@@ -674,6 +709,28 @@
                 </div>
                 <div id="templateBody" class="tmplList"></div>
             </section>
+
+            <section id="panel-memories" class="card panel">
+                <div class="panelHeader">
+                    <div class="panelTitle">记忆管理</div>
+                    <div class="row">
+                        <button id="refreshMemoriesBtn" class="btn ghost" type="button">刷新</button>
+                        <button id="exportMemoriesJsonBtn" class="btn ghost" type="button">导出JSON</button>
+                        <button id="exportMemoriesCsvBtn" class="btn ghost" type="button">导出CSV</button>
+                    </div>
+                </div>
+                <div class="memoryFilters">
+                    <input id="memoryQuery" class="input" type="text" placeholder="关键词/问题" autocomplete="off" />
+                    <input id="memorySystem" class="input" type="text" placeholder="system (如 persona)" autocomplete="off" />
+                    <input id="memoryTags" class="input" type="text" placeholder="tags (逗号分隔)" autocomplete="off" />
+                    <input id="memoryScope" class="input" type="text" placeholder="scope" autocomplete="off" />
+                    <input id="memoryProject" class="input" type="text" placeholder="project_id" autocomplete="off" />
+                    <input id="memoryUser" class="input" type="text" placeholder="user_id" autocomplete="off" />
+                    <input id="memoryType" class="input" type="text" placeholder="memory_type" autocomplete="off" />
+                    <input id="memoryLimit" class="input" type="number" min="1" max="500" value="200" />
+                </div>
+                <div id="memoriesBody" class="memoryTable"></div>
+            </section>
         </main>
     </div>
     <div id="confirmMask" class="modalMask">
@@ -701,7 +758,8 @@
                 modelCurrent: 'doubao',
                 modelOptions: [],
                 lastAgentBubble: null,
-                auxCapture: false
+                auxCapture: false,
+                memoryItems: []
             }
 
             function setOnline(online){
@@ -833,6 +891,7 @@
                     panel.classList.toggle('active', panel.id === ('panel-' + next))
                 })
                 if (next === 'templates') loadTemplates()
+                if (next === 'memories') loadMemories()
             }
 
             function wsUrl(path){
@@ -1441,6 +1500,215 @@
                     err.className = 'pill'
                     err.textContent = '加载模板失败: ' + e
                     body.appendChild(err)
+                })
+            }
+
+            function getMemoryParams(){
+                var params = new URLSearchParams()
+                var q = (el('memoryQuery').value || '').trim()
+                var system = (el('memorySystem').value || '').trim()
+                var tags = (el('memoryTags').value || '').trim()
+                var scope = (el('memoryScope').value || '').trim()
+                var project = (el('memoryProject').value || '').trim()
+                var user = (el('memoryUser').value || '').trim()
+                var type = (el('memoryType').value || '').trim()
+                var limit = parseInt(el('memoryLimit').value || '200', 10)
+                if (q) params.set('query', q)
+                if (system) params.set('system', system)
+                if (tags) params.set('tags', tags)
+                if (scope) params.set('scope', scope)
+                if (project) params.set('project_id', project)
+                if (user) params.set('user_id', user)
+                if (type) params.set('memory_type', type)
+                if (limit && limit > 0) params.set('limit', String(limit))
+                return params
+            }
+
+            function loadMemories(){
+                var body = el('memoriesBody')
+                if (!body) return
+                body.textContent = ''
+                var loading = document.createElement('div')
+                loading.className = 'pill'
+                loading.textContent = '加载中'
+                body.appendChild(loading)
+                var params = getMemoryParams()
+                fetch('/api/config/experiences?' + params.toString()).then(function(r){return r.json()}).then(function(data){
+                    var list = (data && data.items) ? data.items : []
+                    state.memoryItems = list
+                    renderMemories(list)
+                }).catch(function(e){
+                    body.textContent = ''
+                    var err = document.createElement('div')
+                    err.className = 'pill'
+                    err.textContent = '加载记忆失败: ' + e
+                    body.appendChild(err)
+                })
+            }
+
+            function renderMemories(list){
+                var body = el('memoriesBody')
+                if (!body) return
+                body.textContent = ''
+                if (!list || !list.length){
+                    var empty = document.createElement('div')
+                    empty.className = 'pill'
+                    empty.textContent = '暂无记录'
+                    body.appendChild(empty)
+                    return
+                }
+                var header = document.createElement('div')
+                header.className = 'memoryRow header'
+                header.appendChild(buildMemoryCell('时间'))
+                header.appendChild(buildMemoryCell('System'))
+                header.appendChild(buildMemoryCell('类型'))
+                header.appendChild(buildMemoryCell('Tags'))
+                header.appendChild(buildMemoryCell('内容'))
+                header.appendChild(buildMemoryCell('项目/用户'))
+                header.appendChild(buildMemoryCell('操作'))
+                body.appendChild(header)
+                list.forEach(function(item){
+                    var row = document.createElement('div')
+                    row.className = 'memoryRow'
+                    row.appendChild(buildMemoryCell(item.created_at || '', true))
+                    row.appendChild(buildMemoryCell(item.system || ''))
+                    row.appendChild(buildMemoryCell(item.memory_type || ''))
+                    row.appendChild(buildMemoryCell(item.tags || ''))
+                    var content = item.content || ''
+                    var preview = content.length > 800 ? content.slice(0, 800) + '...' : content
+                    var meta = []
+                    if (item.scope) meta.push('scope: ' + item.scope)
+                    if (item.url) meta.push(item.url)
+                    var contentText = preview
+                    if (meta.length) contentText += '\n' + meta.join(' | ')
+                    row.appendChild(buildMemoryCell(contentText))
+                    var metaText = []
+                    if (item.project_id) metaText.push(item.project_id)
+                    if (item.user_id) metaText.push(item.user_id)
+                    row.appendChild(buildMemoryCell(metaText.join(' / ')))
+                    row.appendChild(buildMemoryActions(item))
+                    body.appendChild(row)
+                })
+            }
+
+            function buildMemoryCell(text, mono){
+                var cell = document.createElement('div')
+                cell.className = 'memoryCell' + (mono ? ' mono' : '')
+                cell.textContent = text == null ? '' : String(text)
+                return cell
+            }
+
+            function buildMemoryActions(item){
+                var cell = document.createElement('div')
+                cell.className = 'memoryCell'
+                var editBtn = document.createElement('button')
+                editBtn.className = 'btn ghost'
+                editBtn.type = 'button'
+                editBtn.textContent = '修改'
+                var delBtn = document.createElement('button')
+                delBtn.className = 'btn ghost'
+                delBtn.type = 'button'
+                delBtn.textContent = '删除'
+                var canEdit = item && item.id
+                editBtn.disabled = !canEdit
+                delBtn.disabled = !canEdit
+                editBtn.addEventListener('click', function(){
+                    if (!item || !item.id) return
+                    editMemory(item)
+                })
+                delBtn.addEventListener('click', function(){
+                    if (!item || !item.id) return
+                    deleteMemory(item)
+                })
+                cell.appendChild(editBtn)
+                cell.appendChild(delBtn)
+                return cell
+            }
+
+            function editMemory(item){
+                var payload = {
+                    content: item.content || '',
+                    system: item.system || '',
+                    tags: item.tags || '',
+                    scope: item.scope || '',
+                    project_id: item.project_id || '',
+                    user_id: item.user_id || '',
+                    memory_type: item.memory_type || '',
+                    url: item.url || ''
+                }
+                var text = prompt('编辑记忆(JSON)', JSON.stringify(payload, null, 2))
+                if (text == null) return
+                var data
+                try{
+                    data = JSON.parse(text)
+                }catch(e){
+                    alert('JSON 解析失败')
+                    return
+                }
+                fetch('/api/config/experiences/' + encodeURIComponent(item.id), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                }).then(function(res){
+                    if (res.ok){
+                        loadMemories()
+                    }else{
+                        alert('修改失败')
+                    }
+                }).catch(function(){
+                    alert('修改失败')
+                })
+            }
+
+            function deleteMemory(item){
+                if (!confirm('确认删除该记忆吗？')) return
+                fetch('/api/config/experiences/' + encodeURIComponent(item.id), {
+                    method: 'DELETE'
+                }).then(function(res){
+                    if (res.ok){
+                        loadMemories()
+                    }else{
+                        alert('删除失败')
+                    }
+                }).catch(function(){
+                    alert('删除失败')
+                })
+            }
+
+            function downloadBlob(blob, filename){
+                var url = URL.createObjectURL(blob)
+                var a = document.createElement('a')
+                a.href = url
+                a.download = filename
+                document.body.appendChild(a)
+                a.click()
+                document.body.removeChild(a)
+                setTimeout(function(){ URL.revokeObjectURL(url) }, 200)
+            }
+
+            function exportMemoriesJson(){
+                var params = getMemoryParams()
+                params.set('format', 'json')
+                fetch('/api/config/experiences/export?' + params.toString()).then(function(r){
+                    if (!r.ok) throw new Error(r.status)
+                    return r.blob()
+                }).then(function(blob){
+                    downloadBlob(blob, 'memories.json')
+                }).catch(function(e){
+                    appendChatMessage('>>> 系统: 导出记忆失败 ' + e)
+                })
+            }
+
+            function exportMemoriesCsv(){
+                var params = getMemoryParams()
+                params.set('format', 'csv')
+                fetch('/api/config/experiences/export?' + params.toString()).then(function(r){
+                    if (!r.ok) throw new Error(r.status)
+                    return r.blob()
+                }).then(function(blob){
+                    downloadBlob(blob, 'memories.csv')
+                }).catch(function(e){
+                    appendChatMessage('>>> 系统: 导出记忆失败 ' + e)
                 })
             }
 
@@ -2151,6 +2419,9 @@
             el('reloadConfigBtn').addEventListener('click', loadConfig)
             el('addConfigBtn').addEventListener('click', addConfig)
             el('refreshTemplatesBtn').addEventListener('click', loadTemplates)
+            el('refreshMemoriesBtn').addEventListener('click', loadMemories)
+            el('exportMemoriesJsonBtn').addEventListener('click', exportMemoriesJson)
+            el('exportMemoriesCsvBtn').addEventListener('click', exportMemoriesCsv)
             el('copyUrlBtn').addEventListener('click', copyAccessUrl)
             el('saveUrlBtn').addEventListener('click', saveAccessUrl)
             el('refreshLanBtn').addEventListener('click', loadLanHosts)

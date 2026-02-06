@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 from dotenv import dotenv_values, set_key
 import os
@@ -19,6 +19,16 @@ class AccessUrlUpdate(BaseModel):
 class TemplateUpdate(BaseModel):
     template: Dict[str, Any]
     tags: Optional[List[str]] = None
+
+class ExperienceUpdate(BaseModel):
+    content: Optional[str] = None
+    system: Optional[str] = None
+    tags: Optional[Any] = None
+    scope: Optional[str] = None
+    project_id: Optional[str] = None
+    user_id: Optional[str] = None
+    memory_type: Optional[str] = None
+    url: Optional[str] = None
 
 def _get_template_store():
     try:
@@ -54,6 +64,25 @@ def _build_page_content(metadata, content):
         f"User: {metadata.get('user_id', '')}\n"
         f"Type: {metadata.get('memory_type', '')}"
     )
+
+def _get_experience_items(query: Optional[str], system_name: Optional[str], tags: Optional[str], scope: Optional[str], project_id: Optional[str], user_id: Optional[str], memory_type: Optional[str], limit: int, offset: int):
+    try:
+        from app.skills.system_skill.scripts.experience_tools import list_operation_experiences
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"无法加载经验库: {e}")
+    tag_list = _normalize_tags(tags)
+    items = list_operation_experiences(
+        query=query,
+        system_filter=system_name,
+        scope=scope,
+        project_id=project_id,
+        user_id=user_id,
+        memory_type=memory_type,
+        tags=tag_list,
+        limit=limit,
+        offset=offset,
+    )
+    return items
 
 def _get_env_path():
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -171,6 +200,79 @@ async def list_templates():
         })
     templates.sort(key=lambda x: x.get("created_at") or "", reverse=True)
     return {"templates": templates}
+
+@router.get("/experiences")
+async def list_experiences(query: Optional[str] = None, system: Optional[str] = None, tags: Optional[str] = None, scope: Optional[str] = None, project_id: Optional[str] = None, user_id: Optional[str] = None, memory_type: Optional[str] = None, limit: int = 200, offset: int = 0):
+    safe_limit = max(1, min(int(limit or 200), 500))
+    safe_offset = max(0, int(offset or 0))
+    items = _get_experience_items(query, system, tags, scope, project_id, user_id, memory_type, safe_limit, safe_offset)
+    return {"items": items}
+
+@router.get("/experiences/export")
+async def export_experiences(format: str = "json", query: Optional[str] = None, system: Optional[str] = None, tags: Optional[str] = None, scope: Optional[str] = None, project_id: Optional[str] = None, user_id: Optional[str] = None, memory_type: Optional[str] = None, limit: int = 500, offset: int = 0):
+    safe_limit = max(1, min(int(limit or 500), 500))
+    safe_offset = max(0, int(offset or 0))
+    items = _get_experience_items(query, system, tags, scope, project_id, user_id, memory_type, safe_limit, safe_offset)
+    fmt = (format or "json").strip().lower()
+    if fmt == "csv":
+        headers = ["created_at", "system", "memory_type", "tags", "scope", "project_id", "user_id", "url", "content"]
+        rows = [",".join(headers)]
+        for item in items:
+            values = []
+            for key in headers:
+                value = item.get(key) if isinstance(item, dict) else ""
+                text = "" if value is None else str(value)
+                text = text.replace('"', '""')
+                values.append(f"\"{text}\"")
+            rows.append(",".join(values))
+        data = "\n".join(rows)
+        return Response(content=data, media_type="text/csv; charset=utf-8")
+    payload = json.dumps(items, ensure_ascii=False, indent=2)
+    return Response(content=payload, media_type="application/json")
+
+@router.put("/experiences/{experience_id}")
+async def update_experience(experience_id: str, payload: ExperienceUpdate):
+    store = _get_template_store()
+    existing = store.get(ids=[experience_id])
+    ids = existing.get("ids") or []
+    if not ids:
+        raise HTTPException(status_code=404, detail="记忆不存在")
+    meta = (existing.get("metadatas") or [{}])[0]
+    doc = (existing.get("documents") or [""])[0]
+    current_content = meta.get("original_content") or doc or ""
+    content = payload.content if payload.content is not None else current_content
+    tags_list = _normalize_tags(payload.tags if payload.tags is not None else (meta.get("tags") or meta.get("tags_list")))
+    tags_str = ", ".join(tags_list)
+    metadata = {
+        "system": payload.system if payload.system is not None else (meta.get("system") or ""),
+        "tags": tags_str,
+        "tags_list": tags_str,
+        "url": payload.url if payload.url is not None else (meta.get("url") or ""),
+        "scope": payload.scope if payload.scope is not None else (meta.get("scope") or ""),
+        "project_id": payload.project_id if payload.project_id is not None else (meta.get("project_id") or ""),
+        "user_id": payload.user_id if payload.user_id is not None else (meta.get("user_id") or ""),
+        "memory_type": payload.memory_type if payload.memory_type is not None else (meta.get("memory_type") or ""),
+        "created_at": meta.get("created_at") or datetime.now(timezone.utc).isoformat(),
+        "original_content": content
+    }
+    page_content = _build_page_content(metadata, content)
+    try:
+        store.delete(ids=[experience_id])
+        from langchain_core.documents import Document
+        new_ids = store.add_documents([Document(page_content=page_content, metadata=metadata)])
+        new_id = new_ids[0] if new_ids else experience_id
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"更新记忆失败: {e}")
+    return {"status": "success", "id": new_id}
+
+@router.delete("/experiences/{experience_id}")
+async def delete_experience(experience_id: str):
+    store = _get_template_store()
+    try:
+        store.delete(ids=[experience_id])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"删除记忆失败: {e}")
+    return {"status": "deleted", "id": experience_id}
 
 @router.put("/templates/{template_id}")
 async def update_template(template_id: str, payload: TemplateUpdate):

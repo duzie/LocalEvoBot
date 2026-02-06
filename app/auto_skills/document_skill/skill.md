@@ -17,6 +17,7 @@ app.auto_skills.document_skill.scripts
 - search_document
 - extract_document_section
 - get_document_stats
+- insert_text_at_line
 
 ## Platforms
 - Windows

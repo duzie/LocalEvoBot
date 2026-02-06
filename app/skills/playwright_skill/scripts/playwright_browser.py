@@ -75,6 +75,59 @@ def _reset_browser():
     _playwright = None
     _page = None
 
+import platform
+import shutil
+
+def _get_tesseract_cmd():
+    # 1. 检查 PATH
+    if shutil.which("tesseract"):
+        return None
+    
+    # 2. 检查常见 Windows 路径
+    paths = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        r"D:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"E:\Program Files\Tesseract-OCR\tesseract.exe"
+    ]
+    for p in paths:
+        if os.path.exists(p):
+            return p
+    return None
+
+def _setup_tesseract(language: str = "chi_sim"):
+    try:
+        import pytesseract
+    except ImportError:
+        return None, "未安装 pytesseract，请运行 pip install pytesseract pillow"
+        
+    cmd = _get_tesseract_cmd()
+    if cmd:
+        pytesseract.pytesseract.tesseract_cmd = cmd
+    else:
+        cmd = shutil.which("tesseract")
+        
+    if cmd:
+        # 设置环境变量
+        tessdata_dir = os.path.join(os.path.dirname(cmd), "tessdata")
+        # 有些安装可能在 share/tessdata
+        if not os.path.exists(tessdata_dir):
+            alt_dir = os.path.join(os.path.dirname(cmd), "share", "tessdata")
+            if os.path.exists(alt_dir):
+                tessdata_dir = alt_dir
+        
+        # 设置环境变量，防止找不到 data
+        # TESSDATA_PREFIX 应指向 tessdata 文件夹的父目录
+        if os.path.exists(tessdata_dir):
+            os.environ["TESSDATA_PREFIX"] = os.path.dirname(tessdata_dir)
+            
+            if language and "chi_sim" in language:
+                lang_file = os.path.join(tessdata_dir, "chi_sim.traineddata")
+                if not os.path.exists(lang_file):
+                     return None, f"OCR 识别失败: 缺少中文语言包。请检查 {lang_file} 是否存在。\n解决方法: 重新安装 Tesseract 并勾选 'Additional language data -> Chinese (Simplified)'。"
+            
+    return pytesseract, None
+
 @tool
 def playwright_open(url: str, headless: bool = False):
     """
@@ -250,5 +303,108 @@ def playwright_run_steps(steps: list, screenshot_dir: str = "reports/screenshots
             except:
                 pass
             return "\n".join(results)
+
+@tool
+def playwright_click_by_ocr(text: str, index: int = 0, offset_x: int = 0, offset_y: int = 0, exact_match: bool = False, double_click: bool = False):
+    """
+    通过 OCR 识别屏幕文字并点击指定位置。
+    当无法通过 CSS 选择器定位元素时，可使用此方法。
+    
+    Args:
+        text: 要查找的文字
+        index: 如果有多个匹配，点击第几个 (默认 0)
+        offset_x: 点击位置相对于文字中心的 X 轴偏移量
+        offset_y: 点击位置相对于文字中心的 Y 轴偏移量
+        exact_match: 是否完全匹配文字 (默认 False，使用包含匹配)
+        double_click: 是否双击 (默认 False)
+    """
+    global _page
+    if not _page:
+        return "浏览器未启动，请先调用 playwright_open"
+        
+    pytesseract, err = _setup_tesseract(language="chi_sim")
+    if err:
+        return err
+
+    try:
+        from PIL import Image
+        from pytesseract import Output
+        import io
+        
+        # 截图到内存
+        screenshot_bytes = _page.screenshot()
+        image = Image.open(io.BytesIO(screenshot_bytes))
+        
+        # OCR 识别
+        # lang='chi_sim+eng' 覆盖中英文
+        data = pytesseract.image_to_data(image, lang='chi_sim+eng', output_type=Output.DICT)
+        
+        matches = []
+        n_boxes = len(data['text'])
+        for i in range(n_boxes):
+            content = data['text'][i].strip()
+            if not content:
+                continue
+            
+            match = False
+            if exact_match:
+                if content == text:
+                    match = True
+            else:
+                if text in content:
+                    match = True
+            
+            if match:
+                matches.append({
+                    'x': data['left'][i],
+                    'y': data['top'][i],
+                    'w': data['width'][i],
+                    'h': data['height'][i],
+                    'text': content
+                })
+        
+        if not matches:
+            return f"未找到包含 '{text}' 的文字"
+            
+        if index >= len(matches):
+            return f"找到 {len(matches)} 个匹配，但索引 {index} 超出范围"
+            
+        target = matches[index]
+        
+        # 计算中心点
+        center_x = target['x'] + target['w'] / 2
+        center_y = target['y'] + target['h'] / 2
+        
+        final_x = center_x + offset_x
+        final_y = center_y + offset_y
+        
+        if double_click:
+            _page.mouse.dblclick(final_x, final_y)
+        else:
+            _page.mouse.click(final_x, final_y)
+        
+        return f"已点击文字 '{target['text']}' 位置 ({final_x}, {final_y})"
+        
+    except Exception as e:
+        return f"OCR 点击失败: {e}"
+
+@tool
+def playwright_type_current(text: str, delay: int = 50):
+    """
+    在当前焦点元素输入文本。
+    通常配合 playwright_click_by_ocr 使用 (先点击输入框或标签，再输入)。
+    
+    Args:
+        text: 要输入的文本
+        delay: 按键间隔 (毫秒)，默认 50
+    """
+    global _page
+    if not _page:
+        return "浏览器未启动，请先调用 playwright_open"
+    try:
+        _page.keyboard.type(text, delay=delay)
+        return f"已输入: {text}"
+    except Exception as e:
+        return f"输入失败: {e}"
 
     return "\n".join(results)

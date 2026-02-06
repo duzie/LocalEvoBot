@@ -26,6 +26,33 @@ def _get_short_term_db_path():
     os.makedirs(data_dir, exist_ok=True)
     return os.path.join(data_dir, "short_term_memory.sqlite3")
 
+def _get_short_term_md_dir():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(base_dir, "app", "data", "short_term_markdown")
+    os.makedirs(data_dir, exist_ok=True)
+    return data_dir
+
+def _sanitize_filename(value: str):
+    text = str(value or "").strip().replace(" ", "_")
+    cleaned = "".join(ch for ch in text if ch.isalnum() or ch in ("_", "-", "."))
+    return cleaned or "default"
+
+def _append_short_term_markdown(role: str, content: str, created_at: str, project_id: str, user_id: str):
+    if not content:
+        return
+    folder = _get_short_term_md_dir()
+    name = f"short_term_{_sanitize_filename(project_id)}_{_sanitize_filename(user_id)}.md"
+    path = os.path.join(folder, name)
+    header = f"# Short Term Memory\n\n- Project: {project_id}\n- User: {user_id}\n\n"
+    body = str(content).replace("\r\n", "\n").replace("\r", "\n")
+    body = body.replace("\n", "\n  ")
+    line = f"- **{created_at}** `{role}`\n  {body}\n"
+    if not os.path.exists(path):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(header)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(line)
+
 def _init_short_term_db():
     path = _get_short_term_db_path()
     conn = sqlite3.connect(path)
@@ -58,13 +85,15 @@ def _add_short_term_message(role: str, content: str, project_id: str, user_id: s
     conn = sqlite3.connect(path)
     try:
         cur = conn.cursor()
+        created_at = datetime.now(timezone.utc).isoformat()
         cur.execute(
             "INSERT INTO short_term_messages(role, content, created_at, project_id, user_id) VALUES (?, ?, ?, ?, ?)",
-            (str(role or "").strip(), text, datetime.now(timezone.utc).isoformat(), project_id or "", user_id or ""),
+            (str(role or "").strip(), text, created_at, project_id or "", user_id or ""),
         )
         conn.commit()
     finally:
         conn.close()
+    _append_short_term_markdown(role, text, created_at, project_id or "", user_id or "")
 
 def _requests_all_memory_search(text: str):
     t = str(text or "").strip()
@@ -722,7 +751,7 @@ def main():
     print("也可以通过 Web 控制台发送指令。\n")
 
     chat_history = []
-    max_auto_steps = 30
+    max_auto_steps = 60
     '''
     最大自动执行步数，防止无限循环。
     '''

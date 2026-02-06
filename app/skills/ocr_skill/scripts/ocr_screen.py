@@ -56,7 +56,8 @@ def ocr_screen(image_path: str = None, language: str = "chi_sim+eng"):
                     tessdata_dir = alt_dir
             
             # 设置环境变量，防止找不到 data
-            os.environ["TESSDATA_PREFIX"] = tessdata_dir
+            # TESSDATA_PREFIX 应指向 tessdata 文件夹的父目录
+            os.environ["TESSDATA_PREFIX"] = os.path.dirname(tessdata_dir)
 
             if "chi_sim" in language:
                 lang_file = os.path.join(tessdata_dir, "chi_sim.traineddata")

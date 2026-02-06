@@ -121,6 +121,19 @@ def _migrate_from_json():
     except Exception as e:
         print(f"Migration failed: {e}")
 
+def _build_persona_delete_where(scope: str = None, project_id: str = None, user_id: str = None):
+    persona_or = {"$or": [{"system": {"$eq": "persona"}}, {"memory_type": {"$eq": "persona"}}]}
+    clauses = []
+    if scope:
+        clauses.append({"scope": {"$eq": scope}})
+    if project_id:
+        clauses.append({"project_id": {"$eq": project_id}})
+    if user_id:
+        clauses.append({"user_id": {"$eq": user_id}})
+    if clauses:
+        return {"$and": [persona_or, *clauses]}
+    return persona_or
+
 @tool
 def add_operation_experience(system_name: str, content: str, tags: list = None, url: str = None, scope: str = None, project_id: str = None, user_id: str = None, memory_type: str = None):
     """
@@ -153,8 +166,127 @@ def add_operation_experience(system_name: str, content: str, tags: list = None, 
         "original_content": content
     }
     
+    is_persona = (system_name or "").strip().lower() == "persona" or (memory_type or "").strip().lower() == "persona" or "persona" in [t.lower() for t in tags_list]
+    if is_persona:
+        try:
+            store.delete(where=_build_persona_delete_where(scope, project_id, user_id))
+        except Exception:
+            try:
+                store.delete(where={"system": {"$eq": "persona"}})
+            except Exception:
+                try:
+                    store.delete(where={"memory_type": {"$eq": "persona"}})
+                except Exception:
+                    pass
     store.add_documents([Document(page_content=page_content, metadata=metadata)])
     return "已存入向量知识库。"
+
+def list_operation_experiences(query: str = None, system_filter: str = None, scope: str = None, project_id: str = None, user_id: str = None, memory_type: str = None, tags: list = None, limit: int = 200, offset: int = 0):
+    store = _init_components()
+    if not store:
+        return []
+    filter_dict = {}
+    if system_filter:
+        filter_dict["system"] = system_filter
+    if scope:
+        filter_dict["scope"] = scope
+    if project_id:
+        filter_dict["project_id"] = project_id
+    if user_id:
+        filter_dict["user_id"] = user_id
+    if memory_type:
+        filter_dict["memory_type"] = memory_type
+    where = None
+    if filter_dict:
+        clauses = []
+        for k, v in filter_dict.items():
+            if v is None or v == "":
+                continue
+            clauses.append({k: {"$eq": v}})
+        if clauses:
+            where = {"$and": clauses} if len(clauses) > 1 else clauses[0]
+    tag_filters = tags if isinstance(tags, list) else []
+    safe_limit = max(1, min(int(limit or 200), 500))
+    safe_offset = max(0, int(offset or 0))
+    items = []
+    if query:
+        try:
+            result = store._collection.query(query_texts=[query], n_results=safe_limit, where=where)
+            ids = (result.get("ids") or [[]])[0]
+            metadatas = (result.get("metadatas") or [[]])[0]
+            documents = (result.get("documents") or [[]])[0]
+            for i, doc_id in enumerate(ids):
+                meta = metadatas[i] if i < len(metadatas) else {}
+                doc = documents[i] if i < len(documents) else ""
+                if tag_filters:
+                    doc_tags = meta.get("tags_list") or meta.get("tags") or ""
+                    if not all(tag in doc_tags for tag in tag_filters):
+                        continue
+                items.append({
+                    "id": doc_id,
+                    "content": meta.get("original_content") or doc,
+                    "system": meta.get("system"),
+                    "tags": meta.get("tags"),
+                    "scope": meta.get("scope"),
+                    "project_id": meta.get("project_id"),
+                    "user_id": meta.get("user_id"),
+                    "memory_type": meta.get("memory_type"),
+                    "created_at": meta.get("created_at"),
+                    "url": meta.get("url")
+                })
+            return items
+        except Exception:
+            results = store.similarity_search(query, k=safe_limit, filter=where)
+            for doc in results:
+                meta = doc.metadata or {}
+                if tag_filters:
+                    doc_tags = meta.get("tags_list") or meta.get("tags") or ""
+                    if not all(tag in doc_tags for tag in tag_filters):
+                        continue
+                items.append({
+                    "id": meta.get("id") or "",
+                    "content": meta.get("original_content") or doc.page_content,
+                    "system": meta.get("system"),
+                    "tags": meta.get("tags"),
+                    "scope": meta.get("scope"),
+                    "project_id": meta.get("project_id"),
+                    "user_id": meta.get("user_id"),
+                    "memory_type": meta.get("memory_type"),
+                    "created_at": meta.get("created_at"),
+                    "url": meta.get("url")
+                })
+            return items
+    try:
+        result = store.get(where=where, limit=safe_limit, offset=safe_offset)
+    except Exception:
+        try:
+            result = store._collection.get(where=where, limit=safe_limit, offset=safe_offset)
+        except Exception:
+            return []
+    ids = result.get("ids") or []
+    metadatas = result.get("metadatas") or []
+    documents = result.get("documents") or []
+    for i, doc_id in enumerate(ids):
+        meta = metadatas[i] if i < len(metadatas) else {}
+        doc = documents[i] if i < len(documents) else ""
+        if tag_filters:
+            doc_tags = meta.get("tags_list") or meta.get("tags") or ""
+            if not all(tag in doc_tags for tag in tag_filters):
+                continue
+        items.append({
+            "id": doc_id,
+            "content": meta.get("original_content") or doc,
+            "system": meta.get("system"),
+            "tags": meta.get("tags"),
+            "scope": meta.get("scope"),
+            "project_id": meta.get("project_id"),
+            "user_id": meta.get("user_id"),
+            "memory_type": meta.get("memory_type"),
+            "created_at": meta.get("created_at"),
+            "url": meta.get("url")
+        })
+    items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    return items
 
 @tool
 def get_operation_experience(query: str, system_filter: str = None, n_results: int = 3, scope: str = None, project_id: str = None, user_id: str = None, memory_type: str = None, tags: list = None):

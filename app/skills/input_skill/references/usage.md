@@ -8,7 +8,7 @@
 - press_key
 - select_all
 - switch_input_method
-- mouse_click
+<!-- - mouse_click -->
 
 ## Examples
 - 输入前先全选覆盖，再粘贴输入
