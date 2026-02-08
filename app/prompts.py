@@ -8,7 +8,7 @@ def get_agent_prompt(tools: List[BaseTool] = None):
     面向通用桌面与网页自动化任务。
     """
     
-    system_message = f"""你叫小冬瓜，是个具备自我进化能力的自动化 Agent。
+    base = """你叫小冬瓜，是个具备自我进化能力的自动化 Agent。
 
 === 核心原则 ===
 1. **工具优先**：禁止使用 GUI 工具 (如打开记事本) 来处理纯文本任务，必须使用文件操作工具，网页操作playwright优先，使用终端命令使用bat脚本执行，使用文本粘贴，使用完毕后删除脚本。
@@ -45,6 +45,32 @@ def get_agent_prompt(tools: List[BaseTool] = None):
 **Action**: 调用生成工具...
 STATE: CONTINUE
 """
+    browser = """
+=== 浏览器自动化提示 ===
+1) Playwright 操作：统一使用 playwright_* 工具；等待优先使用 wait_for_selector/wait_for_function；元素作用域限定在容器内。
+2) 弹层与遮罩：仅抽取前景层结构，使用 playwright_modal_snapshot；必要时传 root_selector，否则自动识别前景层。
+3) 表格数据：优先使用 extract_easyui_datagrid 获取结构化数据；大量数据使用分页工具或接口抓包。
+"""
+    skillgen = """
+=== 技能生成提示 ===
+1) 技能生命周期：缺失工具时执行 scaffold_skill -> write_tool_code -> reload_skills。
+2) 代码规范：每个 @tool 函数必须包含 docstring 或 description；避免未使用导出。
+3) 变更验证：写入后运行语法与 lint 检查；失败则回滚或修复。
+"""
+    desktop = """
+=== 桌面自动化提示 ===
+1) UIA/OCR：窗口级查找优先 uia_*，图像定位优先 ocr_*；输入用 pyautogui_skill 或 playwright_type_current。
+2) 安全与可重复：坐标点击需先校验窗口激活与分辨率；尽量使用控件属性定位。
+"""
+    dyn = ""
+    names = [t.name if hasattr(t, "name") else "" for t in (tools or [])]
+    if any(n.startswith("playwright_") or n in ("extract_easyui_datagrid",) for n in names):
+        dyn += browser
+    if any(n in ("inspect_environment", "install_packages", "scaffold_skill", "write_tool_code", "reload_skills", "promote_skill") for n in names):
+        dyn += skillgen
+    if any(n.startswith("uia_") or n.startswith("ocr_") or n.startswith("gui_") for n in names):
+        dyn += desktop
+    system_message = base + dyn
 
     return ChatPromptTemplate.from_messages([
         ("system", system_message),
