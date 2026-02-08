@@ -293,6 +293,12 @@ def _rollback_op(op_id: str):
 
 @tool
 def list_change_versions(n: int = 10):
+    """
+    列出最近的变更版本记录。
+
+    Args:
+        n: 返回数量上限
+    """
     items = _list_ops(n)
     simplified = []
     for it in items:
@@ -311,6 +317,12 @@ def list_change_versions(n: int = 10):
 
 @tool
 def rollback_change(change_id: str = None):
+    """
+    回滚到指定版本或最近稳定版本。
+
+    Args:
+        change_id: 目标版本 ID，空则回滚到最近稳定版本
+    """
     target = (change_id or "").strip()
     if not target:
         target = _get_latest_stable_op_id()
@@ -320,6 +332,13 @@ def rollback_change(change_id: str = None):
 
 @tool
 def search_change_logs(keyword: str, limit: int = 20):
+    """
+    按关键词搜索变更日志。
+
+    Args:
+        keyword: 搜索关键词
+        limit: 返回数量上限
+    """
     kw = str(keyword or "").strip()
     if not kw:
         return json.dumps([], ensure_ascii=False)
@@ -342,6 +361,13 @@ def search_change_logs(keyword: str, limit: int = 20):
 
 @tool
 def export_change_logs(fmt: str = "json", limit: int = 100):
+    """
+    导出变更日志。
+
+    Args:
+        fmt: 导出格式，支持 json 或 csv
+        limit: 返回数量上限
+    """
     items = _list_ops(limit)
     export_items = []
     for it in items:

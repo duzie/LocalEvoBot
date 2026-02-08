@@ -501,6 +501,31 @@
             word-break: break-word;
         }
         .memoryCell.mono{font-family: var(--mono)}
+        .cookieTable{
+            padding: 12px;
+            display:flex;
+            flex-direction:column;
+            gap:8px;
+        }
+        .cookieRow{
+            display:grid;
+            grid-template-columns: 240px 100px 200px 180px;
+            gap:8px;
+            align-items:center;
+            padding: 10px;
+            border: 1px solid rgba(255,255,255,.35);
+            background: rgba(255,255,255,.7);
+            border-radius: 10px;
+        }
+        .cookieRow.header{
+            font-weight: 700;
+            background: rgba(255,255,255,.85);
+        }
+        .cookieCell{
+            font-size: 12px;
+            color: rgba(31,41,55,.9);
+            word-break: break-word;
+        }
         .modalMask{
             position: fixed;
             inset: 0;
@@ -641,6 +666,7 @@
             <button class="tab" data-tab="config" type="button">配置管理</button>
             <button class="tab" data-tab="templates" type="button">模板管理</button>
             <button class="tab" data-tab="memories" type="button">记忆管理</button>
+            <button class="tab" data-tab="cookies" type="button">Cookie管理</button>
         </nav>
 
         <main class="main">
@@ -731,6 +757,16 @@
                 </div>
                 <div id="memoriesBody" class="memoryTable"></div>
             </section>
+
+            <section id="panel-cookies" class="card panel">
+                <div class="panelHeader">
+                    <div class="panelTitle">Cookie 管理</div>
+                    <div class="row">
+                        <button id="refreshCookiesBtn" class="btn ghost" type="button">刷新</button>
+                    </div>
+                </div>
+                <div id="cookiesBody" class="cookieTable"></div>
+            </section>
         </main>
     </div>
     <div id="confirmMask" class="modalMask">
@@ -759,7 +795,11 @@
                 modelOptions: [],
                 lastAgentBubble: null,
                 auxCapture: false,
-                memoryItems: []
+                memoryItems: [],
+                isSending: false,
+                isRunning: false,
+                confirmTimer: null,
+                confirmCountdown: null
             }
 
             function setOnline(online){
@@ -777,12 +817,40 @@
             function setChatConn(connected){
                 state.chatConnected = connected
                 el('chatConn').textContent = connected ? '已连接' : '未连接'
-                el('sendBtn').disabled = !connected
+                updateSendButton()
                 el('chatInput').disabled = !connected
             }
 
             function setModelInfo(text){
                 el('modelInfo').textContent = text || ''
+            }
+
+            function setRunning(running){
+                state.isRunning = !!running
+                updateSendButton()
+            }
+
+            function setSending(sending){
+                state.isSending = !!sending
+                updateSendButton()
+            }
+
+            function updateSendButton(){
+                var btn = el('sendBtn')
+                var input = el('chatInput')
+                var connected = state.chatConnected
+                if (!connected){
+                    btn.disabled = true
+                    btn.textContent = '发送'
+                    return
+                }
+                if (state.isRunning){
+                    btn.disabled = false
+                    btn.textContent = '停止'
+                }else{
+                    btn.textContent = '发送'
+                    btn.disabled = state.isSending || !connected
+                }
             }
 
             function appendAuxMessage(raw){
@@ -892,6 +960,7 @@
                 })
                 if (next === 'templates') loadTemplates()
                 if (next === 'memories') loadMemories()
+                if (next === 'cookies') loadCookies()
             }
 
             function wsUrl(path){
@@ -909,7 +978,14 @@
                     appendChatMessage('>>> 系统: 已连接到小冬瓜')
                 }
                 ws.onmessage = function(ev){
-                    appendChatMessage(ev.data)
+                    var data = ev.data || ''
+                    // Parse system status hints
+                    if (typeof data === 'string' && data.indexOf('>>> 系统: 状态=') === 0){
+                        if (data.indexOf('执行中') !== -1) setRunning(true)
+                        if (data.indexOf('空闲') !== -1) setRunning(false)
+                        if (data.indexOf('已停止') !== -1) setRunning(false)
+                    }
+                    appendChatMessage(data)
                 }
                 ws.onclose = function(){
                     setChatConn(false)
@@ -950,14 +1026,19 @@
                 var text = (msg || '').trim()
                 if (!text || !state.chatConnected) return
                 appendChatMessage('User: ' + text)
+                setSending(true)
                 fetch('/api/chat/send', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: text })
                 }).then(function(res){
                     if (!res.ok) appendChatMessage('>>> 系统: 发送失败')
+                    // Assume agent will start soon
+                    setSending(false)
+                    setRunning(true)
                 }).catch(function(e){
                     appendChatMessage('>>> 系统: 发送出错 ' + e)
+                    setSending(false)
                 })
             }
 
@@ -979,6 +1060,8 @@
                 var text = String(msg || '')
                 text = text.replace(/\r/g, '')
                 text = text.replace(/^\s*User\s*:?\s*/i, '').trim()
+                var timeoutMatch = text.match(/(\d+)\s*秒后自动放弃/)
+                var timeoutSeconds = timeoutMatch ? parseInt(timeoutMatch[1], 10) : null
                 if (text.indexOf('是否保存以上总结？') !== -1) {
                     return {
                         title: '保存总结确认',
@@ -986,7 +1069,8 @@
                         okText: '保存',
                         cancelText: '不保存',
                         okValue: 'yes',
-                        cancelValue: 'no'
+                        cancelValue: 'no',
+                        timeoutSeconds: timeoutSeconds
                     }
                 }
                 if (text.indexOf('是否使用该模板执行？') !== -1) {
@@ -996,7 +1080,8 @@
                         okText: '使用',
                         cancelText: '不使用',
                         okValue: 'yes',
-                        cancelValue: 'no'
+                        cancelValue: 'no',
+                        timeoutSeconds: timeoutSeconds
                     }
                 }
                 return null
@@ -1045,7 +1130,40 @@
                     box.classList.remove('active')
                     ok.onclick = null
                     cancel.onclick = null
+                    if (state.confirmTimer){
+                        clearTimeout(state.confirmTimer)
+                        state.confirmTimer = null
+                    }
+                    if (state.confirmCountdown){
+                        clearInterval(state.confirmCountdown)
+                        state.confirmCountdown = null
+                    }
                 }
+                var startTimeout = function(){
+                    var seconds = parseInt(info.timeoutSeconds, 10)
+                    if (!seconds || isNaN(seconds) || seconds <= 0) return
+                    var remain = seconds
+                    status.textContent = '将在 ' + remain + ' 秒后自动放弃'
+                    if (state.confirmCountdown){
+                        clearInterval(state.confirmCountdown)
+                    }
+                    state.confirmCountdown = setInterval(function(){
+                        remain -= 1
+                        if (remain <= 0){
+                            clearInterval(state.confirmCountdown)
+                            state.confirmCountdown = null
+                        }else{
+                            status.textContent = '将在 ' + remain + ' 秒后自动放弃'
+                        }
+                    }, 1000)
+                    if (state.confirmTimer){
+                        clearTimeout(state.confirmTimer)
+                    }
+                    state.confirmTimer = setTimeout(function(){
+                        close()
+                    }, seconds * 1000)
+                }
+                startTimeout()
                 ok.onclick = function(){
                     sendMessageSilent(info.okValue || 'yes')
                     status.textContent = '已选择：' + (info.okText || '是')
@@ -1070,7 +1188,16 @@
                 }
             }
 
-            function sendMessage(){
+            function stopAgent(){
+                if (!state.chatConnected) return
+                fetch('/api/chat/stop', { method: 'POST' }).catch(function(){})
+            }
+
+            function sendOrStop(){
+                if (state.isRunning){
+                    stopAgent()
+                    return
+                }
                 var input = el('chatInput')
                 var msg = (input.value || '').trim()
                 if (!msg || !state.chatConnected) return
@@ -1673,6 +1800,102 @@
                 }).catch(function(){
                     alert('删除失败')
                 })
+            }
+
+            function loadCookies(){
+                var body = el('cookiesBody')
+                if (!body) return
+                body.textContent = ''
+                var loading = document.createElement('div')
+                loading.className = 'pill'
+                loading.textContent = '加载中'
+                body.appendChild(loading)
+                fetch('/api/chat/cookies').then(function(r){return r.json()}).then(function(data){
+                    var list = (data && data.items) ? data.items : []
+                    renderCookies(list)
+                }).catch(function(e){
+                    body.textContent = ''
+                    var err = document.createElement('div')
+                    err.className = 'pill'
+                    err.textContent = '加载 Cookie 失败: ' + e
+                    body.appendChild(err)
+                })
+            }
+
+            function renderCookies(list){
+                var body = el('cookiesBody')
+                if (!body) return
+                body.textContent = ''
+                if (!list || !list.length){
+                    var empty = document.createElement('div')
+                    empty.className = 'pill'
+                    empty.textContent = '暂无记录'
+                    body.appendChild(empty)
+                    return
+                }
+                var header = document.createElement('div')
+                header.className = 'cookieRow header'
+                header.appendChild(buildCookieCell('域名'))
+                header.appendChild(buildCookieCell('数量'))
+                header.appendChild(buildCookieCell('更新时间'))
+                header.appendChild(buildCookieCell('操作'))
+                body.appendChild(header)
+                list.forEach(function(item){
+                    var row = document.createElement('div')
+                    row.className = 'cookieRow'
+                    row.appendChild(buildCookieCell(item.domain || item.file || ''))
+                    row.appendChild(buildCookieCell(String(item.count == null ? '' : item.count)))
+                    row.appendChild(buildCookieCell(item.updated_at || ''))
+                    row.appendChild(buildCookieActions(item))
+                    body.appendChild(row)
+                })
+            }
+
+            function buildCookieCell(text){
+                var cell = document.createElement('div')
+                cell.className = 'cookieCell'
+                cell.textContent = text == null ? '' : String(text)
+                return cell
+            }
+
+            function buildCookieActions(item){
+                var cell = document.createElement('div')
+                cell.className = 'cookieCell'
+                var viewBtn = document.createElement('button')
+                viewBtn.className = 'btn ghost'
+                viewBtn.type = 'button'
+                viewBtn.textContent = '查看'
+                var delBtn = document.createElement('button')
+                delBtn.className = 'btn ghost'
+                delBtn.type = 'button'
+                delBtn.textContent = '删除'
+                viewBtn.addEventListener('click', function(){
+                    var domain = item.domain || ''
+                    if (!domain) return
+                    fetch('/api/chat/cookies/' + encodeURIComponent(domain)).then(function(r){return r.json()}).then(function(data){
+                        var text = JSON.stringify(data, null, 2)
+                        prompt('Cookie 内容', text)
+                    }).catch(function(){
+                        alert('读取失败')
+                    })
+                })
+                delBtn.addEventListener('click', function(){
+                    var domain = item.domain || ''
+                    if (!domain) return
+                    if (!confirm('确认删除该域名的 Cookie 吗？')) return
+                    fetch('/api/chat/cookies/' + encodeURIComponent(domain), { method: 'DELETE' }).then(function(res){
+                        if (res.ok){
+                            loadCookies()
+                        }else{
+                            alert('删除失败')
+                        }
+                    }).catch(function(){
+                        alert('删除失败')
+                    })
+                })
+                cell.appendChild(viewBtn)
+                cell.appendChild(delBtn)
+                return cell
             }
 
             function downloadBlob(blob, filename){
@@ -2382,11 +2605,11 @@
                 }
             })
 
-            el('sendBtn').addEventListener('click', sendMessage)
+            el('sendBtn').addEventListener('click', sendOrStop)
             el('chatInput').addEventListener('keydown', function(e){
                 if (e.key === 'Enter' && !e.shiftKey && !e.isComposing){
                     e.preventDefault()
-                    sendMessage()
+                    sendOrStop()
                 }
             })
             var voiceBtn = el('voiceBtn')
@@ -2422,6 +2645,7 @@
             el('refreshMemoriesBtn').addEventListener('click', loadMemories)
             el('exportMemoriesJsonBtn').addEventListener('click', exportMemoriesJson)
             el('exportMemoriesCsvBtn').addEventListener('click', exportMemoriesCsv)
+            el('refreshCookiesBtn').addEventListener('click', loadCookies)
             el('copyUrlBtn').addEventListener('click', copyAccessUrl)
             el('saveUrlBtn').addEventListener('click', saveAccessUrl)
             el('refreshLanBtn').addEventListener('click', loadLanHosts)

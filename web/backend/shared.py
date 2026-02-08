@@ -8,6 +8,7 @@ class SharedState:
         self._pushback = queue.LifoQueue()
         self.broadcast_func: Optional[Callable[[str], None]] = None
         self.loop: Optional[asyncio.AbstractEventLoop] = None
+        self.stop_requested: bool = False
 
     def put_input(self, text: str):
         self.input_queue.put(text)
@@ -33,6 +34,12 @@ class SharedState:
                     asyncio.run_coroutine_threadsafe(self.broadcast_func(message), self.loop)
             except Exception as e:
                 print(f"Broadcast error: {e}")
+    
+    def request_stop(self):
+        self.stop_requested = True
+    
+    def clear_stop(self):
+        self.stop_requested = False
 
 # Global instance
 shared = SharedState()

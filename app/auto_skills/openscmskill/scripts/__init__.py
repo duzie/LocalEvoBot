@@ -1,0 +1,1 @@
+# openscmskill scripts package

@@ -4,6 +4,7 @@ import ctypes
 import sys
 import re
 import threading
+import queue
 import json
 import sqlite3
 from datetime import datetime, timezone
@@ -20,11 +21,13 @@ RELOAD_SIGNAL = "__RELOAD_SKILLS__"
 SET_MODEL_PREFIX = "__SET_MODEL__:"
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[ -/]*[@-~]")
 
-def _get_short_term_db_path():
+def _get_short_term_db_path(date_key: str = None):
     base_dir = os.path.dirname(os.path.abspath(__file__))
     data_dir = os.path.join(base_dir, "app", "data")
     os.makedirs(data_dir, exist_ok=True)
-    return os.path.join(data_dir, "short_term_memory.sqlite3")
+    if not date_key:
+        date_key = datetime.now(timezone.utc).strftime("%Y%m%d")
+    return os.path.join(data_dir, f"short_term_memory_{date_key}.sqlite3")
 
 def _get_short_term_md_dir():
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -37,11 +40,11 @@ def _sanitize_filename(value: str):
     cleaned = "".join(ch for ch in text if ch.isalnum() or ch in ("_", "-", "."))
     return cleaned or "default"
 
-def _append_short_term_markdown(role: str, content: str, created_at: str, project_id: str, user_id: str):
+def _append_short_term_markdown(role: str, content: str, created_at: str, project_id: str, user_id: str, date_key: str):
     if not content:
         return
     folder = _get_short_term_md_dir()
-    name = f"short_term_{_sanitize_filename(project_id)}_{_sanitize_filename(user_id)}.md"
+    name = f"short_term_{_sanitize_filename(project_id)}_{_sanitize_filename(user_id)}_{date_key}.md"
     path = os.path.join(folder, name)
     header = f"# Short Term Memory\n\n- Project: {project_id}\n- User: {user_id}\n\n"
     body = str(content).replace("\r\n", "\n").replace("\r", "\n")
@@ -53,8 +56,8 @@ def _append_short_term_markdown(role: str, content: str, created_at: str, projec
     with open(path, "a", encoding="utf-8") as f:
         f.write(line)
 
-def _init_short_term_db():
-    path = _get_short_term_db_path()
+def _init_short_term_db(date_key: str = None):
+    path = _get_short_term_db_path(date_key)
     conn = sqlite3.connect(path)
     try:
         cur = conn.cursor()
@@ -80,12 +83,13 @@ def _add_short_term_message(role: str, content: str, project_id: str, user_id: s
     text = str(content or "").strip()
     if not text:
         return
-    _init_short_term_db()
-    path = _get_short_term_db_path()
+    created_at = datetime.now(timezone.utc).isoformat()
+    date_key = created_at[:10].replace("-", "")
+    _init_short_term_db(date_key)
+    path = _get_short_term_db_path(date_key)
     conn = sqlite3.connect(path)
     try:
         cur = conn.cursor()
-        created_at = datetime.now(timezone.utc).isoformat()
         cur.execute(
             "INSERT INTO short_term_messages(role, content, created_at, project_id, user_id) VALUES (?, ?, ?, ?, ?)",
             (str(role or "").strip(), text, created_at, project_id or "", user_id or ""),
@@ -93,7 +97,7 @@ def _add_short_term_message(role: str, content: str, project_id: str, user_id: s
         conn.commit()
     finally:
         conn.close()
-    _append_short_term_markdown(role, text, created_at, project_id or "", user_id or "")
+    _append_short_term_markdown(role, text, created_at, project_id or "", user_id or "", date_key)
 
 def _requests_all_memory_search(text: str):
     t = str(text or "").strip()
@@ -476,6 +480,19 @@ def _read_yes_no_or_defer():
         return False, None
     return None, text
 
+def _read_yes_no_or_timeout(timeout_seconds: int = 5):
+    try:
+        raw = shared.get_input(timeout=timeout_seconds)
+    except queue.Empty:
+        return None, None, True
+    text = str(raw or "").strip()
+    low = text.lower()
+    if low in ["y", "yes"] or text in ["是", "保存", "使用", "好", "ok"]:
+        return True, None, False
+    if low in ["n", "no"] or text in ["否", "不保存", "不使用", "不要", "算了", "取消"]:
+        return False, None, False
+    return None, text, False
+
 def _contains_task_intent(text):
     if not text:
         return False
@@ -813,10 +830,15 @@ def main():
                 raw_output = ""
                 print("Agent: ", end="", flush=True)
                 buffer = ""
+                print(">>> 系统: 状态=执行中")
                 for chunk in agent_executor.stream({
                     "input": auto_input,
                     "chat_history": chat_history
                 }):
+                    if shared.stop_requested:
+                        shared.clear_stop()
+                        print(">>> 系统: 状态=已停止")
+                        break
                     if not isinstance(chunk, dict):
                         continue
                     text = chunk.get("output")
@@ -845,6 +867,9 @@ def main():
                 if buffer and not buffer.strip().upper().startswith("STATE:"):
                     print(buffer, end="", flush=True)
                 print("\n")
+                if shared.stop_requested:
+                    shared.clear_stop()
+                    print(">>> 系统: 状态=空闲")
 
                 output = raw_output
                 output, reload_requested = strip_reload_signal(output)
@@ -889,20 +914,28 @@ def main():
                     project_id = _extract_project_id()
                     user_id = os.getenv("LOCAL_USER_ID", "local_user")
                     try:
+                        print("Agent: 状态=生成总结\n")
                         summary_text = _build_cognition_summary(chat_history, summary_llm, project_id, user_id)
                         should_prompt, summary_json = _should_prompt_save(summary_text)
                         if summary_json is not None:
+                            if not (summary_json.get("task_templates") or []):
+                                print("Agent: 状态=生成任务模板\n")
                             summary_json = _ensure_task_templates(summary_json, chat_history, summary_llm, project_id, user_id)
                             summary_text = json.dumps(summary_json, ensure_ascii=False, indent=2)
                             should_prompt, summary_json = _should_prompt_save(summary_text)
                         if should_prompt:
                             print("Agent: 已生成个人认知总结（待确认）\n")
                             print(summary_text + "\n")
-                            print("User: 是否保存以上总结？(yes/no) ", end="", flush=True)
-                            ok, deferred = _read_yes_no_or_defer()
-                            if ok is None and deferred:
-                                shared.put_back(deferred)
-                            if ok is True:
+                            print("User: 是否保存以上总结？(yes/no，5秒后自动放弃) ", end="", flush=True)
+                            ok, deferred, timed_out = _read_yes_no_or_timeout(5)
+                            if ok is None:
+                                if deferred:
+                                    shared.put_back(deferred)
+                                if timed_out:
+                                    print("\nAgent: 超时未确认，已自动放弃保存。\n")
+                                else:
+                                    print("\nAgent: 未确认，已自动放弃保存。\n")
+                            elif ok is True:
                                 try:
                                     if summary_json is None:
                                         summary_json = json.loads(summary_text)
@@ -932,12 +965,15 @@ def main():
                             os.remove(plan_path)
                     except Exception as e:
                         print(f"Agent: 清理任务计划失败: {e}\n")
+                    print(">>> 系统: 状态=空闲")
                     break
                 if state != "CONTINUE":
+                    print(">>> 系统: 状态=空闲")
                     break
                 auto_input = "继续执行，基于当前屏幕状态完成任务。"
                 if step == max_auto_steps - 1:
                     print("Agent: 已达到自动执行步数上限。输入“继续”将从任务计划的当前步骤继续。\n")
+                    print(">>> 系统: 状态=空闲")
                     break
 
         except KeyboardInterrupt:

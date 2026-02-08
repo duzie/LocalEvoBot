@@ -83,6 +83,13 @@ python main.py
 - 可切换模型（下拉框）
 - 可编辑 `.env` 配置
 - 可显示局域网地址并生成二维码，方便手机访问
+- 提供日志与对话的 WebSocket 实时流
+
+**Web 控制台接口**
+- 配置管理：`/api/config`
+- 访问地址与局域网发现：`/api/config/access-url`、`/api/config/hosts`
+- 日志 WebSocket：`/api/logs/ws`
+- 对话 WebSocket：`/api/chat/ws`
 
 ## 个人认知与模板使用
 
@@ -124,6 +131,17 @@ python main.py
 - OpenAI：`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL_NAME`
 - Local：`LOCAL_MODEL_PATH`、`LOCAL_CTX_SIZE`、`LOCAL_GPU_LAYERS`、`LOCAL_THREADS`、`LOCAL_BATCH_SIZE`、`LOCAL_TEMPERATURE`
 - NVIDIA NIM：`NIM_API_KEY`、`NIM_BASE_URL`、`NIM_MINIMAX_M2_MODEL_NAME`、`NIM_GLM47_MODEL_NAME`
+- Web 控制台：`WEB_HOST`、`WEB_PORT`、`PUBLIC_URL`
+- Playwright：`PLAYWRIGHT_USER_DATA_DIR`、`PLAYWRIGHT_EXTENSION_DIR`、`PLAYWRIGHT_AUTO_LOAD_COOKIES`
+
+## Playwright 登录复用
+
+- Cookie 文件默认保存于 `app/data/cookies/<domain>.json`
+- 默认会尝试加载 `web/extension/cookie_relay` 作为扩展（需 `headless=False`）
+- 推荐流程：
+  1. 打开浏览器并登录站点（加载扩展）
+  2. 扩展保存 Cookie
+  3. 再次打开时自动载入 Cookie
 
 ## Skills 概览
 
@@ -167,6 +185,12 @@ Agent 根据任务需求自动生成的技能存放于此，例如：
 - `file_directory_skill`: 复杂文件搜索与列表
 - `excel_read_skill`: 特定 Excel 处理逻辑
 - ... (随使用自动增长)
+
+## 技能加载规则
+
+- 每个技能目录必须包含 `skill.md`，并在 `## Entry` 指向 `...scripts` 包路径
+- `app/skills` 为核心技能，`app/auto_skills` 为自动生成技能
+- 新技能生成后执行 `reload_skills` 触发热加载
 
 ## 目录结构
 

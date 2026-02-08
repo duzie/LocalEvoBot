@@ -5,7 +5,7 @@
 
 ## Tools
 - type_text
-- press_key
+<!-- - press_key -->
 - select_all
 - switch_input_method
 <!-- - mouse_click -->

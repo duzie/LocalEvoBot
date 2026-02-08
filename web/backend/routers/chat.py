@@ -13,8 +13,11 @@ from urllib.parse import quote
 import websockets
 import os
 import sqlite3
+import glob
 from dotenv import dotenv_values, set_key
 from typing import List
+from fastapi import Body
+from fastapi import Request
 
 router = APIRouter()
 
@@ -55,14 +58,26 @@ shared.broadcast_func = broadcast_wrapper
 async def startup_event():
     shared.set_loop(asyncio.get_running_loop())
 
-def _get_short_term_db_path():
+def _get_short_term_db_path(date_key: str = None):
     base_dir = os.path.dirname(_get_env_path())
     data_dir = os.path.join(base_dir, "app", "data")
     os.makedirs(data_dir, exist_ok=True)
-    return os.path.join(data_dir, "short_term_memory.sqlite3")
+    if not date_key:
+        date_key = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d")
+    return os.path.join(data_dir, f"short_term_memory_{date_key}.sqlite3")
 
-def _init_short_term_db():
-    path = _get_short_term_db_path()
+def _list_short_term_db_paths():
+    base_dir = os.path.dirname(_get_env_path())
+    data_dir = os.path.join(base_dir, "app", "data")
+    os.makedirs(data_dir, exist_ok=True)
+    paths = sorted(glob.glob(os.path.join(data_dir, "short_term_memory_*.sqlite3")))
+    legacy_path = os.path.join(data_dir, "short_term_memory.sqlite3")
+    if os.path.exists(legacy_path):
+        paths.append(legacy_path)
+    return paths
+
+def _init_short_term_db(date_key: str = None):
+    path = _get_short_term_db_path(date_key)
     conn = sqlite3.connect(path)
     try:
         cur = conn.cursor()
@@ -94,6 +109,108 @@ async def send_message(chat: ChatMessage):
     # Echo back to chat history (optional, or handle in frontend)
     return {"status": "sent"}
 
+def _get_cookie_dir():
+    base_dir = os.path.dirname(_get_env_path())
+    data_dir = os.path.join(base_dir, "app", "data", "cookies")
+    os.makedirs(data_dir, exist_ok=True)
+    return data_dir
+
+def _sanitize_filename(value: str):
+    text = str(value or "").strip().replace(" ", "_")
+    cleaned = "".join(ch for ch in text if ch.isalnum() or ch in ("_", "-", "."))
+    return cleaned or "default"
+
+@router.post("/cookies/save")
+async def save_cookies(payload: dict = Body(...)):
+    """
+    Save cookies posted by a browser extension.
+    Expected payload: { "domain": "example.com", "cookies": [ {...}, ... ] }
+    """
+    domain = str(payload.get("domain") or "").strip()
+    cookies = payload.get("cookies")
+    if not domain or not isinstance(cookies, list):
+        raise HTTPException(status_code=400, detail="Invalid payload: require domain and cookies list")
+    fname = _sanitize_filename(domain) + ".json"
+    path = os.path.join(_get_cookie_dir(), fname)
+    content = json.dumps({"domain": domain, "cookies": cookies}, ensure_ascii=False, indent=2)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return {"status": "ok", "saved_path": path, "count": len(cookies)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Save failed: {e}")
+
+@router.get("/cookies/{domain}")
+async def get_cookies(domain: str):
+    """
+    Retrieve saved cookies for a domain.
+    """
+    fname = _sanitize_filename(domain) + ".json"
+    path = os.path.join(_get_cookie_dir(), fname)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="No cookies for this domain")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Read failed: {e}")
+
+@router.get("/cookies")
+async def list_cookies():
+    """
+    List saved cookie files.
+    """
+    base = _get_cookie_dir()
+    items = []
+    paths = sorted(glob.glob(os.path.join(base, "*.json")))
+    for path in paths:
+        name = os.path.splitext(os.path.basename(path))[0]
+        domain = name
+        count = 0
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                domain = data.get("domain") or domain
+                cookies = data.get("cookies")
+                if isinstance(cookies, list):
+                    count = len(cookies)
+        except Exception:
+            count = 0
+        try:
+            mtime = os.path.getmtime(path)
+            updated_at = datetime.datetime.fromtimestamp(mtime).isoformat()
+        except Exception:
+            updated_at = ""
+        items.append({
+            "domain": domain,
+            "file": os.path.basename(path),
+            "count": count,
+            "updated_at": updated_at
+        })
+    return {"items": items}
+
+@router.delete("/cookies/{domain}")
+async def delete_cookies(domain: str):
+    """
+    Delete saved cookies for a domain.
+    """
+    fname = _sanitize_filename(domain) + ".json"
+    path = os.path.join(_get_cookie_dir(), fname)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="No cookies for this domain")
+    try:
+        os.remove(path)
+        return {"status": "deleted", "domain": domain}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Delete failed: {e}")
+
+@router.post("/stop")
+async def stop_current():
+    """Request to stop current agent answer/task without affecting main dialog"""
+    shared.request_stop()
+    return {"status": "stop_requested"}
+
 @router.get("/history")
 async def get_history(limit: int = 60):
     env_path = _get_env_path()
@@ -102,20 +219,25 @@ async def get_history(limit: int = 60):
     project_id = os.path.basename(base_dir)
     user_id = (os.getenv("LOCAL_USER_ID") or env.get("LOCAL_USER_ID") or "local_user").strip().strip("'\"")
     safe_limit = max(1, min(int(limit or 60), 200))
-    _init_short_term_db()
-    path = _get_short_term_db_path()
-    conn = sqlite3.connect(path)
-    try:
-        cur = conn.cursor()
-        rows = cur.execute(
-            "SELECT role, content, created_at FROM short_term_messages WHERE project_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?",
-            (project_id, user_id, safe_limit),
-        ).fetchall()
-        items = [{"role": r[0], "content": r[1], "created_at": r[2]} for r in rows]
-        items.reverse()
-        return {"messages": items}
-    finally:
-        conn.close()
+    db_paths = _list_short_term_db_paths()
+    if not db_paths:
+        _init_short_term_db()
+        db_paths = [_get_short_term_db_path()]
+    items = []
+    sql = "SELECT role, content, created_at FROM short_term_messages WHERE project_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?"
+    for path in db_paths:
+        conn = sqlite3.connect(path)
+        try:
+            cur = conn.cursor()
+            rows = cur.execute(sql, (project_id, user_id, safe_limit)).fetchall()
+            for r in rows:
+                items.append({"role": r[0], "content": r[1], "created_at": r[2]})
+        finally:
+            conn.close()
+    items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    items = items[:safe_limit]
+    items.reverse()
+    return {"messages": items}
 
 def _get_xf_config():
     env_path = _get_env_path()
