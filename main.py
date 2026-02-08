@@ -75,6 +75,12 @@ def _init_short_term_db(date_key: str = None):
         )
         cur.execute("CREATE INDEX IF NOT EXISTS idx_stm_created ON short_term_messages(created_at)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_stm_project_user ON short_term_messages(project_id, user_id)")
+        cur.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS short_term_messages_fts
+            USING fts5(content, role, created_at, project_id, user_id)
+            """
+        )
         conn.commit()
     finally:
         conn.close()
@@ -93,6 +99,10 @@ def _add_short_term_message(role: str, content: str, project_id: str, user_id: s
         cur.execute(
             "INSERT INTO short_term_messages(role, content, created_at, project_id, user_id) VALUES (?, ?, ?, ?, ?)",
             (str(role or "").strip(), text, created_at, project_id or "", user_id or ""),
+        )
+        cur.execute(
+            "INSERT INTO short_term_messages_fts(content, role, created_at, project_id, user_id) VALUES (?, ?, ?, ?, ?)",
+            (text, str(role or "").strip(), created_at, project_id or "", user_id or ""),
         )
         conn.commit()
     finally:

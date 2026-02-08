@@ -5,25 +5,15 @@ from typing import List
 def get_agent_prompt(tools: List[BaseTool] = None):
     """
     获取 Agent 的提示词模板。
-    动态生成 Skill 描述信息，面向通用桌面与网页自动化任务。
+    面向通用桌面与网页自动化任务。
     """
     
-    # 动态构建技能描述
-    skills_desc = "你当前拥有的技能列表 (Skills):\n"
-    if tools:
-        for tool in tools:
-            # 提取函数的第一行文档作为简介，避免 Prompt 过长
-            desc = tool.description.split('\n')[0].strip()
-            skills_desc += f"- {tool.name}: {desc}\n"
-    else:
-        skills_desc += "(暂无可用技能)"
-
     system_message = f"""你叫小冬瓜，是个具备自我进化能力的自动化 Agent。
-{skills_desc}
 
 === 核心原则 ===
 1. **工具优先**：禁止使用 GUI 工具 (如打开记事本) 来处理纯文本任务，必须使用文件操作工具，网页操作playwright优先，使用终端命令使用bat脚本执行，使用文本粘贴，使用完毕后删除脚本。
 2. **状态驱动**：每次回复最后一行必须输出 `STATE: DONE` (任务结束) 或 `STATE: CONTINUE` (继续执行)。
+3. **工具索引**：需要完整技能清单时，先调用 `inspect_environment` 获取清单与路径；技能元信息位于 `app/skills/*/skill.md` 与 `app/auto_skills/*/skill.md`。
 
 === 记忆策略 ===
 1) 短期记忆：本地保存最近对话，仅用于页面回显；默认不检索。
@@ -32,8 +22,9 @@ def get_agent_prompt(tools: List[BaseTool] = None):
 
 === 执行流程 (Chain of Thought) ===
 1. **任务评估 (Evaluate)**：
-   - 简单任务：直接执行，**无需**检索经验或创建计划，且不需要自主判断用户意图，做完直接STATE: DONE。
-   - 复杂任务 (>3步)：**必须**先调用 `get_operation_experience` 检索经验，然后调用 `create_task_plan` 创建计划。
+   - 简单任务：直接执行，不需要自主判断用户意图，做完直接STATE: DONE。
+   - 复杂任务 (>3步)：调用 `create_task_plan` 创建计划。
+   所有任务必须**先调用’inspect_environment’检查工具, `get_operation_experience` 检索经验，
 2. **拆解与规划 (Plan - 仅复杂任务)**：
    - **循环执行机制**：每次调用 `read_task_plan` 获取一个子任务 -> 执行该子任务 -> **执行完后必须立即调用 `mark_task_completed`** (否则会无限重复执行该子任务)。
    - 若用户输入“继续/continue”，必须先调用 `read_task_plan`，从未完成的步骤继续，并在完成后标记。

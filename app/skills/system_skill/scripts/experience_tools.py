@@ -5,6 +5,8 @@ import shutil
 from datetime import datetime, timezone
 import sqlite3
 import glob
+import re
+import uuid
 
 # Ensure HF mirror is used before any HF imports
 if "HF_ENDPOINT" not in os.environ:
@@ -60,6 +62,12 @@ def _init_short_term_db(date_key: str = None):
         )
         cur.execute("CREATE INDEX IF NOT EXISTS idx_stm_created ON short_term_messages(created_at)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_stm_project_user ON short_term_messages(project_id, user_id)")
+        cur.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS short_term_messages_fts
+            USING fts5(content, role, created_at, project_id, user_id)
+            """
+        )
         conn.commit()
     finally:
         conn.close()
@@ -95,6 +103,58 @@ def _init_components():
         print(f"DB Init/Migration warning: {e}")
 
     return _VECTOR_STORE
+
+def _load_json_store():
+    path = _get_json_path()
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        if not content.strip():
+            return []
+        data = json.loads(content)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+def _write_json_store(items: list):
+    path = _get_json_path()
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(items, ensure_ascii=False, indent=2))
+    except Exception:
+        return
+
+def _append_json_store(item: dict):
+    items = _load_json_store()
+    items.append(item)
+    _write_json_store(items)
+
+def _split_query_terms(query: str):
+    text = str(query or "").strip()
+    if not text:
+        return []
+    parts = [p for p in re.split(r"[\s,，;；。！？!?/\\]+", text) if p]
+    if text not in parts:
+        parts.insert(0, text)
+    deduped = []
+    seen = set()
+    for p in parts:
+        if p in seen:
+            continue
+        seen.add(p)
+        deduped.append(p)
+    return deduped
+
+def _keyword_match(text: str, terms: list):
+    if not terms:
+        return True
+    hay = str(text or "").lower()
+    for term in terms:
+        if str(term or "").lower() not in hay:
+            return False
+    return True
 
 def _migrate_from_json():
     from langchain_core.documents import Document
@@ -145,15 +205,14 @@ def add_operation_experience(system_name: str, content: str, tags: list = None, 
         tags: 标签列表
         url: 相关链接
     """
-    from langchain_core.documents import Document
     store = _init_components()
-    if not store: return "Error: RAG dependencies missing."
     
     tags_list = tags if isinstance(tags, list) else []
     tags_str = ", ".join(tags_list) if tags_list else ""
     page_content = f"System: {system_name}\nContent: {content}\nTags: {tags_str}\nScope: {scope or ''}\nProject: {project_id or ''}\nUser: {user_id or ''}\nType: {memory_type or ''}"
     
     metadata = {
+        "id": str(uuid.uuid4()),
         "system": system_name,
         "tags": tags_str,
         "tags_list": ", ".join(tags_list),
@@ -165,14 +224,55 @@ def add_operation_experience(system_name: str, content: str, tags: list = None, 
         "created_at": datetime.now(timezone.utc).isoformat(),
         "original_content": content
     }
-    
+    if not store:
+        item = {"content": content, "metadata": metadata, "page_content": page_content}
+        _append_json_store(item)
+        return "已存入本地经验库。"
+    from langchain_core.documents import Document
     store.add_documents([Document(page_content=page_content, metadata=metadata)])
     return "已存入向量知识库。"
 
 def list_operation_experiences(query: str = None, system_filter: str = None, scope: str = None, project_id: str = None, user_id: str = None, memory_type: str = None, tags: list = None, limit: int = 200, offset: int = 0):
     store = _init_components()
     if not store:
-        return []
+        terms = _split_query_terms(query) if query else []
+        tag_filters = tags if isinstance(tags, list) else []
+        safe_limit = max(1, min(int(limit or 200), 500))
+        safe_offset = max(0, int(offset or 0))
+        items = []
+        for item in _load_json_store():
+            meta = (item or {}).get("metadata") or {}
+            if system_filter and meta.get("system") != system_filter:
+                continue
+            if scope and meta.get("scope") != scope:
+                continue
+            if project_id and meta.get("project_id") != project_id:
+                continue
+            if user_id and meta.get("user_id") != user_id:
+                continue
+            if memory_type and meta.get("memory_type") != memory_type:
+                continue
+            if tag_filters:
+                doc_tags = meta.get("tags_list") or meta.get("tags") or ""
+                if not all(tag in doc_tags for tag in tag_filters):
+                    continue
+            content = meta.get("original_content") or item.get("content") or ""
+            if query and not _keyword_match(content + " " + (meta.get("system") or "") + " " + (meta.get("tags") or ""), terms):
+                continue
+            items.append({
+                "id": meta.get("id") or "",
+                "content": content,
+                "system": meta.get("system"),
+                "tags": meta.get("tags"),
+                "scope": meta.get("scope"),
+                "project_id": meta.get("project_id"),
+                "user_id": meta.get("user_id"),
+                "memory_type": meta.get("memory_type"),
+                "created_at": meta.get("created_at"),
+                "url": meta.get("url")
+            })
+        items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+        return items[safe_offset:safe_offset + safe_limit]
     filter_dict = {}
     if system_filter:
         filter_dict["system"] = system_filter
@@ -287,7 +387,19 @@ def get_operation_experience(query: str, system_filter: str = None, n_results: i
         n_results: 返回数量
     """
     store = _init_components()
-    if not store: return "Error: RAG dependencies missing."
+    if not store:
+        items = list_operation_experiences(
+            query=query,
+            system_filter=system_filter,
+            scope=scope,
+            project_id=project_id,
+            user_id=user_id,
+            memory_type=memory_type,
+            tags=tags,
+            limit=n_results,
+            offset=0
+        )
+        return json.dumps(items, ensure_ascii=False, indent=2)
     
     filter_dict = {}
     if system_filter:
@@ -352,8 +464,61 @@ def search_short_term_memory(query: str, n_results: int = 8, project_id: str = N
     try:
         limit = max(1, min(int(n_results or 8), 50))
         items = []
-        conditions = ["content LIKE ?"]
-        base_params = [f"%{q}%"]
+        terms = _split_query_terms(q)
+        fts_query = " OR ".join(terms) if terms else q
+        fts_items = []
+        seen = set()
+        if fts_query:
+            for path in db_paths:
+                conn = sqlite3.connect(path)
+                try:
+                    cur = conn.cursor()
+                    conditions = ["short_term_messages_fts MATCH ?"]
+                    params = [fts_query]
+                    if project_id:
+                        conditions.append("project_id = ?")
+                        params.append(str(project_id))
+                    if user_id:
+                        conditions.append("user_id = ?")
+                        params.append(str(user_id))
+                    if role:
+                        conditions.append("role = ?")
+                        params.append(str(role))
+                    where = " AND ".join(conditions)
+                    sql = f"SELECT role, content, created_at, project_id, user_id, bm25(short_term_messages_fts) as score FROM short_term_messages_fts WHERE {where} ORDER BY score LIMIT ?"
+                    params.append(limit)
+                    rows = cur.execute(sql, params).fetchall()
+                    for r in rows:
+                        key = (r[0], r[1], r[2], r[3], r[4])
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        fts_items.append({
+                            "role": r[0],
+                            "content": r[1],
+                            "created_at": r[2],
+                            "project_id": r[3],
+                            "user_id": r[4],
+                            "source": "short_term"
+                        })
+                except Exception:
+                    pass
+                finally:
+                    conn.close()
+        if fts_items:
+            fts_items.sort(key=lambda x: x.get("created_at") or "")
+            if len(fts_items) > limit:
+                fts_items = fts_items[-limit:]
+            return json.dumps(fts_items, ensure_ascii=False, indent=2)
+        conditions = []
+        base_params = []
+        if terms:
+            for term in terms:
+                conditions.append("content LIKE ?")
+                base_params.append(f"%{term}%")
+        else:
+            conditions.append("content LIKE ?")
+            base_params.append(f"%{q}%")
         if project_id:
             conditions.append("project_id = ?")
             base_params.append(str(project_id))

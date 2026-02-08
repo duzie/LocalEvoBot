@@ -428,20 +428,81 @@ def inspect_environment(max_packages: int = 120):
             packages = []
     if max_packages and max_packages > 0:
         packages = packages[:max_packages]
+    def _parse_skill_tools(skill_md_path: str):
+        tools_list = []
+        try:
+            with open(skill_md_path, "r", encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        except Exception:
+            return tools_list
+        in_tools = False
+        for line in lines:
+            s = line.strip()
+            if not in_tools:
+                if s.lower() == "## tools":
+                    in_tools = True
+                continue
+            if not s:
+                continue
+            if s.startswith("## "):
+                break
+            if not s.startswith("-"):
+                continue
+            item = s.lstrip("-").strip()
+            name = ""
+            desc = ""
+            if item.startswith("**"):
+                end = item.find("**", 2)
+                if end != -1:
+                    name = item[2:end].strip()
+                    rest = item[end + 2 :].strip()
+                    if rest.startswith(":"):
+                        desc = rest[1:].strip()
+                else:
+                    name = item.strip("*").strip()
+            else:
+                if ":" in item:
+                    parts = item.split(":", 1)
+                    name = parts[0].strip()
+                    desc = parts[1].strip()
+                else:
+                    name = item.strip()
+            if not name:
+                continue
+            tools_list.append({"name": name, "description": desc})
+        return tools_list
+
     skills_root = os.path.join(project_root, "app", "skills")
     auto_skills_root = os.path.join(project_root, "app", "auto_skills")
     skills = []
     auto_skills = []
+    tools_info = []
     if os.path.isdir(skills_root):
         for name in os.listdir(skills_root):
             skill_dir = os.path.join(skills_root, name)
-            if os.path.isdir(skill_dir) and os.path.exists(os.path.join(skill_dir, "skill.md")):
+            skill_md_path = os.path.join(skill_dir, "skill.md")
+            if os.path.isdir(skill_dir) and os.path.exists(skill_md_path):
                 skills.append(name)
+                for tool_item in _parse_skill_tools(skill_md_path):
+                    tools_info.append({
+                        "name": tool_item.get("name") or "",
+                        "description": tool_item.get("description") or "",
+                        "skill": name,
+                        "scope": "skills"
+                    })
     if os.path.isdir(auto_skills_root):
         for name in os.listdir(auto_skills_root):
             skill_dir = os.path.join(auto_skills_root, name)
-            if os.path.isdir(skill_dir) and os.path.exists(os.path.join(skill_dir, "skill.md")):
+            skill_md_path = os.path.join(skill_dir, "skill.md")
+            if os.path.isdir(skill_dir) and os.path.exists(skill_md_path):
                 auto_skills.append(name)
+                for tool_item in _parse_skill_tools(skill_md_path):
+                    tools_info.append({
+                        "name": tool_item.get("name") or "",
+                        "description": tool_item.get("description") or "",
+                        "skill": name,
+                        "scope": "auto_skills"
+                    })
     return json.dumps({
         "os": platform.system(),
         "python_version": sys.version,
@@ -450,7 +511,8 @@ def inspect_environment(max_packages: int = 120):
         "requirements": requirements,
         "installed_packages": packages,
         "skills": sorted(skills),
-        "auto_skills": sorted(auto_skills)
+        "auto_skills": sorted(auto_skills),
+        "tools": tools_info
     }, ensure_ascii=False, indent=2)
 
 @tool
