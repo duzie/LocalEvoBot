@@ -41,6 +41,28 @@ def playwright_execute_js_in_frame(script: str, frame_name: str = None, frame_ur
 
 
 @tool
+def playwright_click_in_frame(selector: str, frame_name: str = None, frame_url: str = None, frame_selector: str = None):
+    """
+    在指定 iframe 中点击元素。
+    
+    Args:
+        selector: CSS 选择器或文本定位 (text=Login)
+        frame_name: iframe name 属性
+        frame_url: iframe URL 匹配
+        frame_selector: iframe 的 CSS 选择器
+    """
+    frame, err = core._resolve_frame(frame_name, frame_url, frame_selector)
+    if err:
+        return err
+    try:
+        frame.click(selector, timeout=10000)
+        core._maybe_wait_new_page(1200)
+        return "已点击元素"
+    except Exception as e:
+        return f"点击失败: {e}"
+
+
+@tool
 def playwright_snapshot_in_frame(frame_name: str = None, frame_url: str = None, frame_selector: str = None):
     """
     获取指定 iframe 的 DOM 快照与可交互元素摘要。
@@ -71,4 +93,3 @@ def playwright_snapshot_in_frame(frame_name: str = None, frame_url: str = None, 
         return f"页面标题: {title}\nURL: {url}\n{element_summary}\n\n如需详细DOM结构，请使用 playwright_execute_js_in_frame 获取特定内容。"
     except Exception as e:
         return f"获取快照失败: {e}"
-

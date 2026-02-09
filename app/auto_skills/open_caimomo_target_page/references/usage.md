@@ -108,6 +108,7 @@ result = open_caimomo_target_page(
 - **默认值**: `False`
 - **说明**: 是否点击“保存并继续”按钮
 
+
 ## 返回值结构
 ```json
 {
