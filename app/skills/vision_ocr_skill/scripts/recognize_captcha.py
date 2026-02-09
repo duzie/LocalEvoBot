@@ -1,6 +1,10 @@
 from langchain_core.tools import tool
 import os
 import base64
+import io
+import json
+import re
+from typing import Optional, Dict, Any
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -67,3 +71,45 @@ def recognize_captcha(image_path: str) -> str:
         return response.choices[0].message.content
     except Exception as e:
         return f"Error recognizing captcha: {str(e)}"
+
+def _extract_json(text: str):
+    if not text:
+        return None
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        cleaned = cleaned.replace("json", "").strip()
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        pass
+    match = re.search(r"\{[\s\S]*\}", cleaned)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except Exception:
+            return None
+    match = re.search(r"\[[\s\S]*\]", cleaned)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except Exception:
+            return None
+    return None
+
+def _create_client():
+    api_key = os.getenv("ARK_API_KEY")
+    model = os.getenv("DOUBAO_VISION_MODEL_NAME")
+    if not api_key:
+        return None, None, "Error: ARK_API_KEY not found in environment variables."
+    if not model:
+        return None, None, "Error: DOUBAO_VISION_MODEL_NAME not found in environment variables."
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://ark.cn-beijing.volces.com/api/v3",
+    )
+    return client, model, None
+
+def _encode_image(image_path: str):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode("utf-8")

@@ -10,7 +10,7 @@ ocr_skill
 屏幕与窗口 OCR 识别。
 
 ## Entry
-app.skills.ocr_skill.scripts
+<!-- app.skills.ocr_skill.scripts -->
 
 ## Tools
 - ocr_screen: 全屏 OCR 识别

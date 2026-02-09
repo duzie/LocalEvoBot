@@ -12,7 +12,13 @@
     - `image_path` (str): 图片文件的绝对路径。
 - **Returns**: (str) 识别出的文本内容。
 
-## Examples
+
+
+### vision_click_ui
+一键视觉定位并点击（窗口内）：
+```python
+vision_click_ui(window_title="KeyPos", description="确认按钮")
+```
 
 ### 识别验证码
 ```python

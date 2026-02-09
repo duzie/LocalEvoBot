@@ -1,6 +1,13 @@
 from langchain_core.tools import tool
 import platform
 import time
+import ctypes
+
+def _is_admin() -> bool:
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except:
+        return False
 
 @tool
 def uia_activate_window(window_title: str):
@@ -20,7 +27,10 @@ def uia_activate_window(window_title: str):
         window = desktop.window(title_re=window_title)
         
         if not window.exists(timeout=2):
-            return f"未找到窗口: {window_title}"
+            msg = f"未找到窗口: {window_title}"
+            if not _is_admin():
+                msg += "\n[提示] 当前 Agent 非管理员权限，可能无法看到管理员权限运行的窗口。"
+            return msg
             
         # 尝试还原和激活
         # 注意: minimize() / restore() 等方法有时需要 wrapper
@@ -38,4 +48,7 @@ def uia_activate_window(window_title: str):
         window.set_focus()
         return f"已激活窗口: {window_title}"
     except Exception as e:
-        return f"激活窗口失败: {e}"
+        msg = f"激活窗口失败: {e}"
+        if not _is_admin():
+            msg += "\n[提示] 目标窗口可能拥有更高权限 (管理员)，请尝试以管理员身份运行此 Agent。"
+        return msg

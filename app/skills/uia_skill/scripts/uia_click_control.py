@@ -1,18 +1,20 @@
 from langchain_core.tools import tool
 import platform
+import ctypes
+
+def _is_admin() -> bool:
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except:
+        return False
 
 @tool
 def uia_click_control(window_title: str = None, control_type: str = None, title: str = None, auto_id: str = None, clicks: int = 1, found_index: int = 0):
     """
     使用 Windows UI Automation 直接点击控件。
-
+    
     Args:
         window_title: (可选) 窗口标题或正则
-        control_type: (可选) 控件类型
-        title: (可选) 控件标题或名称
-        auto_id: (可选) 控件自动化 ID
-        clicks: 点击次数
-        found_index: (可选) 当匹配到多个控件时，选择第几个（从0开始）。默认为0。
     """
     if platform.system() != "Windows":
         return "当前仅支持 Windows UI Automation"
@@ -23,7 +25,10 @@ def uia_click_control(window_title: str = None, control_type: str = None, title:
         if window_title:
             root = desktop.window(title_re=window_title)
             if not root.exists(timeout=1):
-                return f"未找到窗口: {window_title}"
+                msg = f"未找到窗口: {window_title}"
+                if not _is_admin():
+                    msg += "\n[提示] 权限提示：若目标窗口是管理员权限，请尝试以管理员身份运行 Agent。"
+                return msg
         criteria = {}
         if title:
             criteria["title"] = title
@@ -40,4 +45,7 @@ def uia_click_control(window_title: str = None, control_type: str = None, title:
             target.click_input()
         return "已点击控件"
     except Exception as e:
-        return f"控件点击失败: {e}"
+        msg = f"控件点击失败: {e}"
+        if not _is_admin():
+            msg += "\n[提示] 操作失败可能是因为权限不足。若目标程序以管理员运行，请以管理员身份运行此 Agent。"
+        return msg

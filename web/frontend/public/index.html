@@ -602,6 +602,8 @@
             .brand{font-size: 16px}
             .header{flex-wrap:wrap; gap:10px}
             .status{width:100%; justify-content:flex-start}
+            #accessDetails{display:none}
+            .tabs .tab:not([data-tab="chat"]){display:none}
             .row{gap:8px}
             .row label{width: 100%}
             .input, .select{
@@ -619,7 +621,8 @@
             .panelHeader{flex-wrap:wrap; gap:10px}
             .panelTitle{flex-wrap:wrap}
             .bubble{max-width: 92vw}
-            .chatSplit{flex-direction:column;}
+            .chatSplit{flex-direction:column; height:auto}
+            .auxPane{display:none}
             .chatList{max-height: 45dvh;}
             .cfgKey{width: 100%}
         }
