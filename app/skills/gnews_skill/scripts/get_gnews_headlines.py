@@ -74,19 +74,42 @@ def get_gnews_headlines(
                 "data": data
             }
         
+        if "articles" not in data:
+            return {"error": "No articles found", "data": data}
+
+        # 敏感词过滤列表 (针对国内LLM风控)
+        SENSITIVE_KEYWORDS = ['黎智英', '法轮功', '六四', '天安门事件', '达赖喇嘛']
+
         # 格式化返回数据
         result = {
             "success": True,
             "total_articles": data.get("totalArticles", 0),
             "articles": []
         }
-        
+
         # 提取文章信息
         for article in data.get("articles", []):
+            title = article.get("title", "")
+            description = article.get("description", "")
+            
+            # 检查敏感词
+            is_sensitive = False
+            for keyword in SENSITIVE_KEYWORDS:
+                if keyword in title or (description and keyword in description):
+                    is_sensitive = True
+                    break
+            
+            if is_sensitive:
+                continue
+
+            # 为了防止国内LLM触发"Content Exists Risk"风控，移除content字段，并截断description
+            if description and len(description) > 200:
+                description = description[:197] + "..."
+
             article_info = {
-                "title": article.get("title", ""),
-                "description": article.get("description", ""),
-                "content": article.get("content", ""),
+                "title": title,
+                "description": description,
+                # "content": article.get("content", ""), # 移除content以降低风控风险
                 "url": article.get("url", ""),
                 "image": article.get("image", ""),
                 "published_at": article.get("publishedAt", ""),

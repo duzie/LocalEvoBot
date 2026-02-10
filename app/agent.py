@@ -131,13 +131,37 @@ def create_agent_executor():
 
     # 5. 创建 Executor
     # AgentExecutor 负责运行 Agent，处理循环、错误捕获等
+    limits_disabled = _read_bool_env("AGENT_LIMITS_DISABLED", False)
+    max_iterations = None if limits_disabled else _read_int_env("AGENT_MAX_ITERATIONS", 50000000)
+    max_execution_time = None if limits_disabled else _read_int_env("AGENT_MAX_EXECUTION_TIME", 600)
     executor = AgentExecutor(
         agent=agent, 
         tools=tools, 
         verbose=True,
         handle_parsing_errors=True,
-        max_iterations=50000000,
-        max_execution_time=600
+        max_iterations=max_iterations,
+        max_execution_time=max_execution_time
     )
 
     return executor
+
+
+def _read_int_env(key: str, default: int) -> int:
+    try:
+        value = os.getenv(key)
+        if value is None or str(value).strip() == "":
+            return int(default)
+        parsed = int(str(value).strip())
+        return parsed if parsed >= 0 else int(default)
+    except Exception:
+        return int(default)
+
+
+def _read_bool_env(key: str, default: bool) -> bool:
+    try:
+        value = os.getenv(key)
+        if value is None or str(value).strip() == "":
+            return bool(default)
+        return str(value).strip().lower() in ("1", "true", "yes", "on")
+    except Exception:
+        return bool(default)

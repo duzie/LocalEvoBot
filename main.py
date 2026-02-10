@@ -7,6 +7,7 @@ import threading
 import queue
 import json
 import sqlite3
+import time
 from datetime import datetime, timezone
 from web.backend.main import start as start_web_server
 from web.backend.shared import shared
@@ -16,6 +17,7 @@ os.environ.setdefault("HUGGINGFACE_HUB_ENDPOINT", "https://hf-mirror.com")
 
 from app.agent import create_agent_executor, create_llm
 from app.skills.system_skill.scripts.experience_tools import add_operation_experience, get_operation_experience
+from app.integrations import whatsapp_web
 
 RELOAD_SIGNAL = "__RELOAD_SKILLS__"
 SET_MODEL_PREFIX = "__SET_MODEL__:"
@@ -413,6 +415,47 @@ def _should_prompt_save(summary_text):
     has_items = any([behavior, code_style, task_experiences, templates])
     return has_items, data
 
+def _should_auto_save_summary():
+    value = os.getenv("SUMMARY_AUTO_SAVE", "1")
+    return str(value).strip().lower() not in ["0", "false", "no"]
+
+def _run_summary_async(chat_history, project_id, user_id):
+    try:
+        llm = create_llm()
+        summary_text = _build_cognition_summary(chat_history, llm, project_id, user_id)
+        should_prompt, summary_json = _should_prompt_save(summary_text)
+        if summary_json is not None:
+            summary_json = _ensure_task_templates(summary_json, chat_history, llm, project_id, user_id)
+            summary_text = json.dumps(summary_json, ensure_ascii=False, indent=2)
+            should_prompt, summary_json = _should_prompt_save(summary_text)
+        shared.set_summary(summary_text)
+        shared.broadcast_threadsafe(">>> 系统: 总结已生成")
+        if should_prompt and _should_auto_save_summary():
+            try:
+                if summary_json is None:
+                    summary_json = json.loads(summary_text)
+                saved = _save_cognition_summary(summary_json, project_id, user_id)
+                if saved:
+                    shared.broadcast_threadsafe(">>> 系统: 总结已保存")
+                else:
+                    shared.broadcast_threadsafe(">>> 系统: 总结未提取到可保存条目")
+            except Exception:
+                result = add_operation_experience(
+                    system_name="personal_cognition",
+                    content=summary_text,
+                    tags=[f"scope:project", f"project:{project_id}", "topic:summary"],
+                    scope="project",
+                    project_id=project_id,
+                    user_id=user_id,
+                    memory_type="task"
+                )
+                shared.broadcast_threadsafe(f">>> 系统: 已保存摘要。{result}")
+        elif should_prompt:
+            shared.broadcast_threadsafe(">>> 系统: 总结已生成，未保存")
+    except Exception as e:
+        shared.set_error(f"生成总结失败: {e}")
+        shared.broadcast_threadsafe(f">>> 系统: 生成总结失败: {e}")
+
 def _parse_template_results(raw_text):
     try:
         data = json.loads(raw_text)
@@ -777,6 +820,9 @@ def main():
     print("输入 'exit' 或 'quit' 退出。")
     print("也可以通过 Web 控制台发送指令。\n")
 
+    if whatsapp_web.enabled():
+        whatsapp_web.start()
+
     chat_history = []
     max_auto_steps = 60
     '''
@@ -792,35 +838,43 @@ def main():
             user_input = shared.get_input()
             user_input = user_input.strip()
             
-            if user_input.startswith(SET_MODEL_PREFIX):
-                provider = user_input[len(SET_MODEL_PREFIX):].strip().lower()
-                previous_provider = os.getenv("LLM_PROVIDER", "deepseek")
-                os.environ["LLM_PROVIDER"] = provider
-                try:
-                    agent_executor = create_agent_executor()
-                    chat_history = []
-                    print(f">>> 系统: 已切换模型为 {provider}\n")
-                except Exception as e:
-                    os.environ["LLM_PROVIDER"] = previous_provider
+            wa_payload = whatsapp_web.parse_payload(user_input)
+            wa_sender = None
+            if wa_payload:
+                wa_sender = str(wa_payload.get("sender") or "").strip()
+                user_input = str(wa_payload.get("text") or "").strip()
+            else:
+                if user_input.startswith(SET_MODEL_PREFIX):
+                    provider = user_input[len(SET_MODEL_PREFIX):].strip().lower()
+                    previous_provider = os.getenv("LLM_PROVIDER", "deepseek")
+                    os.environ["LLM_PROVIDER"] = provider
                     try:
                         agent_executor = create_agent_executor()
-                    except Exception:
-                        pass
-                    print(f">>> 系统: 切换模型失败: {e}\n")
-                continue
+                        chat_history = []
+                        print(f">>> 系统: 已切换模型为 {provider}\n")
+                    except Exception as e:
+                        os.environ["LLM_PROVIDER"] = previous_provider
+                        try:
+                            agent_executor = create_agent_executor()
+                        except Exception:
+                            pass
+                        print(f">>> 系统: 切换模型失败: {e}\n")
+                    continue
 
-            if user_input.lower() in ["exit", "quit"]:
-                print("Bye!")
-                break
-            
+                if user_input.lower() in ["exit", "quit"]:
+                    print("Bye!")
+                    break
+
             if not user_input:
                 continue
-            
-            if user_input.strip().lower() in ["y", "yes", "n", "no"]:
+
+            if not wa_sender and user_input.strip().lower() in ["y", "yes", "n", "no"]:
                 continue
 
             project_id = _extract_project_id()
             user_id = os.getenv("LOCAL_USER_ID", "local_user")
+            if wa_sender:
+                user_id = f"whatsapp:{wa_sender}"
             _add_short_term_message("user", user_input, project_id, user_id)
             resume_keywords = {"继续", "继续执行", "继续做", "continue"}
             if user_input.strip().lower() in resume_keywords:
@@ -840,6 +894,7 @@ def main():
                 raw_output = ""
                 print("Agent: ", end="", flush=True)
                 buffer = ""
+                shared.set_status("running", "执行中", auto_input)
                 print(">>> 系统: 状态=执行中")
                 for chunk in agent_executor.stream({
                     "input": auto_input,
@@ -847,6 +902,7 @@ def main():
                 }):
                     if shared.stop_requested:
                         shared.clear_stop()
+                        shared.set_status("stopped", "已停止", auto_input)
                         print(">>> 系统: 状态=已停止")
                         break
                     if not isinstance(chunk, dict):
@@ -879,12 +935,18 @@ def main():
                 print("\n")
                 if shared.stop_requested:
                     shared.clear_stop()
+                    shared.set_status("idle", "空闲")
                     print(">>> 系统: 状态=空闲")
 
                 output = raw_output
                 output, reload_requested = strip_reload_signal(output)
                 state, cleaned_output = parse_state(output)
                 _add_short_term_message("assistant", cleaned_output or output, project_id, user_id)
+                if wa_sender and not reload_requested and state != "CONTINUE":
+                    reply_text = (cleaned_output or output).strip()
+                    if not reply_text:
+                        reply_text = "已完成"
+                    whatsapp_web.send_reply(wa_sender, reply_text)
                 chat_history.extend([
                     ("user", auto_input),
                     ("assistant", output)
@@ -922,67 +984,36 @@ def main():
 
                 if state == "DONE":
                     project_id = _extract_project_id()
-                    user_id = os.getenv("LOCAL_USER_ID", "local_user")
                     try:
                         print("Agent: 状态=生成总结\n")
-                        summary_text = _build_cognition_summary(chat_history, summary_llm, project_id, user_id)
-                        should_prompt, summary_json = _should_prompt_save(summary_text)
-                        if summary_json is not None:
-                            if not (summary_json.get("task_templates") or []):
-                                print("Agent: 状态=生成任务模板\n")
-                            summary_json = _ensure_task_templates(summary_json, chat_history, summary_llm, project_id, user_id)
-                            summary_text = json.dumps(summary_json, ensure_ascii=False, indent=2)
-                            should_prompt, summary_json = _should_prompt_save(summary_text)
-                        if should_prompt:
-                            print("Agent: 已生成个人认知总结（待确认）\n")
-                            print(summary_text + "\n")
-                            print("User: 是否保存以上总结？(yes/no，5秒后自动放弃) ", end="", flush=True)
-                            ok, deferred, timed_out = _read_yes_no_or_timeout(5)
-                            if ok is None:
-                                if deferred:
-                                    shared.put_back(deferred)
-                                if timed_out:
-                                    print("\nAgent: 超时未确认，已自动放弃保存。\n")
-                                else:
-                                    print("\nAgent: 未确认，已自动放弃保存。\n")
-                            elif ok is True:
-                                try:
-                                    if summary_json is None:
-                                        summary_json = json.loads(summary_text)
-                                    saved = _save_cognition_summary(summary_json, project_id, user_id)
-                                    if saved:
-                                        print("Agent: 已保存到经验库。\n")
-                                    else:
-                                        print("Agent: 未提取到可保存的条目。\n")
-                                except Exception:
-                                    result = add_operation_experience(
-                                        system_name="personal_cognition",
-                                        content=summary_text,
-                                        tags=[f"scope:project", f"project:{project_id}", "topic:summary"],
-                                        scope="project",
-                                        project_id=project_id,
-                                        user_id=user_id,
-                                        memory_type="task"
-                                    )
-                                    print(f"Agent: 已保存摘要。{result}\n")
-                            else:
-                                print("Agent: 已放弃保存。\n")
+                        chat_snapshot = chat_history[:]
+                        summary_thread = threading.Thread(
+                            target=_run_summary_async,
+                            args=(chat_snapshot, project_id, user_id),
+                            daemon=True
+                        )
+                        summary_thread.start()
                     except Exception as e:
                         print(f"Agent: 生成总结失败: {e}\n")
+                        shared.set_error(f"生成总结失败: {e}")
                     try:
                         plan_path = _get_task_plan_path()
                         if os.path.exists(plan_path):
                             os.remove(plan_path)
                     except Exception as e:
                         print(f"Agent: 清理任务计划失败: {e}\n")
+                        shared.set_error(f"清理任务计划失败: {e}")
+                    shared.set_status("idle", "空闲")
                     print(">>> 系统: 状态=空闲")
                     break
                 if state != "CONTINUE":
+                    shared.set_status("idle", "空闲")
                     print(">>> 系统: 状态=空闲")
                     break
                 auto_input = "继续执行，基于当前屏幕状态完成任务。"
                 if step == max_auto_steps - 1:
                     print("Agent: 已达到自动执行步数上限。输入“继续”将从任务计划的当前步骤继续。\n")
+                    shared.set_status("idle", "空闲")
                     print(">>> 系统: 状态=空闲")
                     break
 

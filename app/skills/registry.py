@@ -1,4 +1,5 @@
 import importlib
+import importlib.util
 import pkgutil
 import inspect
 import os
@@ -84,7 +85,9 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
             try:
                 scripts_module = importlib.import_module(scripts_package)
             except Exception as e:
-                print(f"Registry Warning: Failed to import scripts package {scripts_package}: {e}")
+                spec = importlib.util.find_spec(scripts_package)
+                origin = spec.origin if spec else "not found"
+                print(f"Registry Warning: Failed to import scripts package {scripts_package} (origin={origin}): {repr(e)}")
                 continue
             
             if hasattr(scripts_module, "__path__"):

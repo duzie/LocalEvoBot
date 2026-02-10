@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>记忆管理 - 小冬瓜智能助手</title>
+    <style>
+        :root{--card:rgba(255,255,255,.88);--border:rgba(255,255,255,.3);--muted:#6b7280;--text:#1f2937;--primary:#ec4899;--primary2:#f97316;--radius:14px;--radius2:999px;--mono:ui-monospace,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;--sans:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+        *{box-sizing:border-box}
+        body{margin:0;font-family:var(--sans);color:var(--text);background:linear-gradient(135deg,#a8e6cf 0%,#dcedc1 25%,#ffd3b6 50%,#ffaaa5 75%,#ff8b94 100%)}
+        .app{max-width:1200px;margin:0 auto;padding:0 12px}
+        .header{margin-top:12px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);display:flex;align-items:center;justify-content:space-between}
+        .brand{font-weight:800;display:flex;align-items:center;gap:10px}
+        .nav{margin:10px 0;display:flex;gap:8px;flex-wrap:wrap}
+        .nav a{display:inline-block;padding:8px 12px;border-radius:999px;background:rgba(255,255,255,.7);border:1px solid var(--border);text-decoration:none;color:rgba(31,41,55,.9);font-weight:700}
+        .nav a.active{background:rgba(255,255,255,.95);border-color:rgba(236,72,153,.45);color:rgba(236,72,153,.95)}
+        .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 10px 30px rgba(31,38,135,.18);overflow:hidden;margin-bottom:12px}
+        .panelHeader{padding:10px 12px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.6);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
+        .panelTitle{font-weight:800}
+        .btn{height:36px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.75);cursor:pointer}
+        .btn.primary{border-color:rgba(236,72,153,.55);background:linear-gradient(135deg,var(--primary) 0%,var(--primary2) 100%);color:#fff}
+        .btn.danger{border-color:rgba(239,68,68,.55);background:linear-gradient(135deg,#ef4444 0%,#f97316 100%);color:#fff}
+        .filters{padding:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+        .input,.select{height:36px;border-radius:10px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.75);padding:0 12px;outline:none;min-width:160px}
+        .tableWrap{padding:12px;overflow:auto}
+        table{width:100%;border-collapse:collapse;font-size:12px;min-width:960px}
+        th,td{padding:8px;border-bottom:1px solid rgba(255,255,255,.4);text-align:left;vertical-align:top}
+        th{font-weight:800;background:rgba(255,255,255,.6);position:sticky;top:0}
+        .mono{font-family:var(--mono)}
+        .pill{font-size:12px;color:var(--muted);background:rgba(255,255,255,.55);border:1px solid var(--border);padding:4px 8px;border-radius:999px}
+        .editor{padding:12px;border-top:1px solid var(--border);display:none;flex-direction:column;gap:10px;background:rgba(255,255,255,.6)}
+        .editor.active{display:flex}
+        .textarea{width:100%;min-height:120px;border-radius:10px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.75);padding:10px 12px;outline:none;font-family:var(--mono);font-size:12px}
+        .help{font-size:12px;color:var(--muted)}
+    </style>
+</head>
+<body>
+    <div class="app">
+        <header class="header">
+            <div class="brand"><span>🍈</span><span>记忆管理</span></div>
+        </header>
+        <nav class="nav">
+            <a href="/index.html">对话</a>
+            <a href="/logs.html">日志</a>
+            <a href="/config.html">配置</a>
+            <a href="/templates.html">模板</a>
+            <a href="/memories.html" class="active">记忆</a>
+            <a href="/cookies.html">Cookie</a>
+        </nav>
+
+        <section class="card">
+            <div class="panelHeader">
+                <div class="panelTitle">记忆检索</div>
+                <div>
+                    <button id="searchBtn" class="btn primary" type="button">查询</button>
+                    <button id="exportJsonBtn" class="btn" type="button">导出JSON</button>
+                    <button id="exportCsvBtn" class="btn" type="button">导出CSV</button>
+                </div>
+            </div>
+            <div class="filters">
+                <input id="queryInput" class="input" type="text" placeholder="关键词" autocomplete="off" />
+                <input id="systemInput" class="input" type="text" placeholder="System" autocomplete="off" />
+                <input id="tagsInput" class="input" type="text" placeholder="Tags (逗号分隔)" autocomplete="off" />
+                <input id="scopeInput" class="input" type="text" placeholder="Scope" autocomplete="off" />
+                <input id="projectInput" class="input" type="text" placeholder="Project ID" autocomplete="off" />
+                <input id="userInput" class="input" type="text" placeholder="User ID" autocomplete="off" />
+                <input id="typeInput" class="input" type="text" placeholder="Memory Type" autocomplete="off" />
+                <input id="limitInput" class="input" type="number" min="1" max="500" value="200" />
+            </div>
+            <div class="tableWrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>时间</th>
+                            <th>System</th>
+                            <th>类型</th>
+                            <th>Tags</th>
+                            <th>Scope</th>
+                            <th>Project</th>
+                            <th>User</th>
+                            <th>URL</th>
+                            <th>内容</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="memoriesBody"></tbody>
+                </table>
+                <div id="memoriesEmpty" class="help" style="padding:8px 0;"></div>
+            </div>
+            <div id="memoryEditor" class="editor">
+                <div class="panelTitle">编辑记忆</div>
+                <div class="filters">
+                    <input id="editSystem" class="input" type="text" placeholder="System" />
+                    <input id="editTags" class="input" type="text" placeholder="Tags (逗号分隔)" />
+                    <input id="editScope" class="input" type="text" placeholder="Scope" />
+                    <input id="editProject" class="input" type="text" placeholder="Project ID" />
+                    <input id="editUser" class="input" type="text" placeholder="User ID" />
+                    <input id="editType" class="input" type="text" placeholder="Memory Type" />
+                    <input id="editUrl" class="input" type="text" placeholder="URL" />
+                </div>
+                <textarea id="editContent" class="textarea" placeholder="内容"></textarea>
+                <div class="filters">
+                    <button id="saveEditBtn" class="btn primary" type="button">保存</button>
+                    <button id="cancelEditBtn" class="btn" type="button">取消</button>
+                    <span id="editStatus" class="pill"></span>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        (function(){
+            function el(id){return document.getElementById(id)}
+            var state = {items:[],editing:null}
+
+            function buildParams(){
+                var params = new URLSearchParams()
+                var query = el('queryInput').value.trim()
+                var system = el('systemInput').value.trim()
+                var tags = el('tagsInput').value.trim()
+                var scope = el('scopeInput').value.trim()
+                var project = el('projectInput').value.trim()
+                var user = el('userInput').value.trim()
+                var type = el('typeInput').value.trim()
+                var limit = el('limitInput').value.trim()
+                if (query) params.append('query', query)
+                if (system) params.append('system', system)
+                if (tags) params.append('tags', tags)
+                if (scope) params.append('scope', scope)
+                if (project) params.append('project_id', project)
+                if (user) params.append('user_id', user)
+                if (type) params.append('memory_type', type)
+                if (limit) params.append('limit', limit)
+                return params
+            }
+
+            function renderTable(list){
+                var body = el('memoriesBody')
+                body.textContent = ''
+                var empty = el('memoriesEmpty')
+                empty.textContent = ''
+                if (!list || !list.length){
+                    empty.textContent = '暂无记录'
+                    return
+                }
+                list.forEach(function(item){
+                    var row = document.createElement('tr')
+                    var fields = [
+                        item.created_at || '',
+                        item.system || '',
+                        item.memory_type || '',
+                        Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags || ''),
+                        item.scope || '',
+                        item.project_id || '',
+                        item.user_id || '',
+                        item.url || '',
+                        item.content || ''
+                    ]
+                    fields.forEach(function(text, idx){
+                        var cell = document.createElement('td')
+                        cell.textContent = text
+                        if (idx === 8) cell.className = 'mono'
+                        row.appendChild(cell)
+                    })
+                    var actions = document.createElement('td')
+                    var editBtn = document.createElement('button')
+                    editBtn.className = 'btn'
+                    editBtn.type = 'button'
+                    editBtn.textContent = '编辑'
+                    editBtn.onclick = function(){ openEditor(item) }
+                    var delBtn = document.createElement('button')
+                    delBtn.className = 'btn danger'
+                    delBtn.type = 'button'
+                    delBtn.textContent = '删除'
+                    delBtn.onclick = function(){ deleteItem(item) }
+                    actions.appendChild(editBtn)
+                    actions.appendChild(delBtn)
+                    row.appendChild(actions)
+                    body.appendChild(row)
+                })
+            }
+
+            function loadMemories(){
+                var params = buildParams()
+                fetch('/api/config/experiences?' + params.toString()).then(function(r){return r.json()}).then(function(data){
+                    var list = (data && data.items) ? data.items : []
+                    state.items = list
+                    renderTable(list)
+                }).catch(function(e){
+                    var empty = el('memoriesEmpty')
+                    empty.textContent = '加载记忆失败: ' + e
+                })
+            }
+
+            function exportData(format){
+                var params = buildParams()
+                params.append('format', format)
+                var url = '/api/config/experiences/export?' + params.toString()
+                window.open(url, '_blank')
+            }
+
+            function openEditor(item){
+                state.editing = item
+                el('memoryEditor').classList.add('active')
+                el('editSystem').value = item.system || ''
+                el('editTags').value = Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags || '')
+                el('editScope').value = item.scope || ''
+                el('editProject').value = item.project_id || ''
+                el('editUser').value = item.user_id || ''
+                el('editType').value = item.memory_type || ''
+                el('editUrl').value = item.url || ''
+                el('editContent').value = item.content || ''
+                el('editStatus').textContent = ''
+            }
+
+            function closeEditor(){
+                state.editing = null
+                el('memoryEditor').classList.remove('active')
+            }
+
+            function saveEdit(){
+                if (!state.editing) return
+                var payload = {
+                    content: el('editContent').value,
+                    system: el('editSystem').value,
+                    tags: el('editTags').value,
+                    scope: el('editScope').value,
+                    project_id: el('editProject').value,
+                    user_id: el('editUser').value,
+                    memory_type: el('editType').value,
+                    url: el('editUrl').value
+                }
+                el('editStatus').textContent = '保存中...'
+                fetch('/api/config/experiences/' + encodeURIComponent(state.editing.id), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                }).then(function(res){
+                    if (res.ok){
+                        el('editStatus').textContent = '已保存'
+                        loadMemories()
+                        setTimeout(closeEditor, 600)
+                    }else{
+                        el('editStatus').textContent = '保存失败 (' + res.status + ')'
+                    }
+                }).catch(function(e){
+                    el('editStatus').textContent = '保存出错 ' + e
+                })
+            }
+
+            function deleteItem(item){
+                if (!confirm('确认删除该记忆？')) return
+                fetch('/api/config/experiences/' + encodeURIComponent(item.id), { method: 'DELETE' }).then(function(res){
+                    if (res.ok){
+                        loadMemories()
+                    }else{
+                        alert('删除失败 (' + res.status + ')')
+                    }
+                }).catch(function(e){ alert('删除出错 ' + e) })
+            }
+
+            el('searchBtn').onclick = loadMemories
+            el('exportJsonBtn').onclick = function(){ exportData('json') }
+            el('exportCsvBtn').onclick = function(){ exportData('csv') }
+            el('saveEditBtn').onclick = saveEdit
+            el('cancelEditBtn').onclick = closeEditor
+
+            loadMemories()
+        })()
+    </script>
+</body>
+</html>

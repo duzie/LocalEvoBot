@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cookie 管理 - 小冬瓜智能助手</title>
+    <style>
+        :root{--card:rgba(255,255,255,.88);--border:rgba(255,255,255,.3);--muted:#6b7280;--text:#1f2937;--primary:#ec4899;--primary2:#f97316;--radius:14px;--radius2:999px;--mono:ui-monospace,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;--sans:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+        *{box-sizing:border-box}
+        body{margin:0;font-family:var(--sans);color:var(--text);background:linear-gradient(135deg,#a8e6cf 0%,#dcedc1 25%,#ffd3b6 50%,#ffaaa5 75%,#ff8b94 100%)}
+        .app{max-width:1100px;margin:0 auto;padding:0 12px}
+        .header{margin-top:12px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);display:flex;align-items:center;justify-content:space-between}
+        .brand{font-weight:800;display:flex;align-items:center;gap:10px}
+        .nav{margin:10px 0;display:flex;gap:8px;flex-wrap:wrap}
+        .nav a{display:inline-block;padding:8px 12px;border-radius:999px;background:rgba(255,255,255,.7);border:1px solid var(--border);text-decoration:none;color:rgba(31,41,55,.9);font-weight:700}
+        .nav a.active{background:rgba(255,255,255,.95);border-color:rgba(236,72,153,.45);color:rgba(236,72,153,.95)}
+        .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 10px 30px rgba(31,38,135,.18);overflow:hidden;margin-bottom:12px}
+        .panelHeader{padding:10px 12px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.6);display:flex;align-items:center;justify-content:space-between}
+        .panelTitle{font-weight:800}
+        .btn{height:36px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.75);cursor:pointer}
+        .btn.primary{border-color:rgba(236,72,153,.55);background:linear-gradient(135deg,var(--primary) 0%,var(--primary2) 100%);color:#fff}
+        .btn.danger{border-color:rgba(239,68,68,.55);background:linear-gradient(135deg,#ef4444 0%,#f97316 100%);color:#fff}
+        .tableWrap{padding:12px;overflow:auto}
+        table{width:100%;border-collapse:collapse;font-size:12px;min-width:640px}
+        th,td{padding:8px;border-bottom:1px solid rgba(255,255,255,.4);text-align:left;vertical-align:top}
+        th{font-weight:800;background:rgba(255,255,255,.6);position:sticky;top:0}
+        .detail{padding:12px;border-top:1px solid var(--border);background:rgba(255,255,255,.6);display:none}
+        .detail.active{display:block}
+        .mono{font-family:var(--mono);font-size:12px;white-space:pre-wrap;word-break:break-word}
+        .help{font-size:12px;color:var(--muted)}
+    </style>
+</head>
+<body>
+    <div class="app">
+        <header class="header">
+            <div class="brand"><span>🍈</span><span>Cookie 管理</span></div>
+        </header>
+        <nav class="nav">
+            <a href="/index.html">对话</a>
+            <a href="/logs.html">日志</a>
+            <a href="/config.html">配置</a>
+            <a href="/templates.html">模板</a>
+            <a href="/memories.html">记忆</a>
+            <a href="/cookies.html" class="active">Cookie</a>
+        </nav>
+
+        <section class="card">
+            <div class="panelHeader">
+                <div class="panelTitle">Cookie 列表</div>
+                <button id="refreshBtn" class="btn" type="button">刷新</button>
+            </div>
+            <div class="tableWrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>域名</th>
+                            <th>数量</th>
+                            <th>更新时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="cookieBody"></tbody>
+                </table>
+                <div id="cookieEmpty" class="help" style="padding:8px 0;"></div>
+            </div>
+            <div id="cookieDetail" class="detail">
+                <div class="panelTitle">详情</div>
+                <pre id="cookieDetailText" class="mono"></pre>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        (function(){
+            function el(id){return document.getElementById(id)}
+            function renderList(list){
+                var body = el('cookieBody')
+                body.textContent = ''
+                var empty = el('cookieEmpty')
+                empty.textContent = ''
+                if (!list || !list.length){
+                    empty.textContent = '暂无记录'
+                    return
+                }
+                list.forEach(function(item){
+                    var row = document.createElement('tr')
+                    var domain = item.domain || item.file || ''
+                    var count = item.count == null ? '' : String(item.count)
+                    var updated = item.updated_at || ''
+                    ;[domain, count, updated].forEach(function(text){
+                        var cell = document.createElement('td')
+                        cell.textContent = text
+                        row.appendChild(cell)
+                    })
+                    var actions = document.createElement('td')
+                    var viewBtn = document.createElement('button')
+                    viewBtn.className = 'btn'
+                    viewBtn.type = 'button'
+                    viewBtn.textContent = '查看'
+                    viewBtn.onclick = function(){ loadDetail(domain) }
+                    var delBtn = document.createElement('button')
+                    delBtn.className = 'btn danger'
+                    delBtn.type = 'button'
+                    delBtn.textContent = '删除'
+                    delBtn.onclick = function(){ deleteCookie(domain) }
+                    actions.appendChild(viewBtn)
+                    actions.appendChild(delBtn)
+                    row.appendChild(actions)
+                    body.appendChild(row)
+                })
+            }
+
+            function loadList(){
+                fetch('/api/chat/cookies').then(function(r){return r.json()}).then(function(data){
+                    renderList(data.items || [])
+                }).catch(function(e){
+                    var empty = el('cookieEmpty')
+                    empty.textContent = '加载失败: ' + e
+                })
+            }
+
+            function loadDetail(domain){
+                if (!domain) return
+                fetch('/api/chat/cookies/' + encodeURIComponent(domain)).then(function(r){return r.json()}).then(function(data){
+                    el('cookieDetailText').textContent = JSON.stringify(data, null, 2)
+                    el('cookieDetail').classList.add('active')
+                }).catch(function(e){
+                    el('cookieDetailText').textContent = '加载失败: ' + e
+                    el('cookieDetail').classList.add('active')
+                })
+            }
+
+            function deleteCookie(domain){
+                if (!confirm('确认删除 ' + domain + ' 的 Cookie？')) return
+                fetch('/api/chat/cookies/' + encodeURIComponent(domain), { method: 'DELETE' }).then(function(res){
+                    if (res.ok){
+                        loadList()
+                        el('cookieDetail').classList.remove('active')
+                    }else{
+                        alert('删除失败 (' + res.status + ')')
+                    }
+                }).catch(function(e){ alert('删除出错 ' + e) })
+            }
+
+            el('refreshBtn').onclick = loadList
+            loadList()
+        })()
+    </script>
+</body>
+</html>

@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>模板管理 - 小冬瓜智能助手</title>
+    <style>
+        :root{--card:rgba(255,255,255,.88);--border:rgba(255,255,255,.3);--muted:#6b7280;--text:#1f2937;--primary:#ec4899;--primary2:#f97316;--radius:14px;--radius2:999px;--mono:ui-monospace,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;--sans:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+        *{box-sizing:border-box}
+        body{margin:0;font-family:var(--sans);color:var(--text);background:linear-gradient(135deg,#a8e6cf 0%,#dcedc1 25%,#ffd3b6 50%,#ffaaa5 75%,#ff8b94 100%)}
+        .app{max-width:1100px;margin:0 auto;padding:0 12px}
+        .header{margin-top:12px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);display:flex;align-items:center;justify-content:space-between}
+        .brand{font-weight:800;display:flex;align-items:center;gap:10px}
+        .nav{margin:10px 0;display:flex;gap:8px;flex-wrap:wrap}
+        .nav a{display:inline-block;padding:8px 12px;border-radius:999px;background:rgba(255,255,255,.7);border:1px solid var(--border);text-decoration:none;color:rgba(31,41,55,.9);font-weight:700}
+        .nav a.active{background:rgba(255,255,255,.95);border-color:rgba(236,72,153,.45);color:rgba(236,72,153,.95)}
+        .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 10px 30px rgba(31,38,135,.18);overflow:hidden;margin-bottom:12px}
+        .panelHeader{padding:10px 12px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.6);display:flex;align-items:center;justify-content:space-between}
+        .panelTitle{font-weight:800}
+        .btn{height:36px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.75);cursor:pointer}
+        .btn.primary{border-color:rgba(236,72,153,.55);background:linear-gradient(135deg,var(--primary) 0%,var(--primary2) 100%);color:#fff}
+        .btn.danger{border-color:rgba(239,68,68,.55);background:linear-gradient(135deg,#ef4444 0%,#f97316 100%);color:#fff}
+        .tmplList{padding:12px;display:flex;flex-direction:column;gap:12px}
+        .tmplCard{border:1px solid rgba(255,255,255,.4);border-radius:12px;background:rgba(255,255,255,.7);padding:12px;display:flex;flex-direction:column;gap:10px}
+        .tmplHeader{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+        .tmplMeta{font-size:12px;color:var(--muted)}
+        .tmplTags{display:flex;gap:6px;flex-wrap:wrap}
+        .tmplTag{padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.7);border:1px solid var(--border);font-size:12px;color:var(--muted)}
+        .input{height:36px;border-radius:10px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.75);padding:0 12px;outline:none;min-width:180px}
+        .textarea{width:100%;min-height:140px;border-radius:10px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.75);padding:10px 12px;outline:none;font-family:var(--mono);font-size:12px}
+        .help{font-size:12px;color:var(--muted)}
+    </style>
+</head>
+<body>
+    <div class="app">
+        <header class="header">
+            <div class="brand"><span>🍈</span><span>模板管理</span></div>
+        </header>
+        <nav class="nav">
+            <a href="/index.html">对话</a>
+            <a href="/logs.html">日志</a>
+            <a href="/config.html">配置</a>
+            <a href="/templates.html" class="active">模板</a>
+            <a href="/memories.html">记忆</a>
+            <a href="/cookies.html">Cookie</a>
+        </nav>
+
+        <section class="card">
+            <div class="panelHeader">
+                <div class="panelTitle">任务模板</div>
+                <div>
+                    <button id="refreshBtn" class="btn" type="button">刷新</button>
+                </div>
+            </div>
+            <div id="tmplList" class="tmplList"></div>
+        </section>
+    </div>
+
+    <script>
+        (function(){
+            function el(id){return document.getElementById(id)}
+            function buildTag(text){
+                var t = document.createElement('span')
+                t.className = 'tmplTag'
+                t.textContent = text
+                return t
+            }
+
+            function renderTemplates(list){
+                var wrap = el('tmplList')
+                wrap.textContent = ''
+                if (!list || !list.length){
+                    var empty = document.createElement('div')
+                    empty.className = 'help'
+                    empty.textContent = '暂无模板'
+                    wrap.appendChild(empty)
+                    return
+                }
+                list.forEach(function(item){
+                    var card = document.createElement('div')
+                    card.className = 'tmplCard'
+
+                    var header = document.createElement('div')
+                    header.className = 'tmplHeader'
+                    var title = document.createElement('div')
+                    title.textContent = item.name || '未命名模板'
+                    title.style.fontWeight = '800'
+                    var meta = document.createElement('div')
+                    meta.className = 'tmplMeta'
+                    meta.textContent = item.created_at || ''
+                    header.appendChild(title)
+                    header.appendChild(meta)
+
+                    var tagsWrap = document.createElement('div')
+                    tagsWrap.className = 'tmplTags'
+                    var tags = item.tags || []
+                    if (tags.length){
+                        tags.forEach(function(tag){ tagsWrap.appendChild(buildTag(tag)) })
+                    }
+
+                    var fields = document.createElement('div')
+                    fields.className = 'tmplMeta'
+                    fields.textContent = [item.scope, item.project_id, item.user_id].filter(Boolean).join(' · ')
+
+                    var tagInputRow = document.createElement('div')
+                    tagInputRow.className = 'tmplHeader'
+                    var tagInput = document.createElement('input')
+                    tagInput.className = 'input'
+                    tagInput.placeholder = '标签 (逗号分隔)'
+                    tagInput.value = (tags || []).join(', ')
+                    var saveBtn = document.createElement('button')
+                    saveBtn.className = 'btn primary'
+                    saveBtn.type = 'button'
+                    saveBtn.textContent = '保存'
+                    var delBtn = document.createElement('button')
+                    delBtn.className = 'btn danger'
+                    delBtn.type = 'button'
+                    delBtn.textContent = '删除'
+                    tagInputRow.appendChild(tagInput)
+                    tagInputRow.appendChild(saveBtn)
+                    tagInputRow.appendChild(delBtn)
+
+                    var textarea = document.createElement('textarea')
+                    textarea.className = 'textarea'
+                    textarea.value = item.raw || (item.template ? JSON.stringify(item.template, null, 2) : '')
+
+                    saveBtn.onclick = function(){
+                        var raw = textarea.value || ''
+                        var obj = null
+                        try{
+                            obj = JSON.parse(raw)
+                        }catch(e){
+                            alert('模板 JSON 解析失败')
+                            return
+                        }
+                        var tagList = (tagInput.value || '').split(',').map(function(t){ return t.trim() }).filter(Boolean)
+                        fetch('/api/config/templates/' + encodeURIComponent(item.id), {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ template: obj, tags: tagList })
+                        }).then(function(res){
+                            if (res.ok){
+                                alert('已保存')
+                                loadTemplates()
+                            }else{
+                                alert('保存失败 (' + res.status + ')')
+                            }
+                        }).catch(function(e){
+                            alert('保存出错 ' + e)
+                        })
+                    }
+
+                    delBtn.onclick = function(){
+                        if (!confirm('确认删除该模板？')) return
+                        fetch('/api/config/templates/' + encodeURIComponent(item.id), { method: 'DELETE' }).then(function(res){
+                            if (res.ok){
+                                loadTemplates()
+                            }else{
+                                alert('删除失败 (' + res.status + ')')
+                            }
+                        }).catch(function(e){ alert('删除出错 ' + e) })
+                    }
+
+                    card.appendChild(header)
+                    if (tagsWrap.childNodes.length) card.appendChild(tagsWrap)
+                    if (fields.textContent) card.appendChild(fields)
+                    card.appendChild(textarea)
+                    card.appendChild(tagInputRow)
+                    wrap.appendChild(card)
+                })
+            }
+
+            function loadTemplates(){
+                fetch('/api/config/templates').then(function(r){return r.json()}).then(function(data){
+                    renderTemplates(data.templates || [])
+                }).catch(function(e){
+                    var wrap = el('tmplList')
+                    wrap.textContent = ''
+                    var err = document.createElement('div')
+                    err.className = 'help'
+                    err.textContent = '加载模板失败: ' + e
+                    wrap.appendChild(err)
+                })
+            }
+
+            el('refreshBtn').onclick = loadTemplates
+            loadTemplates()
+        })()
+    </script>
+</body>
+</html>

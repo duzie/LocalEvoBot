@@ -115,6 +115,10 @@ async def send_message(chat: ChatMessage):
     # Echo back to chat history (optional, or handle in frontend)
     return {"status": "sent"}
 
+@router.get("/status")
+async def get_status():
+    return shared.get_status()
+
 def _get_cookie_dir():
     base_dir = os.path.dirname(_get_env_path())
     data_dir = os.path.join(base_dir, "app", "data", "cookies")

@@ -51,7 +51,7 @@ def _simulate_openclaw_browser_call(action: str, params: Dict[str, Any]) -> Dict
     """
     使用Playwright模拟OpenClaw浏览器功能
     """
-    global _current_page
+    global _browser_instance, _browser_context, _current_page
     
     page, error = _get_or_create_browser()
     if error:
@@ -167,7 +167,6 @@ def _simulate_openclaw_browser_call(action: str, params: Dict[str, Any]) -> Dict
             if _browser_instance:
                 _browser_instance.close()
                 # 重置全局变量
-                global _browser_instance, _browser_context, _current_page
                 _browser_instance = None
                 _browser_context = None
                 _current_page = None

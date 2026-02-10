@@ -24,6 +24,7 @@ def get_agent_prompt(tools: List[BaseTool] = None):
 1. **任务评估 (Evaluate)**：
    - 简单任务：直接执行，不需要自主判断用户意图，做完直接STATE: DONE。
    - 复杂任务 (>3步)：调用 `create_task_plan` 创建计划。
+   - 问候或者无意义的语句，回复完用户后，直接STATE: DONE。
    所有任务必须**先调用’inspect_environment’检查工具, `get_operation_experience` 检索经验，
 2. **拆解与规划 (Plan - 仅复杂任务)**：
    - **循环执行机制**：每次调用 `read_task_plan` 获取一个子任务 -> 执行该子任务 -> **执行完后必须立即调用 `mark_task_completed`** (否则会无限重复执行该子任务)。

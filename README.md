@@ -88,8 +88,17 @@ python main.py
 **Web 控制台接口**
 - 配置管理：`/api/config`
 - 访问地址与局域网发现：`/api/config/access-url`、`/api/config/hosts`
+- 心跳任务：`/api/config/heartbeat/tasks`、`/api/config/heartbeat/update`
 - 日志 WebSocket：`/api/logs/ws`
 - 对话 WebSocket：`/api/chat/ws`
+
+**Web 控制台页面**
+- 对话：`/index.html`
+- 日志：`/logs.html`
+- 配置：`/config.html`
+- 模板：`/templates.html`
+- 记忆：`/memories.html`
+- Cookie：`/cookies.html`
 
 ## 个人认知与模板使用
 
@@ -142,6 +151,78 @@ python main.py
   1. 打开浏览器并登录站点（加载扩展）
   2. 扩展保存 Cookie
   3. 再次打开时自动载入 Cookie
+
+## 心跳机制
+
+心跳机制用于调度各类后台监听与保活任务（如 WhatsApp 监听），可在运行时统一管理。
+
+**注册心跳任务**
+```python
+from app.integrations import heartbeat
+
+def _my_tick():
+    pass
+
+def start_my_feature():
+    heartbeat.register_task(
+        "my_feature_heartbeat",
+        _my_tick,
+        interval=5.0
+    )
+```
+
+**最简可用步骤**
+- 1) 在任意模块里写一个 `start_xxx()`，内部调用 `heartbeat.register_task(...)`
+- 2) 在 `main.py` 启动时调用 `start_xxx()`，或在模块加载时主动调用
+- 3) 打开配置页 → “心跳任务”，确认任务已出现并可调整间隔/暂停
+
+**示例（在 integrations 中新增任务）**
+```python
+from app.integrations import heartbeat
+
+def _sample_tick():
+    return
+
+def start():
+    heartbeat.register_task(
+        "sample_task",
+        _sample_tick,
+        interval=3.0
+    )
+```
+
+**示例（在 main.py 启动时调用）**
+```python
+from app.integrations import sample_task
+
+def main():
+    sample_task.start()
+```
+
+**配置页管理**
+- 配置页新增“心跳任务”区域，可查看任务并修改间隔/暂停
+- 间隔留空表示使用默认间隔
+- 暂停仅对当前进程有效，重启后恢复默认
+
+## WhatsApp Web 接入
+
+WhatsApp 监听已接入心跳调度，任务名为 `whatsapp_web_listener`。
+
+**登录流程（扫码）**
+- 1) 启动服务后打开配置页：`/config.html`
+- 2) 在 “WhatsApp 设置” 点击 “打开 WhatsApp Web”
+- 3) 浏览器会打开 `https://web.whatsapp.com`，用手机 WhatsApp 扫码登录
+- 4) 登录成功后会话保存在 `WHATSAPP_USER_DATA_DIR`，之后通常无需再次扫码
+
+**环境变量**
+- `WHATSAPP_ENABLE`：是否启用监听（`1/0`）
+- `WHATSAPP_POLL_INTERVAL`：轮询间隔（秒）
+- `WHATSAPP_USER_DATA_DIR`：用户数据目录（留空使用默认）
+
+**配置方式**
+- 在配置页的 “WhatsApp 设置” 区域直接保存以上变量
+- 在心跳任务区域可调整 `whatsapp_web_listener` 的运行间隔或暂停
+- 如果提示需要重新扫码，可清空或更换 `WHATSAPP_USER_DATA_DIR`
 
 ## Skills 概览
 
@@ -224,3 +305,8 @@ requirements.txt   项目依赖
 程序会根据 Agent 输出中的 `STATE: CONTINUE` 或 `STATE: DONE` 自动进行多轮调用，直到任务完成或达到上限。
 
 <img width="2085" height="1359" alt="QQ截图20260129145008" src="https://github.com/user-attachments/assets/c2432457-359b-430b-9b35-2faad619d138" />
+
+## 已知问题
+
+**WhatsApp Web 集成**
+- **单联系人消息读取**：当 WhatsApp 左侧联系人列表仅有 1 个联系人，且右侧聊天框已默认打开时，Agent 可能无法正确读取到已打开聊天框的最新消息。

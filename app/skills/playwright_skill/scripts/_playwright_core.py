@@ -245,6 +245,7 @@ def _ensure_page(headless: bool = False, user_data_dir: str = None, extension_di
                 user_data_dir = _get_default_user_data_dir()
         if user_data_dir:
             user_data_dir = os.path.abspath(os.path.expanduser(user_data_dir))
+            os.makedirs(user_data_dir, exist_ok=True)
         if extension_dir and _extension_dir and os.path.abspath(_extension_dir) != extension_dir:
             _reset_browser()
         if user_data_dir and _persistent_dir and os.path.abspath(_persistent_dir) != user_data_dir:
@@ -260,14 +261,28 @@ def _ensure_page(headless: bool = False, user_data_dir: str = None, extension_di
                         f"--disable-extensions-except={extension_dir}",
                         f"--load-extension={extension_dir}",
                     ]
-                _context = _playwright.chromium.launch_persistent_context(
-                    user_data_dir=user_data_dir,
-                    headless=headless,
-                    slow_mo=50,
-                    viewport={"width": 1280, "height": 800},
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    args=args,
-                )
+                try:
+                    _context = _playwright.chromium.launch_persistent_context(
+                        user_data_dir=user_data_dir,
+                        headless=headless,
+                        slow_mo=50,
+                        viewport={"width": 1280, "height": 800},
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        args=args,
+                    )
+                except Exception:
+                    _reset_browser()
+                    _clear_chromium_singletons(user_data_dir)
+                    if not _playwright:
+                        _playwright = sync_playwright().start()
+                    _context = _playwright.chromium.launch_persistent_context(
+                        user_data_dir=user_data_dir,
+                        headless=headless,
+                        slow_mo=50,
+                        viewport={"width": 1280, "height": 800},
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        args=args,
+                    )
         else:
             _persistent_dir = None
             _extension_dir = None
@@ -287,6 +302,21 @@ def _ensure_page(headless: bool = False, user_data_dir: str = None, extension_di
         return _page, None
     except Exception as e:
         return None, f"启动浏览器失败: {e}"
+
+
+def _clear_chromium_singletons(user_data_dir: str):
+    if not user_data_dir:
+        return
+    try:
+        for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+            path = os.path.join(user_data_dir, name)
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
 
 def _get_tesseract_cmd():
@@ -499,4 +529,3 @@ def _get_cdp_ax_tree(page, frame_id=None):
         return res.get("nodes", []), None
     except Exception as e:
         return None, str(e)
-

@@ -6,6 +6,8 @@ import socket
 import json
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
+import asyncio
+from app.integrations import heartbeat, whatsapp_web
 
 router = APIRouter()
 
@@ -15,6 +17,11 @@ class ConfigUpdate(BaseModel):
 
 class AccessUrlUpdate(BaseModel):
     url: str
+
+class HeartbeatUpdate(BaseModel):
+    name: str
+    interval: Optional[float] = None
+    paused: Optional[bool] = None
 
 class TemplateUpdate(BaseModel):
     template: Dict[str, Any]
@@ -162,6 +169,39 @@ async def get_hosts():
 
     urls = [f"http://{ip}:{port}/" for ip in candidates]
     return {"port": port, "ips": candidates, "urls": urls}
+
+@router.get("/heartbeat/tasks")
+async def list_heartbeat_tasks():
+    return {"tasks": heartbeat.list_tasks()}
+
+@router.post("/heartbeat/update")
+async def update_heartbeat_task(payload: HeartbeatUpdate):
+    tasks = heartbeat.list_tasks()
+    names = [t.get("name") for t in tasks]
+    if payload.name not in names:
+        raise HTTPException(status_code=404, detail="心跳任务不存在")
+    ok = heartbeat.update_task(payload.name, payload.interval, payload.paused)
+    if not ok:
+        raise HTTPException(status_code=400, detail="更新失败")
+    return {"status": "success", "name": payload.name}
+
+@router.post("/whatsapp/open")
+async def open_whatsapp_login():
+    result = await asyncio.to_thread(whatsapp_web.open_login)
+    if not result.get("ok"):
+        raise HTTPException(status_code=500, detail=result.get("error") or "打开失败")
+    return result
+
+@router.get("/whatsapp/dom")
+async def export_whatsapp_dom():
+    html, err = await asyncio.to_thread(whatsapp_web.dump_dom)
+    if err:
+        raise HTTPException(status_code=500, detail=err)
+    return Response(
+        content=html,
+        media_type="text/html",
+        headers={"Content-Disposition": "attachment; filename=whatsapp_dom.html"},
+    )
 
 @router.get("/templates")
 async def list_templates():
