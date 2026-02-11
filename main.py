@@ -8,6 +8,9 @@ import queue
 import json
 import sqlite3
 import urllib.request
+import urllib.error
+import subprocess
+import atexit
 from datetime import datetime, timezone
 from web.backend.main import start as start_web_server
 from web.backend.shared import shared
@@ -22,6 +25,66 @@ RELOAD_SIGNAL = "__RELOAD_SKILLS__"
 SET_MODEL_PREFIX = "__SET_MODEL__:"
 WA_IN_PREFIX = "__WA_IN__:"
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[ -/]*[@-~]")
+
+_gateway_process = None
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+def _wa_gateway_base_url():
+    host = (os.getenv("WA_GATEWAY_HOST") or "127.0.0.1").strip()
+    try:
+        port = int(os.getenv("WA_GATEWAY_PORT") or 8787)
+    except Exception:
+        port = 8787
+    return f"http://{host}:{port}"
+
+def _wa_gateway_is_running() -> bool:
+    try:
+        with urllib.request.urlopen(_wa_gateway_base_url() + "/health", timeout=1.5) as resp:
+            return 200 <= int(getattr(resp, "status", 0) or 0) < 300
+    except Exception:
+        return False
+
+def _start_wa_gateway_subprocess():
+    global _gateway_process
+    if _gateway_process is not None:
+        return
+    if _env_flag("WA_GATEWAY_AUTOSTART", True) is False:
+        return
+    if _wa_gateway_is_running():
+        return
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    gateway_dir = os.path.join(base_dir, "gateway")
+    if not os.path.isdir(gateway_dir):
+        return
+    node_bin = (os.getenv("WA_NODE_BIN") or "node").strip()
+    try:
+        _gateway_process = subprocess.Popen(
+            [node_bin, "index.js"],
+            cwd=gateway_dir,
+            env=os.environ.copy(),
+        )
+    except Exception as e:
+        print(f">>> 系统: 启动 WA Gateway 失败: {e}")
+        _gateway_process = None
+        return
+
+    def _cleanup():
+        global _gateway_process
+        proc = _gateway_process
+        _gateway_process = None
+        if proc is None:
+            return
+        try:
+            proc.terminate()
+        except Exception:
+            return
+
+    atexit.register(_cleanup)
 
 def _extract_whatsapp_input(raw: str):
     text = str(raw or "").strip()
@@ -840,6 +903,8 @@ def console_reader():
 
 def main():
     enable_dpi_awareness()
+
+    _start_wa_gateway_subprocess()
     
     # Start Web Server in a daemon thread
     web_thread = threading.Thread(target=start_web_server, daemon=True)

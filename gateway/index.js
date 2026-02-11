@@ -73,6 +73,17 @@ function chunkText(text, limit) {
   return out;
 }
 
+function clearAuthDir() {
+  const dir = String(config.authDir || "").trim();
+  if (!dir) return;
+  if (!fs.existsSync(dir)) return;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const ent of entries) {
+    const p = path.join(dir, ent.name);
+    fs.rmSync(p, { recursive: true, force: true });
+  }
+}
+
 const config = {
   httpHost: envStr("WA_GATEWAY_HOST", "127.0.0.1"),
   httpPort: envInt("WA_GATEWAY_PORT", 8787),
@@ -240,6 +251,8 @@ app.get("/health", (_req, res) => {
     dmEnabled: config.dmEnabled,
     allowFromCount: config.allowFrom.size,
     webhookEnabled: Boolean(config.webhookUrl),
+    loggedIn: Boolean(sock && sock.user && sock.user.id),
+    me: sock && sock.user ? sock.user : null,
   });
 });
 
@@ -247,6 +260,19 @@ app.get("/qr", (req, res) => {
   const auth = String(req.headers.authorization || "");
   if (auth !== `Bearer ${config.apiToken}`) return res.status(401).json({ ok: false });
   res.json({ ok: true, qr: lastQrText || "" });
+});
+
+app.get("/qr-ascii", (req, res) => {
+  const auth = String(req.headers.authorization || "");
+  if (auth !== `Bearer ${config.apiToken}`) return res.status(401).json({ ok: false });
+  if (!lastQrText) return res.json({ ok: true, ascii: "" });
+  try {
+    qrcode.generate(lastQrText, { small: true }, (ascii) => {
+      res.json({ ok: true, ascii: String(ascii || "") });
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
 });
 
 app.use((req, res, next) => {
@@ -268,6 +294,29 @@ app.post("/send", async (req, res) => {
       await sock.sendMessage(to, { text: part });
     }
     res.json({ ok: true, parts: parts.length });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+app.post("/reset", async (_req, res) => {
+  try {
+    if (sock && typeof sock.logout === "function") {
+      try {
+        await sock.logout();
+      } catch {}
+    }
+    if (sock) {
+      try {
+        sock.end();
+      } catch {}
+      sock = null;
+    }
+    lastQrText = "";
+    connectionState = { connection: "init", lastDisconnectReason: null };
+    clearAuthDir();
+    await startWhatsapp({ force: true });
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e) });
   }

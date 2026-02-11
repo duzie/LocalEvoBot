@@ -4,9 +4,10 @@ from dotenv import dotenv_values, set_key
 import os
 import socket
 import json
+import urllib.request
+import urllib.error
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
-import asyncio
 from app.integrations import heartbeat
 
 router = APIRouter()
@@ -95,6 +96,42 @@ def _get_env_path():
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     return os.path.join(base_dir, ".env")
 
+def _wa_gateway_config():
+    env_path = _get_env_path()
+    env = dotenv_values(env_path) if os.path.exists(env_path) else {}
+    host = (os.getenv("WA_GATEWAY_HOST") or env.get("WA_GATEWAY_HOST") or "127.0.0.1").strip()
+    port_raw = (os.getenv("WA_GATEWAY_PORT") or env.get("WA_GATEWAY_PORT") or "8787").strip()
+    try:
+        port = int(port_raw)
+    except Exception:
+        port = 8787
+    token = (os.getenv("WA_GATEWAY_TOKEN") or env.get("WA_GATEWAY_TOKEN") or "").strip()
+    base = f"http://{host}:{port}"
+    return base, token
+
+def _wa_gateway_request_json(path: str, method: str = "GET", body: Optional[dict] = None, require_auth: bool = False):
+    base, token = _wa_gateway_config()
+    url = base + path
+    data = None
+    headers = {"Accept": "application/json"}
+    if body is not None:
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if require_auth:
+        if not token:
+            raise HTTPException(status_code=400, detail="WA_GATEWAY_TOKEN 未配置")
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            return json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", errors="replace") if hasattr(e, "read") else ""
+        raise HTTPException(status_code=int(getattr(e, "code", 502) or 502), detail=raw or str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"无法连接 WA Gateway: {e}")
+
 @router.get("")
 async def get_config():
     """Get all environment variables from .env file"""
@@ -169,6 +206,22 @@ async def get_hosts():
 
     urls = [f"http://{ip}:{port}/" for ip in candidates]
     return {"port": port, "ips": candidates, "urls": urls}
+
+@router.get("/whatsapp/status")
+async def whatsapp_status():
+    return _wa_gateway_request_json("/health", method="GET", require_auth=False)
+
+@router.get("/whatsapp/qr")
+async def whatsapp_qr():
+    return _wa_gateway_request_json("/qr", method="GET", require_auth=True)
+
+@router.get("/whatsapp/qr-ascii")
+async def whatsapp_qr_ascii():
+    return _wa_gateway_request_json("/qr-ascii", method="GET", require_auth=True)
+
+@router.post("/whatsapp/reset")
+async def whatsapp_reset():
+    return _wa_gateway_request_json("/reset", method="POST", body={}, require_auth=True)
 
 @router.get("/heartbeat/tasks")
 async def list_heartbeat_tasks():
