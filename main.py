@@ -7,7 +7,7 @@ import threading
 import queue
 import json
 import sqlite3
-import time
+import urllib.request
 from datetime import datetime, timezone
 from web.backend.main import start as start_web_server
 from web.backend.shared import shared
@@ -17,11 +17,55 @@ os.environ.setdefault("HUGGINGFACE_HUB_ENDPOINT", "https://hf-mirror.com")
 
 from app.agent import create_agent_executor, create_llm
 from app.skills.system_skill.scripts.experience_tools import add_operation_experience, get_operation_experience
-from app.integrations import whatsapp_web
 
 RELOAD_SIGNAL = "__RELOAD_SKILLS__"
 SET_MODEL_PREFIX = "__SET_MODEL__:"
+WA_IN_PREFIX = "__WA_IN__:"
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[ -/]*[@-~]")
+
+def _extract_whatsapp_input(raw: str):
+    text = str(raw or "").strip()
+    if not text.startswith(WA_IN_PREFIX):
+        return None, text
+    payload_raw = text[len(WA_IN_PREFIX):].strip()
+    try:
+        data = json.loads(payload_raw)
+    except Exception:
+        return None, ""
+    if not isinstance(data, dict):
+        return None, ""
+    chat_jid = str(data.get("chatJid") or "").strip()
+    msg_text = str(data.get("text") or "").strip()
+    sender_e164 = str(data.get("senderE164") or "").strip()
+    if not chat_jid or not msg_text:
+        return None, ""
+    return {"chatJid": chat_jid, "senderE164": sender_e164}, msg_text
+
+def _send_whatsapp_reply(chat_jid: str, text: str):
+    token = (os.getenv("WA_GATEWAY_TOKEN") or "").strip()
+    if not token:
+        return False
+    host = (os.getenv("WA_GATEWAY_HOST") or "127.0.0.1").strip()
+    try:
+        port = int(os.getenv("WA_GATEWAY_PORT") or 8787)
+    except Exception:
+        port = 8787
+    url = f"http://{host}:{port}/send"
+    body = json.dumps({"to": chat_jid, "text": text}, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return 200 <= int(getattr(resp, "status", 0) or 0) < 300
+    except Exception:
+        return False
 
 def _get_short_term_db_path(date_key: str = None):
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -152,7 +196,7 @@ def parse_state(output: str):
         if idx == state_idx:
             continue
         kept.append(line.strip())
-    cleaned = "\n".join([l for l in kept if l]).strip()
+    cleaned = "\n".join([line_text for line_text in kept if line_text]).strip()
     return state, cleaned
 
 def strip_reload_signal(output: str):
@@ -443,7 +487,7 @@ def _run_summary_async(chat_history, project_id, user_id):
                 result = add_operation_experience(
                     system_name="personal_cognition",
                     content=summary_text,
-                    tags=[f"scope:project", f"project:{project_id}", "topic:summary"],
+                    tags=["scope:project", f"project:{project_id}", "topic:summary"],
                     scope="project",
                     project_id=project_id,
                     user_id=user_id,
@@ -820,9 +864,6 @@ def main():
     print("输入 'exit' 或 'quit' 退出。")
     print("也可以通过 Web 控制台发送指令。\n")
 
-    if whatsapp_web.enabled():
-        whatsapp_web.start()
-
     chat_history = []
     max_auto_steps = 60
     '''
@@ -837,44 +878,37 @@ def main():
             # Wait for input from either Console or Web
             user_input = shared.get_input()
             user_input = user_input.strip()
+            wa_ctx, user_input = _extract_whatsapp_input(user_input)
             
-            wa_payload = whatsapp_web.parse_payload(user_input)
-            wa_sender = None
-            if wa_payload:
-                wa_sender = str(wa_payload.get("sender") or "").strip()
-                user_input = str(wa_payload.get("text") or "").strip()
-            else:
-                if user_input.startswith(SET_MODEL_PREFIX):
-                    provider = user_input[len(SET_MODEL_PREFIX):].strip().lower()
-                    previous_provider = os.getenv("LLM_PROVIDER", "deepseek")
-                    os.environ["LLM_PROVIDER"] = provider
+            if user_input.startswith(SET_MODEL_PREFIX):
+                provider = user_input[len(SET_MODEL_PREFIX):].strip().lower()
+                previous_provider = os.getenv("LLM_PROVIDER", "deepseek")
+                os.environ["LLM_PROVIDER"] = provider
+                try:
+                    agent_executor = create_agent_executor()
+                    chat_history = []
+                    print(f">>> 系统: 已切换模型为 {provider}\n")
+                except Exception as e:
+                    os.environ["LLM_PROVIDER"] = previous_provider
                     try:
                         agent_executor = create_agent_executor()
-                        chat_history = []
-                        print(f">>> 系统: 已切换模型为 {provider}\n")
-                    except Exception as e:
-                        os.environ["LLM_PROVIDER"] = previous_provider
-                        try:
-                            agent_executor = create_agent_executor()
-                        except Exception:
-                            pass
-                        print(f">>> 系统: 切换模型失败: {e}\n")
-                    continue
+                    except Exception:
+                        pass
+                    print(f">>> 系统: 切换模型失败: {e}\n")
+                continue
 
-                if user_input.lower() in ["exit", "quit"]:
-                    print("Bye!")
-                    break
+            if user_input.lower() in ["exit", "quit"]:
+                print("Bye!")
+                break
 
             if not user_input:
                 continue
 
-            if not wa_sender and user_input.strip().lower() in ["y", "yes", "n", "no"]:
+            if user_input.strip().lower() in ["y", "yes", "n", "no"]:
                 continue
 
             project_id = _extract_project_id()
             user_id = os.getenv("LOCAL_USER_ID", "local_user")
-            if wa_sender:
-                user_id = f"whatsapp:{wa_sender}"
             _add_short_term_message("user", user_input, project_id, user_id)
             resume_keywords = {"继续", "继续执行", "继续做", "continue"}
             if user_input.strip().lower() in resume_keywords:
@@ -885,7 +919,13 @@ def main():
                 else:
                     auto_input = "继续执行，基于当前屏幕状态完成任务。"
             else:
-                if _requests_all_memory_search(user_input):
+                if wa_ctx:
+                    auto_input = (
+                        "你正在通过 WhatsApp 私聊与用户对话。"
+                        "请直接回复对方的消息内容，输出为纯文本，不要包含 'User:'/'Agent:'/'STATE:' 等标记。\n\n"
+                        f"用户消息：{user_input}"
+                    )
+                elif _requests_all_memory_search(user_input):
                     auto_input = f"用户要求搜索所有记忆。请同时检索长期记忆(get_operation_experience)与短期记忆(search_short_term_memory)，并合并后给出结论与依据。\n\n用户原始输入：{user_input}"
                 else:
                     auto_input = _maybe_apply_template(user_input, project_id, user_id)
@@ -942,11 +982,10 @@ def main():
                 output, reload_requested = strip_reload_signal(output)
                 state, cleaned_output = parse_state(output)
                 _add_short_term_message("assistant", cleaned_output or output, project_id, user_id)
-                if wa_sender and not reload_requested and state != "CONTINUE":
-                    reply_text = (cleaned_output or output).strip()
-                    if not reply_text:
-                        reply_text = "已完成"
-                    whatsapp_web.send_reply(wa_sender, reply_text)
+                if wa_ctx and state != "CONTINUE":
+                    reply_text = (cleaned_output or output or "").strip()
+                    if reply_text:
+                        _send_whatsapp_reply(wa_ctx.get("chatJid"), reply_text)
                 chat_history.extend([
                     ("user", auto_input),
                     ("assistant", output)

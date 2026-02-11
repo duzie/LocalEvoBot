@@ -43,7 +43,7 @@ class ConnectionManager:
         for connection in self.active_connections:
             try:
                 await connection.send_text(message)
-            except:
+            except Exception:
                 self.disconnect(connection)
 
 manager = ConnectionManager()
@@ -114,6 +114,30 @@ async def send_message(chat: ChatMessage):
     shared.put_input(chat.message)
     # Echo back to chat history (optional, or handle in frontend)
     return {"status": "sent"}
+
+@router.post("/whatsapp/webhook")
+async def whatsapp_webhook(request: Request, payload: dict = Body(...)):
+    env_path = _get_env_path()
+    env = dotenv_values(env_path) if os.path.exists(env_path) else {}
+    expected = (os.getenv("WA_WEBHOOK_TOKEN") or env.get("WA_WEBHOOK_TOKEN") or "").strip()
+    if expected:
+        auth = str(request.headers.get("authorization") or "")
+        if auth != f"Bearer {expected}":
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+    text = str(payload.get("text") or "").strip()
+    chat_jid = str(payload.get("chatJid") or payload.get("senderJid") or "").strip()
+    sender_e164 = str(payload.get("senderE164") or "").strip()
+    if not chat_jid or not text:
+        raise HTTPException(status_code=400, detail="Invalid payload")
+
+    shared.put_input(
+        "__WA_IN__:" + json.dumps(
+            {"chatJid": chat_jid, "senderE164": sender_e164, "text": text},
+            ensure_ascii=False,
+        )
+    )
+    return {"ok": True}
 
 @router.get("/status")
 async def get_status():

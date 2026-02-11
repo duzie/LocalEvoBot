@@ -7,7 +7,7 @@ import json
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
 import asyncio
-from app.integrations import heartbeat, whatsapp_web
+from app.integrations import heartbeat
 
 router = APIRouter()
 
@@ -184,24 +184,6 @@ async def update_heartbeat_task(payload: HeartbeatUpdate):
     if not ok:
         raise HTTPException(status_code=400, detail="更新失败")
     return {"status": "success", "name": payload.name}
-
-@router.post("/whatsapp/open")
-async def open_whatsapp_login():
-    result = await asyncio.to_thread(whatsapp_web.open_login)
-    if not result.get("ok"):
-        raise HTTPException(status_code=500, detail=result.get("error") or "打开失败")
-    return result
-
-@router.get("/whatsapp/dom")
-async def export_whatsapp_dom():
-    html, err = await asyncio.to_thread(whatsapp_web.dump_dom)
-    if err:
-        raise HTTPException(status_code=500, detail=err)
-    return Response(
-        content=html,
-        media_type="text/html",
-        headers={"Content-Disposition": "attachment; filename=whatsapp_dom.html"},
-    )
 
 @router.get("/templates")
 async def list_templates():

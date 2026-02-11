@@ -86,47 +86,9 @@
             </div>
             <div id="configBody" class="cfg"></div>
             <div class="cfgFooter">
-                <input id="newKey" class="input" type="text" placeholder="键 (如 WHATSAPP_ENABLE)" autocomplete="off" />
+                <input id="newKey" class="input" type="text" placeholder="键 (如 PUBLIC_URL)" autocomplete="off" />
                 <input id="newValue" class="input" type="text" placeholder="值" autocomplete="off" />
                 <button id="addConfigBtn" class="btn primary" type="button">添加</button>
-            </div>
-        </section>
-
-        <section class="card">
-            <div class="panelHeader">
-                <div class="panelTitle">WhatsApp 设置</div>
-                <span class="pill">Web 监听与回复</span>
-            </div>
-            <div class="cfg">
-                <div class="cfgRow">
-                    <div class="cfgKey">启用</div>
-                    <select id="waEnable" class="select">
-                        <option value="0">关闭 (0)</option>
-                        <option value="1">开启 (1)</option>
-                    </select>
-                    <button id="saveWaEnable" class="btn" type="button">保存</button>
-                </div>
-                <div class="cfgRow">
-                    <div class="cfgKey">轮询间隔(秒)</div>
-                    <input id="waPoll" class="input" type="number" min="0.5" step="0.5" placeholder="默认 2" />
-                    <button id="saveWaPoll" class="btn" type="button">保存</button>
-                </div>
-                <div class="cfgRow">
-                    <div class="cfgKey">用户数据目录</div>
-                    <input id="waUserDir" class="input" type="text" placeholder="留空使用默认 app/data/whatsapp_user" autocomplete="off" />
-                    <button id="saveWaUserDir" class="btn" type="button">保存</button>
-                </div>
-                <div class="cfgRow">
-                    <div class="cfgKey">登录扫码</div>
-                    <button id="waOpenLogin" class="btn primary" type="button">打开 WhatsApp Web</button>
-                    <div id="waLoginStatus" class="help"></div>
-                </div>
-                <div class="cfgRow">
-                    <div class="cfgKey">导出结构</div>
-                    <button id="waDumpDom" class="btn" type="button">导出 DOM</button>
-                    <div id="waDomStatus" class="help"></div>
-                </div>
-                <div class="help">保存后立即生效（运行时读取环境变量），无需重启。</div>
             </div>
         </section>
 
@@ -231,11 +193,6 @@
                         row.appendChild(btn)
                         body.appendChild(row)
                     })
-                    // Prefill WhatsApp section
-                    var waEnable = String(data['WHATSAPP_ENABLE'] == null ? '0' : data['WHATSAPP_ENABLE']).trim().toLowerCase()
-                    el('waEnable').value = (waEnable === '1' || waEnable === 'true' || waEnable === 'yes' || waEnable === 'on') ? '1' : '0'
-                    el('waPoll').value = String(data['WHATSAPP_POLL_INTERVAL'] == null ? '' : data['WHATSAPP_POLL_INTERVAL'])
-                    el('waUserDir').value = String(data['WHATSAPP_USER_DATA_DIR'] == null ? '' : data['WHATSAPP_USER_DATA_DIR'])
                     el('agentMaxIter').value = String(data['AGENT_MAX_ITERATIONS'] == null ? '' : data['AGENT_MAX_ITERATIONS'])
                     el('agentMaxTime').value = String(data['AGENT_MAX_EXECUTION_TIME'] == null ? '' : data['AGENT_MAX_EXECUTION_TIME'])
                     var limitFlag = String(data['AGENT_LIMITS_DISABLED'] == null ? '0' : data['AGENT_LIMITS_DISABLED']).trim().toLowerCase()
@@ -367,67 +324,6 @@
                 })
             }
 
-            function saveWa(key, value){
-                return fetch('/api/config', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ key: key, value: value })
-                }).then(function(res){
-                    if (!res.ok) throw new Error(res.status)
-                })
-            }
-
-            function openWaLogin(){
-                var status = el('waLoginStatus')
-                status.textContent = '正在打开...'
-                fetch('/api/config/whatsapp/open', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
-                }).then(function(res){
-                    return res.json().then(function(data){
-                        if (!res.ok){
-                            var msg = data && (data.detail || data.error) ? (data.detail || data.error) : res.status
-                            throw new Error(msg)
-                        }
-                        return data
-                    })
-                }).then(function(data){
-                    if (data && data.ready){
-                        status.textContent = '已登录，可开始监听'
-                    }else{
-                        status.textContent = '已打开 WhatsApp Web，请扫码'
-                    }
-                }).catch(function(e){
-                    status.textContent = '打开失败: ' + e
-                })
-            }
-
-            function exportWaDom(){
-                var status = el('waDomStatus')
-                status.textContent = '正在导出...'
-                fetch('/api/config/whatsapp/dom').then(function(res){
-                    if (!res.ok){
-                        return res.json().then(function(data){
-                            var msg = data && (data.detail || data.error) ? (data.detail || data.error) : res.status
-                            throw new Error(msg)
-                        })
-                    }
-                    return res.blob()
-                }).then(function(blob){
-                    var url = URL.createObjectURL(blob)
-                    var a = document.createElement('a')
-                    a.href = url
-                    a.download = 'whatsapp_dom.html'
-                    document.body.appendChild(a)
-                    a.click()
-                    a.remove()
-                    URL.revokeObjectURL(url)
-                    status.textContent = '已导出'
-                }).catch(function(e){
-                    status.textContent = '导出失败: ' + e
-                })
-            }
-
             function saveAgent(key, value){
                 return fetch('/api/config', {
                     method: 'POST',
@@ -554,27 +450,6 @@
                 var u = el('lanSelect').value
                 if (u) setAccessUrl(u)
             }
-            el('saveWaEnable').onclick = function(){
-                var v = el('waEnable').value === '1' ? '1' : '0'
-                saveWa('WHATSAPP_ENABLE', v).then(function(){
-                    alert('已保存')
-                }).catch(function(e){ alert('保存失败 ' + e) })
-            }
-            el('saveWaPoll').onclick = function(){
-                var v = (el('waPoll').value || '').trim()
-                if (!v) v = ''
-                saveWa('WHATSAPP_POLL_INTERVAL', v).then(function(){
-                    alert('已保存')
-                }).catch(function(e){ alert('保存失败 ' + e) })
-            }
-            el('saveWaUserDir').onclick = function(){
-                var v = (el('waUserDir').value || '').trim()
-                saveWa('WHATSAPP_USER_DATA_DIR', v).then(function(){
-                    alert('已保存')
-                }).catch(function(e){ alert('保存失败 ' + e) })
-            }
-            el('waOpenLogin').onclick = openWaLogin
-            el('waDumpDom').onclick = exportWaDom
             el('saveAgentMaxIter').onclick = function(){
                 var v = (el('agentMaxIter').value || '').trim()
                 saveAgent('AGENT_MAX_ITERATIONS', v).then(function(){

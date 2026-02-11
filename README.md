@@ -154,7 +154,7 @@ python main.py
 
 ## 心跳机制
 
-心跳机制用于调度各类后台监听与保活任务（如 WhatsApp 监听），可在运行时统一管理。
+心跳机制用于调度各类后台监听与保活任务，可在运行时统一管理。
 
 **注册心跳任务**
 ```python
@@ -203,26 +203,6 @@ def main():
 - 配置页新增“心跳任务”区域，可查看任务并修改间隔/暂停
 - 间隔留空表示使用默认间隔
 - 暂停仅对当前进程有效，重启后恢复默认
-
-## WhatsApp Web 接入
-
-WhatsApp 监听已接入心跳调度，任务名为 `whatsapp_web_listener`。
-
-**登录流程（扫码）**
-- 1) 启动服务后打开配置页：`/config.html`
-- 2) 在 “WhatsApp 设置” 点击 “打开 WhatsApp Web”
-- 3) 浏览器会打开 `https://web.whatsapp.com`，用手机 WhatsApp 扫码登录
-- 4) 登录成功后会话保存在 `WHATSAPP_USER_DATA_DIR`，之后通常无需再次扫码
-
-**环境变量**
-- `WHATSAPP_ENABLE`：是否启用监听（`1/0`）
-- `WHATSAPP_POLL_INTERVAL`：轮询间隔（秒）
-- `WHATSAPP_USER_DATA_DIR`：用户数据目录（留空使用默认）
-
-**配置方式**
-- 在配置页的 “WhatsApp 设置” 区域直接保存以上变量
-- 在心跳任务区域可调整 `whatsapp_web_listener` 的运行间隔或暂停
-- 如果提示需要重新扫码，可清空或更换 `WHATSAPP_USER_DATA_DIR`
 
 ## Skills 概览
 
@@ -306,7 +286,3 @@ requirements.txt   项目依赖
 
 <img width="2085" height="1359" alt="QQ截图20260129145008" src="https://github.com/user-attachments/assets/c2432457-359b-430b-9b35-2faad619d138" />
 
-## 已知问题
-
-**WhatsApp Web 集成**
-- **单联系人消息读取**：当 WhatsApp 左侧联系人列表仅有 1 个联系人，且右侧聊天框已默认打开时，Agent 可能无法正确读取到已打开聊天框的最新消息。

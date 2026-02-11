@@ -49,6 +49,3 @@ def main():
 - 恢复：重新开始调度
 - 所有调整仅对当前进程有效，重启后恢复默认
 
-## WhatsApp 心跳示例
-
-WhatsApp Web 监听已接入心跳调度，任务名为 `whatsapp_web_listener`。你可以在配置页中直接调整其间隔或暂停。
