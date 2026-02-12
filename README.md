@@ -269,6 +269,12 @@ main.py            程序入口、热加载循环与状态管理
 requirements.txt   项目依赖
 ```
 
+## 模块文档
+
+- app 目录说明：见 app/README.md
+- gateway 目录说明：见 gateway/README.md
+- web 目录说明：见 web/README.md
+
 ## 运行环境说明
 
 - UI Automation 仅支持 Windows
@@ -284,5 +290,5 @@ requirements.txt   项目依赖
 
 程序会根据 Agent 输出中的 `STATE: CONTINUE` 或 `STATE: DONE` 自动进行多轮调用，直到任务完成或达到上限。
 
-<img width="2085" height="1359" alt="QQ截图20260129145008" src="https://github.com/user-attachments/assets/c2432457-359b-430b-9b35-2faad619d138" />
+<img width="2085" height="1359" alt="" src="https://github.com/user-attachments/assets/c2432457-359b-430b-9b35-2faad619d138" />
 

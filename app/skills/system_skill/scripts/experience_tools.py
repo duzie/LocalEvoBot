@@ -7,6 +7,7 @@ import sqlite3
 import glob
 import re
 import uuid
+from difflib import SequenceMatcher
 
 # Ensure HF mirror is used before any HF imports
 if "HF_ENDPOINT" not in os.environ:
@@ -15,6 +16,8 @@ if "HF_ENDPOINT" not in os.environ:
 # Lazy globals
 _VECTOR_STORE = None
 _EMBEDDINGS = None
+_OVERWRITE_TEXT_SIMILARITY = float(os.getenv("MEMORY_OVERWRITE_TEXT_SIMILARITY", "0.9"))
+_OVERWRITE_DISTANCE_THRESHOLD = float(os.getenv("MEMORY_OVERWRITE_DISTANCE", "0.2"))
 
 def _get_db_path():
     # Path: app/data/experience_db
@@ -147,6 +150,32 @@ def _split_query_terms(query: str):
         deduped.append(p)
     return deduped
 
+def _normalize_text(value: str):
+    text = str(value or "").strip().lower()
+    return re.sub(r"\s+", " ", text)
+
+def _text_similarity(a: str, b: str):
+    a_norm = _normalize_text(a)
+    b_norm = _normalize_text(b)
+    if not a_norm or not b_norm:
+        return 0.0
+    if a_norm == b_norm:
+        return 1.0
+    return SequenceMatcher(None, a_norm, b_norm).ratio()
+
+def _meta_matches(meta: dict, system_name: str, scope: str, project_id: str, user_id: str, memory_type: str):
+    if system_name and (meta.get("system") or "") != system_name:
+        return False
+    if scope and (meta.get("scope") or "") != scope:
+        return False
+    if project_id and (meta.get("project_id") or "") != project_id:
+        return False
+    if user_id and (meta.get("user_id") or "") != user_id:
+        return False
+    if memory_type and (meta.get("memory_type") or "") != memory_type:
+        return False
+    return True
+
 def _keyword_match(text: str, terms: list):
     if not terms:
         return True
@@ -225,10 +254,74 @@ def add_operation_experience(system_name: str, content: str, tags: list = None, 
         "original_content": content
     }
     if not store:
+        items = _load_json_store()
+        best_idx = None
+        best_score = 0.0
+        for idx, item in enumerate(items):
+            meta = (item or {}).get("metadata") or {}
+            if not _meta_matches(meta, system_name, scope, project_id, user_id, memory_type):
+                continue
+            existing_content = meta.get("original_content") or item.get("content") or ""
+            score = _text_similarity(existing_content, content)
+            if score > best_score:
+                best_score = score
+                best_idx = idx
+        if best_idx is not None and best_score >= _OVERWRITE_TEXT_SIMILARITY:
+            meta = (items[best_idx] or {}).get("metadata") or {}
+            metadata["id"] = meta.get("id") or metadata["id"]
+            items[best_idx] = {"content": content, "metadata": metadata, "page_content": page_content}
+            _write_json_store(items)
+            return "已覆盖相似经验。"
         item = {"content": content, "metadata": metadata, "page_content": page_content}
         _append_json_store(item)
         return "已存入本地经验库。"
     from langchain_core.documents import Document
+    similar_id = None
+    similar_meta = None
+    similar_distance = None
+    where = None
+    filter_dict = {}
+    if system_name:
+        filter_dict["system"] = system_name
+    if scope:
+        filter_dict["scope"] = scope
+    if project_id:
+        filter_dict["project_id"] = project_id
+    if user_id:
+        filter_dict["user_id"] = user_id
+    if memory_type:
+        filter_dict["memory_type"] = memory_type
+    if filter_dict:
+        clauses = []
+        for k, v in filter_dict.items():
+            if v is None or v == "":
+                continue
+            clauses.append({k: {"$eq": v}})
+        if clauses:
+            where = {"$and": clauses} if len(clauses) > 1 else clauses[0]
+    try:
+        result = store._collection.query(query_texts=[content], n_results=1, where=where)
+        ids = (result.get("ids") or [[]])[0]
+        metadatas = (result.get("metadatas") or [[]])[0]
+        documents = (result.get("documents") or [[]])[0]
+        distances = (result.get("distances") or [[]])[0]
+        if ids:
+            similar_id = ids[0]
+            similar_meta = metadatas[0] if metadatas else {}
+            similar_distance = distances[0] if distances else None
+            existing_content = (similar_meta or {}).get("original_content") or (documents[0] if documents else "")
+            text_score = _text_similarity(existing_content, content)
+            if text_score < _OVERWRITE_TEXT_SIMILARITY and not (similar_distance is not None and similar_distance <= _OVERWRITE_DISTANCE_THRESHOLD):
+                similar_id = None
+    except Exception:
+        similar_id = None
+    if similar_id:
+        metadata["id"] = similar_id
+        try:
+            store._collection.update(ids=[similar_id], documents=[page_content], metadatas=[metadata])
+        except Exception:
+            store._collection.upsert(ids=[similar_id], documents=[page_content], metadatas=[metadata])
+        return "已覆盖相似经验。"
     store.add_documents([Document(page_content=page_content, metadata=metadata)])
     return "已存入向量知识库。"
 
