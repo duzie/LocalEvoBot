@@ -229,6 +229,11 @@ async function startWhatsapp({ force = false } = {}) {
           text,
           ts: Date.now(),
         };
+        try {
+          await sock.sendMessage(remoteJid, { text: "已收到命令，请稍候" });
+        } catch (e) {
+          process.stderr.write(`Ack send failed: ${e}\n`);
+        }
         recentInbound.push(payload);
         if (recentInbound.length > maxInbound) recentInbound.splice(0, recentInbound.length - maxInbound);
         process.stdout.write(`[WA IN] ${e164} ${messageId} ${String(text).slice(0, 120).replace(/\s+/g, " ")}\n`);
