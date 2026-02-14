@@ -5,6 +5,7 @@
 
 ## Tools
 - check_process_status
+- run_shell_command
 - list_processes
 - show_desktop
 - get_current_time

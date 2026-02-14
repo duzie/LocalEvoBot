@@ -1,4 +1,5 @@
 import os
+from typing import List, Dict, Set
 from langchain_openai import ChatOpenAI
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from dotenv import load_dotenv
@@ -9,6 +10,72 @@ from app.prompts import get_agent_prompt
 
 # 加载环境变量
 load_dotenv()
+
+_skill_tool_cache: Dict[str, List[str]] = {}
+
+def _read_skill_tool_names(skill_dir: str) -> List[str]:
+    path = os.path.join(skill_dir, "skill.md")
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except Exception:
+        return []
+    tools = []
+    in_tools = False
+    for line in lines:
+        s = line.strip()
+        if not in_tools:
+            if s.lower() == "## tools":
+                in_tools = True
+            continue
+        if not s:
+            continue
+        if s.startswith("## "):
+            break
+        if not s.startswith("-"):
+            continue
+        item = s.lstrip("-").strip()
+        name = ""
+        if item.startswith("**"):
+            end = item.find("**", 2)
+            if end != -1:
+                name = item[2:end].strip()
+                rest = item[end + 2 :].strip()
+                if not name and rest.startswith(":"):
+                    name = rest.lstrip(":").strip().split(" ", 1)[0].strip()
+        else:
+            if ":" in item:
+                name = item.split(":", 1)[0].strip()
+            else:
+                name = item.split(" ", 1)[0].strip()
+        if name:
+            tools.append(name)
+    return tools
+
+def _collect_tools_for_skills(skill_names: List[str]) -> Set[str]:
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    skills_root = os.path.join(base_dir, "skills")
+    auto_root = os.path.join(base_dir, "auto_skills")
+    collected: Set[str] = set()
+    for raw in skill_names or []:
+        name = str(raw or "").strip()
+        if not name:
+            continue
+        cached = _skill_tool_cache.get(name)
+        if cached is not None:
+            collected.update(cached)
+            continue
+        tool_names: List[str] = []
+        for root in (skills_root, auto_root):
+            skill_dir = os.path.join(root, name)
+            if not os.path.isdir(skill_dir):
+                continue
+            tool_names.extend(_read_skill_tool_names(skill_dir))
+        _skill_tool_cache[name] = tool_names
+        collected.update(tool_names)
+    return collected
 
 def create_llm():
     provider = (os.getenv("LLM_PROVIDER") or "doubao").strip().strip("'\"").lower()
@@ -112,7 +179,7 @@ def create_llm():
 
     raise ValueError(f"不支持的 LLM_PROVIDER: {provider}")
 
-def create_agent_executor():
+def create_agent_executor(tool_allowlist: List[str] = None, skill_allowlist: List[str] = None):
     """
     创建并配置 Agent Executor
     """
@@ -124,7 +191,17 @@ def create_agent_executor():
     mcp_tools = load_mcp_tools()
     if mcp_tools:
         tools.extend(mcp_tools)
-    print(f"已加载 {len(tools)} 个 Skills")
+    total_tools = len(tools)
+    allowed_names = None
+    if tool_allowlist:
+        allowed_names = set([t for t in tool_allowlist if t])
+    elif skill_allowlist:
+        allowed_names = _collect_tools_for_skills(skill_allowlist)
+    if allowed_names:
+        tools = [t for t in tools if getattr(t, "name", "") in allowed_names]
+        print(f"已加载 {total_tools} 个 Tools，启用 {len(tools)} 个 Tools")
+    else:
+        print(f"已加载 {total_tools} 个 Tools")
 
     # 3. 获取提示词模板 (动态注入 Tools 信息)
     prompt = get_agent_prompt(tools)

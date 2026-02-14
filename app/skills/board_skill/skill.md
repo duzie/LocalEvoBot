@@ -21,6 +21,7 @@ app.skills.board_skill.scripts
 - append_board_task_output: 追加任务产物
 - list_board_tasks: 任务筛选
 - run_role_agent: 运行角色 Agent
+- run_role_agents_parallel: 并发运行角色 Agent
 
 ## Platforms
 - Windows

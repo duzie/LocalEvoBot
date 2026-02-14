@@ -18,6 +18,7 @@
   - **模板+经验互补**：模板给流程骨架，经验补充关键决策与注意点
 - **流式输出**：聊天与控制台支持逐字流式展示，响应更即时
 - **自动多步执行**：基于 `STATE` 状态机的多轮自动执行与任务拆解
+- **多角色公告板协作**：角色拆解、任务流转与产物回写，支持并发执行
 - **UI Automation**：基于 Windows UIA 精准定位与操作原生控件
 - **Web 自动化**：内置 Playwright 支持，接管浏览器进行复杂网页交互
 - **视觉与 OCR**：屏幕/窗口文字识别，辅助定位与决策
@@ -217,6 +218,13 @@ def main():
 - `export_change_logs`: 导出变更日志（JSON/CSV）
 - `promote_skill`: **技能转正**。将 `auto_skills` 中验证通过的技能一键迁移至 `app/skills`，成为永久核心能力
 - `reload_skills`: **热加载与自动回复**。运行时重载所有技能，并自动读取上一轮任务状态，无缝继续执行 (Auto-Resume)
+
+**2. 公告板与多角色协作 (Board)**
+- `create_board`: 创建公告板
+- `add_board_role`: 新增角色
+- `add_board_task`: 新增任务
+- `run_role_agent`: 单角色任务执行
+- `run_role_agents_parallel`: 并发执行多个角色任务
 
 **2. UI Automation (Windows)**
 - `uia_find_control`: 定位窗口控件

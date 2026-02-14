@@ -12,6 +12,7 @@ import urllib.error
 import subprocess
 import atexit
 from datetime import datetime, timezone
+from typing import List, Set
 from web.backend.main import start as start_web_server
 from web.backend.shared import shared
 
@@ -33,6 +34,33 @@ def _env_flag(name: str, default: bool = False) -> bool:
     if not raw:
         return default
     return raw in {"1", "true", "yes", "on"}
+
+def _select_skill_allowlist(user_input: str) -> List[str]:
+    text = str(user_input or "").lower()
+    skills: Set[str] = {"skillgen_skill", "board_skill", "system_skill"}
+    def has_any(keys: List[str]) -> bool:
+        return any(k in text for k in keys)
+    if "http://" in text or "https://" in text or has_any(["网页", "浏览器", "网站", "web", "登录", "跳转", "url"]):
+        skills.update(["playwright_skill", "browser_skill"])
+    if has_any(["窗口", "控件", "uia", "桌面", "点击", "鼠标", "键盘", "输入", "激活窗口"]):
+        skills.update(["uia_skill", "input_skill", "pyautogui_skill"])
+    if has_any(["ocr", "识别", "截图", "验证码", "图像", "视觉"]):
+        skills.update(["ocr_skill", "vision_ocr_skill", "eyes_skill"])
+    if has_any(["文件", "目录", "路径", "移动", "复制", "拷贝", "删除", "重命名", "保存", "excel", "xlsx", "csv", "表格"]):
+        skills.update(["file_skill", "file_directory_skill", "file_save_skill", "office_skill"])
+    if has_any(["搜索", "查询", "检索", "谷歌", "bing", "google"]):
+        skills.add("tavily_skill")
+    if has_any(["新闻", "热点", "gnews"]):
+        skills.add("gnews_skill")
+    if has_any(["钉钉", "dingtalk"]):
+        skills.add("dingtalk_skill")
+    if has_any(["飞书", "feishu"]):
+        skills.add("feishu_skill")
+    if has_any(["定时", "计划任务", "scheduled task"]):
+        skills.add("windows_task_skill")
+    if has_any(["计算", "calculator", "算一下"]):
+        skills.add("utility_skill")
+    return sorted(skills)
 
 def _wa_gateway_base_url():
     host = (os.getenv("WA_GATEWAY_HOST") or "127.0.0.1").strip()
@@ -931,6 +959,9 @@ def main():
 
     chat_history = []
     max_auto_steps = 60
+    tool_router_enabled = _env_flag("TOOL_ROUTER_ENABLED", True)
+    current_skill_allowlist = None
+    current_skill_allowlist_key = None
     '''
     最大自动执行步数，防止无限循环。
     '''
@@ -950,13 +981,19 @@ def main():
                 previous_provider = os.getenv("LLM_PROVIDER", "deepseek")
                 os.environ["LLM_PROVIDER"] = provider
                 try:
-                    agent_executor = create_agent_executor()
+                    if tool_router_enabled and current_skill_allowlist:
+                        agent_executor = create_agent_executor(skill_allowlist=current_skill_allowlist)
+                    else:
+                        agent_executor = create_agent_executor()
                     chat_history = []
                     print(f">>> 系统: 已切换模型为 {provider}\n")
                 except Exception as e:
                     os.environ["LLM_PROVIDER"] = previous_provider
                     try:
-                        agent_executor = create_agent_executor()
+                        if tool_router_enabled and current_skill_allowlist:
+                            agent_executor = create_agent_executor(skill_allowlist=current_skill_allowlist)
+                        else:
+                            agent_executor = create_agent_executor()
                     except Exception:
                         pass
                     print(f">>> 系统: 切换模型失败: {e}\n")
@@ -994,6 +1031,13 @@ def main():
                     auto_input = f"用户要求搜索所有记忆。请同时检索长期记忆(get_operation_experience)与短期记忆(search_short_term_memory)，并合并后给出结论与依据。\n\n用户原始输入：{user_input}"
                 else:
                     auto_input = _maybe_apply_template(user_input, project_id, user_id)
+            if tool_router_enabled:
+                selected_skill_allowlist = _select_skill_allowlist(auto_input)
+                selected_key = tuple(selected_skill_allowlist)
+                if selected_key != current_skill_allowlist_key:
+                    current_skill_allowlist = selected_skill_allowlist
+                    current_skill_allowlist_key = selected_key
+                    agent_executor = create_agent_executor(skill_allowlist=current_skill_allowlist)
             for step in range(max_auto_steps):
                 chat_history = maybe_summarize_history(chat_history, summary_llm, max_recent_turns=8)
                 raw_output = ""
@@ -1057,7 +1101,10 @@ def main():
                 ])
                 if reload_requested:
                     try:
-                        agent_executor = create_agent_executor()
+                        if tool_router_enabled and current_skill_allowlist:
+                            agent_executor = create_agent_executor(skill_allowlist=current_skill_allowlist)
+                        else:
+                            agent_executor = create_agent_executor()
                         summary_llm = create_llm()
                         print("Agent: 已重载技能\n")
                         chat_history.append(("system", "系统消息：技能热加载已完成，请继续上一轮任务，避免重复生成技能。"))

@@ -14,6 +14,7 @@ app.skills.system_skill.scripts
 
 ## Tools
 - check_process_status: 进程检查
+- run_shell_command: 直接执行终端命令
 - list_processes: 进程列表
 - show_desktop: 显示桌面
 - get_current_time: 当前时间
