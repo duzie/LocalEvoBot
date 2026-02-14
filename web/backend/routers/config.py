@@ -367,7 +367,9 @@ async def update_heartbeat_task(payload: HeartbeatUpdate):
     return {"status": "success", "name": payload.name}
 
 @router.get("/templates")
-async def list_templates():
+async def list_templates(limit: int = 100, offset: int = 0):
+    safe_limit = max(1, min(int(limit or 100), 500))
+    safe_offset = max(0, int(offset or 0))
     store = _get_template_store()
     try:
         result = store.get(where={"memory_type": {"$eq": "task_template"}})
@@ -402,6 +404,7 @@ async def list_templates():
             "created_at": meta.get("created_at") or ""
         })
     templates.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    templates = templates[safe_offset:safe_offset + safe_limit]
     return {"templates": templates}
 
 @router.get("/experiences")

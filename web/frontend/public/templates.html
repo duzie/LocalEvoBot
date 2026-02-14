@@ -20,7 +20,7 @@
         .btn{height:36px;padding:0 14px;border-radius:10px;border:1px solid var(--border);background:#fff;cursor:pointer}
         .btn.primary{border-color:#c7d2fe;background:linear-gradient(135deg,var(--primary) 0%,var(--primary2) 100%);color:#fff}
         .btn.danger{border-color:#fca5a5;background:linear-gradient(135deg,#ef4444 0%,#f97316 100%);color:#fff}
-        .tmplList{padding:12px;display:flex;flex-direction:column;gap:12px}
+        .tmplList{padding:12px;display:flex;flex-direction:column;gap:12px;max-height:65vh;overflow:auto}
         .tmplCard{border:1px solid var(--border);border-radius:12px;background:#fff;padding:12px;display:flex;flex-direction:column;gap:10px}
         .tmplHeader{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
         .tmplMeta{font-size:12px;color:var(--muted)}
@@ -29,6 +29,9 @@
         .input{height:36px;border-radius:10px;border:1px solid var(--border);background:#fff;padding:0 12px;outline:none;min-width:180px}
         .textarea{width:100%;min-height:140px;border-radius:10px;border:1px solid var(--border);background:#fff;padding:10px 12px;outline:none;font-family:var(--mono);font-size:12px}
         .help{font-size:12px;color:var(--muted)}
+        .pager{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px;border-top:1px solid var(--border);background:#f8fafc}
+        .pager .info{font-size:12px;color:var(--muted)}
+        .pager .btn[disabled]{opacity:.5;cursor:not-allowed}
     </style>
 </head>
 <body>
@@ -48,11 +51,17 @@
         <section class="card">
             <div class="panelHeader">
                 <div class="panelTitle">任务模板</div>
-                <div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                    <input id="limitInput" class="input" type="number" min="1" max="500" value="20" />
                     <button id="refreshBtn" class="btn" type="button">刷新</button>
                 </div>
             </div>
             <div id="tmplList" class="tmplList"></div>
+            <div class="pager">
+                <button id="prevPageBtn" class="btn" type="button">上一页</button>
+                <button id="nextPageBtn" class="btn" type="button">下一页</button>
+                <span id="pageInfo" class="info"></span>
+            </div>
         </section>
     </div>
 
@@ -64,6 +73,14 @@
                 t.className = 'tmplTag'
                 t.textContent = text
                 return t
+            }
+
+            var state = {page:1,hasNext:false}
+
+            function updatePager(){
+                el('pageInfo').textContent = '第 ' + state.page + ' 页'
+                el('prevPageBtn').disabled = state.page <= 1
+                el('nextPageBtn').disabled = !state.hasNext
             }
 
             function renderTemplates(list){
@@ -171,8 +188,17 @@
             }
 
             function loadTemplates(){
-                fetch('/api/config/templates').then(function(r){return r.json()}).then(function(data){
-                    renderTemplates(data.templates || [])
+                var limit = parseInt(el('limitInput').value || '20', 10)
+                if (isNaN(limit) || limit <= 0) limit = 20
+                var offset = (state.page - 1) * limit
+                var params = new URLSearchParams()
+                params.append('limit', String(limit))
+                params.append('offset', String(offset))
+                fetch('/api/config/templates?' + params.toString()).then(function(r){return r.json()}).then(function(data){
+                    var list = data.templates || []
+                    state.hasNext = list.length >= limit
+                    renderTemplates(list)
+                    updatePager()
                 }).catch(function(e){
                     var wrap = el('tmplList')
                     wrap.textContent = ''
@@ -183,7 +209,24 @@
                 })
             }
 
-            el('refreshBtn').onclick = loadTemplates
+            el('refreshBtn').onclick = function(){
+                state.page = 1
+                loadTemplates()
+            }
+            el('limitInput').onchange = function(){
+                state.page = 1
+                loadTemplates()
+            }
+            el('prevPageBtn').onclick = function(){
+                if (state.page <= 1) return
+                state.page -= 1
+                loadTemplates()
+            }
+            el('nextPageBtn').onclick = function(){
+                if (!state.hasNext) return
+                state.page += 1
+                loadTemplates()
+            }
             loadTemplates()
         })()
     </script>
