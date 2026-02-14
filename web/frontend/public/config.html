@@ -114,6 +114,23 @@
 
         <section class="card">
             <div class="panelHeader">
+                <div class="panelTitle">MCP 工具</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <button id="mcpReloadBtn" class="btn" type="button">刷新</button>
+                    <button id="mcpApplyBtn" class="btn primary" type="button">重载到 Agent</button>
+                </div>
+            </div>
+            <div id="mcpBody" class="cfg"></div>
+            <div class="cfgFooter">
+                <input id="mcpNewId" class="input" type="text" placeholder="id (如 github)" autocomplete="off" />
+                <input id="mcpNewCommand" class="input" type="text" placeholder="command (如 npx)" autocomplete="off" />
+                <input id="mcpNewArgs" class="input" type="text" placeholder="args (空格分隔)" autocomplete="off" />
+                <button id="mcpAddBtn" class="btn" type="button">添加</button>
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="panelHeader">
                 <div class="panelTitle">Agent 运行参数</div>
                 <span class="pill">执行步数与时间上限</span>
             </div>
@@ -455,6 +472,195 @@
                 })
             }
 
+            function loadMcp(){
+                var body = el('mcpBody')
+                body.textContent = ''
+                return fetch('/api/config/mcp/servers').then(function(r){ return r.json() }).then(function(data){
+                    var servers = data && data.servers ? data.servers : []
+                    var statusArr = data && data.status ? data.status : []
+                    var statusMap = {}
+                    for (var i=0;i<statusArr.length;i++){
+                        var s = statusArr[i] || {}
+                        if (s.id) statusMap[String(s.id)] = s
+                    }
+                    if (!servers.length){
+                        var empty = document.createElement('div')
+                        empty.className = 'pill'
+                        empty.textContent = '暂无 MCP Server（在下方添加）'
+                        body.appendChild(empty)
+                        return
+                    }
+                    servers.forEach(function(sv){
+                        var sid = String(sv.id || '')
+                        var row = document.createElement('div')
+                        row.className = 'cfgRow'
+
+                        var label = document.createElement('div')
+                        label.className = 'cfgKey'
+                        label.textContent = sid
+                        label.title = sid
+
+                        var enabledSelect = document.createElement('select')
+                        enabledSelect.className = 'select'
+                        var optOn = document.createElement('option')
+                        optOn.value = '1'
+                        optOn.textContent = '启用'
+                        var optOff = document.createElement('option')
+                        optOff.value = '0'
+                        optOff.textContent = '禁用'
+                        enabledSelect.appendChild(optOn)
+                        enabledSelect.appendChild(optOff)
+                        enabledSelect.value = sv.enabled ? '1' : '0'
+
+                        var cmdInput = document.createElement('input')
+                        cmdInput.className = 'input'
+                        cmdInput.type = 'text'
+                        cmdInput.placeholder = 'command'
+                        cmdInput.value = sv.command || ''
+
+                        var argsInput = document.createElement('input')
+                        argsInput.className = 'input'
+                        argsInput.type = 'text'
+                        argsInput.placeholder = 'args (空格分隔)'
+                        argsInput.value = (sv.args && sv.args.length) ? sv.args.join(' ') : ''
+
+                        var saveBtn = document.createElement('button')
+                        saveBtn.className = 'btn'
+                        saveBtn.type = 'button'
+                        saveBtn.textContent = '保存'
+
+                        var testBtn = document.createElement('button')
+                        testBtn.className = 'btn'
+                        testBtn.type = 'button'
+                        testBtn.textContent = '测试'
+
+                        var toolsBtn = document.createElement('button')
+                        toolsBtn.className = 'btn'
+                        toolsBtn.type = 'button'
+                        toolsBtn.textContent = '工具'
+
+                        var delBtn = document.createElement('button')
+                        delBtn.className = 'btn'
+                        delBtn.type = 'button'
+                        delBtn.textContent = '删除'
+
+                        var detail = document.createElement('div')
+                        detail.className = 'help'
+                        var st = statusMap[sid] || {}
+                        detail.textContent = '状态: pid=' + (st.pid != null ? st.pid : '-') + ', initialized=' + (st.initialized ? '1' : '0') + (st.lastError ? (', error=' + st.lastError) : '')
+
+                        saveBtn.onclick = function(){
+                            fetch('/api/config/mcp/servers', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    id: sid,
+                                    name: sid,
+                                    command: cmdInput.value || '',
+                                    args: (argsInput.value || ''),
+                                    enabled: enabledSelect.value === '1'
+                                })
+                            }).then(function(res){
+                                if (!res.ok) throw new Error(res.status)
+                                return loadMcp()
+                            }).catch(function(e){
+                                alert('保存失败: ' + e)
+                            })
+                        }
+
+                        testBtn.onclick = function(){
+                            fetch('/api/config/mcp/servers/' + encodeURIComponent(sid) + '/test', { method: 'POST' }).then(function(r){ return r.json() }).then(function(t){
+                                if (t && t.ok){
+                                    alert('连接成功: toolCount=' + (t.toolCount != null ? t.toolCount : '-'))
+                                }else{
+                                    alert('连接失败')
+                                }
+                                return loadMcp()
+                            }).catch(function(e){
+                                alert('测试失败: ' + e)
+                                return loadMcp()
+                            })
+                        }
+
+                        toolsBtn.onclick = function(){
+                            fetch('/api/config/mcp/servers/' + encodeURIComponent(sid) + '/tools?refresh=1').then(function(r){ return r.json() }).then(function(t){
+                                var tools = t && t.tools ? t.tools : []
+                                var names = []
+                                for (var i=0;i<tools.length;i++){
+                                    var n = tools[i] && tools[i].name ? String(tools[i].name) : ''
+                                    if (n) names.push(n)
+                                }
+                                alert('工具列表（' + names.length + '）:\n' + names.join('\n'))
+                                return loadMcp()
+                            }).catch(function(e){
+                                alert('获取失败: ' + e)
+                                return loadMcp()
+                            })
+                        }
+
+                        delBtn.onclick = function(){
+                            if (!confirm('确认删除 MCP Server: ' + sid + ' ?')) return
+                            fetch('/api/config/mcp/servers/' + encodeURIComponent(sid), { method: 'DELETE' }).then(function(res){
+                                if (!res.ok) throw new Error(res.status)
+                                return loadMcp()
+                            }).catch(function(e){
+                                alert('删除失败: ' + e)
+                            })
+                        }
+
+                        row.appendChild(label)
+                        row.appendChild(enabledSelect)
+                        row.appendChild(cmdInput)
+                        row.appendChild(argsInput)
+                        row.appendChild(saveBtn)
+                        row.appendChild(testBtn)
+                        row.appendChild(toolsBtn)
+                        row.appendChild(delBtn)
+
+                        body.appendChild(row)
+                        body.appendChild(detail)
+                    })
+                }).catch(function(e){
+                    body.textContent = ''
+                    var err = document.createElement('div')
+                    err.className = 'help'
+                    err.textContent = '加载失败: ' + e
+                    body.appendChild(err)
+                })
+            }
+
+            function addMcpServer(){
+                var id = (el('mcpNewId').value || '').trim()
+                var cmd = (el('mcpNewCommand').value || '').trim()
+                var args = (el('mcpNewArgs').value || '').trim()
+                if (!id || !cmd){
+                    alert('请填写 id 和 command')
+                    return
+                }
+                fetch('/api/config/mcp/servers', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: id, name: id, command: cmd, args: args, enabled: true })
+                }).then(function(res){
+                    if (!res.ok) throw new Error(res.status)
+                    el('mcpNewId').value = ''
+                    el('mcpNewCommand').value = ''
+                    el('mcpNewArgs').value = ''
+                    return loadMcp()
+                }).catch(function(e){
+                    alert('添加失败: ' + e)
+                })
+            }
+
+            function applyMcpToAgent(){
+                fetch('/api/config/mcp/reload', { method: 'POST' }).then(function(res){
+                    if (!res.ok) throw new Error(res.status)
+                    alert('已触发重载（新会话/下一次回答会使用最新 MCP 工具）')
+                }).catch(function(e){
+                    alert('触发失败: ' + e)
+                })
+            }
+
             function addConfig(){
                 var k = (el('newKey').value || '').trim()
                 var v = (el('newValue').value || '').trim()
@@ -623,6 +829,9 @@
             el('hbReloadBtn').onclick = loadHeartbeat
             el('waRefreshBtn').onclick = loadWhatsApp
             el('waClearBtn').onclick = resetWhatsApp
+            el('mcpReloadBtn').onclick = loadMcp
+            el('mcpAddBtn').onclick = addMcpServer
+            el('mcpApplyBtn').onclick = applyMcpToAgent
 
             var QRMode = { MODE_8BIT_BYTE: 1 << 2 }
             var QRErrorCorrectionLevel = { L: 1, M: 0, Q: 3, H: 2 }
@@ -1106,6 +1315,7 @@
             initAccess()
             loadHeartbeat()
             loadWhatsApp()
+            loadMcp()
             setInterval(loadWhatsApp, 3000)
         })()
     </script>

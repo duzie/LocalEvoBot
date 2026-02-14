@@ -9,6 +9,8 @@ import urllib.error
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
 from app.integrations import heartbeat
+from app.integrations.mcp_client import get_mcp_manager
+from ..shared import shared
 
 router = APIRouter()
 
@@ -37,6 +39,40 @@ class ExperienceUpdate(BaseModel):
     user_id: Optional[str] = None
     memory_type: Optional[str] = None
     url: Optional[str] = None
+
+class McpServerUpsert(BaseModel):
+    id: str
+    name: Optional[str] = None
+    command: str
+    args: Optional[Any] = None
+    env: Optional[Dict[str, Any]] = None
+    enabled: Optional[bool] = True
+
+def _read_mcp_servers_raw() -> List[dict]:
+    env_path = _get_env_path()
+    env = dotenv_values(env_path) if os.path.exists(env_path) else {}
+    raw = (os.getenv("MCP_SERVERS") or env.get("MCP_SERVERS") or "").strip()
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [x for x in data if isinstance(x, dict)]
+
+def _write_mcp_servers_raw(servers: List[dict]):
+    env_path = _get_env_path()
+    if not os.path.exists(env_path):
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write("")
+    payload = json.dumps(servers, ensure_ascii=False)
+    try:
+        set_key(env_path, "MCP_SERVERS", payload)
+        os.environ["MCP_SERVERS"] = payload
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 def _get_template_store():
     try:
@@ -222,6 +258,98 @@ async def whatsapp_qr_ascii():
 @router.post("/whatsapp/reset")
 async def whatsapp_reset():
     return _wa_gateway_request_json("/reset", method="POST", body={}, require_auth=True)
+
+@router.get("/mcp/servers")
+async def mcp_list_servers():
+    manager = get_mcp_manager()
+    return {"servers": manager.list_servers(), "status": manager.status()}
+
+@router.post("/mcp/servers")
+async def mcp_upsert_server(payload: McpServerUpsert):
+    sid = (payload.id or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="缺少 id")
+    command = (payload.command or "").strip()
+    if not command:
+        raise HTTPException(status_code=400, detail="缺少 command")
+    args: List[str] = []
+    if isinstance(payload.args, list):
+        args = [str(x) for x in payload.args if str(x).strip()]
+    elif isinstance(payload.args, str) and payload.args.strip():
+        args = [s for s in payload.args.strip().split(" ") if s]
+    env = payload.env if isinstance(payload.env, dict) else {}
+    env = {str(k): str(v) for k, v in env.items() if str(k).strip()}
+    servers = _read_mcp_servers_raw()
+    replaced = False
+    for s in servers:
+        if str(s.get("id") or "").strip() == sid:
+            s.update(
+                {
+                    "id": sid,
+                    "name": (payload.name or sid).strip(),
+                    "transport": "stdio",
+                    "command": command,
+                    "args": args,
+                    "env": env,
+                    "enabled": bool(payload.enabled) if payload.enabled is not None else True,
+                }
+            )
+            replaced = True
+            break
+    if not replaced:
+        servers.append(
+            {
+                "id": sid,
+                "name": (payload.name or sid).strip(),
+                "transport": "stdio",
+                "command": command,
+                "args": args,
+                "env": env,
+                "enabled": bool(payload.enabled) if payload.enabled is not None else True,
+            }
+        )
+    _write_mcp_servers_raw(servers)
+    return {"ok": True, "id": sid}
+
+@router.delete("/mcp/servers/{server_id}")
+async def mcp_delete_server(server_id: str):
+    sid = (server_id or "").strip()
+    servers = _read_mcp_servers_raw()
+    kept = [s for s in servers if str(s.get("id") or "").strip() != sid]
+    if len(kept) == len(servers):
+        raise HTTPException(status_code=404, detail="server 不存在")
+    _write_mcp_servers_raw(kept)
+    return {"ok": True, "id": sid}
+
+@router.post("/mcp/servers/{server_id}/test")
+async def mcp_test_server(server_id: str):
+    manager = get_mcp_manager()
+    try:
+        return manager.test(server_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="server 不存在")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+@router.get("/mcp/servers/{server_id}/tools")
+async def mcp_list_tools(server_id: str, refresh: bool = False):
+    manager = get_mcp_manager()
+    try:
+        tools = manager.list_tools(server_id, refresh=bool(refresh))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="server 不存在")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {
+        "ok": True,
+        "serverId": server_id,
+        "tools": [{"name": t.name, "description": t.description, "inputSchema": t.input_schema} for t in tools],
+    }
+
+@router.post("/mcp/reload")
+async def mcp_reload_agent_tools():
+    shared.put_input("__RELOAD_SKILLS__")
+    return {"ok": True}
 
 @router.get("/heartbeat/tasks")
 async def list_heartbeat_tasks():

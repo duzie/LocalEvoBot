@@ -4,6 +4,7 @@ from langchain.agents import AgentExecutor, create_tool_calling_agent
 from dotenv import load_dotenv
 
 from app.skills.registry import load_skills
+from app.integrations.mcp_client import load_mcp_tools
 from app.prompts import get_agent_prompt
 
 # 加载环境变量
@@ -120,6 +121,9 @@ def create_agent_executor():
     # 2. 动态加载工具列表 (Skills)
     # 自动扫描 app.skills 包下的多 Skill 子包
     tools = load_skills(package_name="app.skills")
+    mcp_tools = load_mcp_tools()
+    if mcp_tools:
+        tools.extend(mcp_tools)
     print(f"已加载 {len(tools)} 个 Skills")
 
     # 3. 获取提示词模板 (动态注入 Tools 信息)
