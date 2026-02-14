@@ -418,16 +418,23 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
     success_count = 0
     error_count = 0
     skipped_count = 0
-    board_snapshot = _load_board_locked()
     effective_policy = dep_policy or "all"
-    with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        futures = {}
-        for idx, item in enumerate(items):
-            payload = item or {}
+    pending = [{"index": idx, "task": (item or {})} for idx, item in enumerate(items)]
+    while pending:
+        board_snapshot = _load_board_locked()
+        ready = []
+        blocked = []
+        for meta in pending:
+            idx = meta["index"]
+            payload = meta["task"]
             task_id = payload.get("task_id")
             if board_snapshot and task_id:
                 task = _get_task_by_id(board_snapshot, int(task_id))
-                if task and allow_status:
+                if not task:
+                    skipped_count += 1
+                    results.append({"ok": False, "skipped": True, "reason": "task_not_found", "index": idx, "task_id": task_id})
+                    continue
+                if allow_status:
                     current_status = _normalize_status(task.get("status") or "")
                     if current_status not in allow_status:
                         skipped_count += 1
@@ -438,33 +445,58 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
                     deps = task.get("deps") or []
                 task_policy = payload.get("dep_policy") or effective_policy
                 if not _deps_satisfied(board_snapshot, deps, task_policy):
-                    skipped_count += 1
-                    results.append({"ok": False, "skipped": True, "reason": "deps_not_ready", "index": idx, "task_id": task_id, "deps": deps, "dep_policy": task_policy})
+                    blocked.append({"index": idx, "task": payload, "deps": deps, "dep_policy": task_policy})
                     continue
-            future = executor.submit(
-                _execute_role_task,
-                role_name=payload.get("role_name") or "",
-                task_input=payload.get("task_input") or "",
-                role_prompt=payload.get("role_prompt") or "",
-                tools_allowlist=payload.get("tools_allowlist") or [],
-                skills_allowlist=payload.get("skills_allowlist") or [],
-                max_iterations=payload.get("max_iterations") or 30,
-                max_execution_time=payload.get("max_execution_time") or 300
-            )
-            futures[future] = {"index": idx, "task": payload}
-        for future in as_completed(futures):
-            meta = futures[future]
-            payload = meta["task"]
-            try:
-                result = future.result()
-                if payload.get("task_id"):
-                    append_board_task_output(int(payload.get("task_id")), result.get("output") or "", "role_result")
-                    update_board_task(int(payload.get("task_id")), payload.get("status_after") or status_after)
-                success_count += 1
-                results.append({"ok": True, "index": meta["index"], "result": result})
-            except Exception as e:
-                error_count += 1
-                results.append({"ok": False, "index": meta["index"], "error": str(e), "task": payload})
+            elif board_snapshot and payload.get("deps"):
+                deps = payload.get("deps") or []
+                task_policy = payload.get("dep_policy") or effective_policy
+                if not _deps_satisfied(board_snapshot, deps, task_policy):
+                    blocked.append({"index": idx, "task": payload, "deps": deps, "dep_policy": task_policy})
+                    continue
+            ready.append(meta)
+        if not ready:
+            for meta in blocked:
+                skipped_count += 1
+                payload = meta["task"]
+                results.append({
+                    "ok": False,
+                    "skipped": True,
+                    "reason": "deps_not_ready",
+                    "index": meta["index"],
+                    "task_id": payload.get("task_id"),
+                    "deps": meta.get("deps"),
+                    "dep_policy": meta.get("dep_policy")
+                })
+            break
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {}
+            for meta in ready:
+                payload = meta["task"]
+                future = executor.submit(
+                    _execute_role_task,
+                    role_name=payload.get("role_name") or "",
+                    task_input=payload.get("task_input") or "",
+                    role_prompt=payload.get("role_prompt") or "",
+                    tools_allowlist=payload.get("tools_allowlist") or [],
+                    skills_allowlist=payload.get("skills_allowlist") or [],
+                    max_iterations=payload.get("max_iterations") or 30,
+                    max_execution_time=payload.get("max_execution_time") or 300
+                )
+                futures[future] = meta
+            for future in as_completed(futures):
+                meta = futures[future]
+                payload = meta["task"]
+                try:
+                    result = future.result()
+                    if payload.get("task_id"):
+                        append_board_task_output(int(payload.get("task_id")), result.get("output") or "", "role_result")
+                        update_board_task(int(payload.get("task_id")), payload.get("status_after") or status_after)
+                    success_count += 1
+                    results.append({"ok": True, "index": meta["index"], "result": result})
+                except Exception as e:
+                    error_count += 1
+                    results.append({"ok": False, "index": meta["index"], "error": str(e), "task": payload})
+        pending = blocked
     results = sorted(results, key=lambda x: x.get("index", 0))
     return {
         "ok": error_count == 0,

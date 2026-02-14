@@ -11,6 +11,7 @@ import urllib.request
 import urllib.error
 import subprocess
 import atexit
+import time
 from datetime import datetime, timezone
 from typing import List, Set
 from web.backend.main import start as start_web_server
@@ -21,6 +22,7 @@ os.environ.setdefault("HUGGINGFACE_HUB_ENDPOINT", "https://hf-mirror.com")
 
 from app.agent import create_agent_executor, create_llm
 from app.skills.system_skill.scripts.experience_tools import add_operation_experience, get_operation_experience
+from langchain.callbacks.base import BaseCallbackHandler
 
 RELOAD_SIGNAL = "__RELOAD_SKILLS__"
 SET_MODEL_PREFIX = "__SET_MODEL__:"
@@ -245,6 +247,87 @@ def _add_short_term_message(role: str, content: str, project_id: str, user_id: s
     finally:
         conn.close()
     _append_short_term_markdown(role, text, created_at, project_id or "", user_id or "", date_key)
+
+
+class ShortTermToolTraceHandler(BaseCallbackHandler):
+    def __init__(self, project_id: str, user_id: str, max_len: int = 2000):
+        self.project_id = project_id or ""
+        self.user_id = user_id or ""
+        self.max_len = max_len
+        self._starts = {}
+
+    def _emit(self, payload: dict):
+        try:
+            text = json.dumps(payload, ensure_ascii=False)
+        except Exception:
+            text = str(payload)
+        if self.max_len and len(text) > self.max_len:
+            text = text[: self.max_len] + "…"
+        _add_short_term_message("tool", text, self.project_id, self.user_id)
+
+    def on_tool_start(self, serialized, input_str=None, **kwargs):
+        tool_name = None
+        if isinstance(serialized, dict):
+            tool_name = serialized.get("name") or serialized.get("id")
+        run_id = kwargs.get("run_id")
+        inputs = kwargs.get("inputs")
+        payload = {
+            "event": "tool_start",
+            "tool": tool_name,
+            "input": input_str if input_str is not None else inputs,
+            "time": datetime.now(timezone.utc).isoformat()
+        }
+        if run_id:
+            self._starts[run_id] = {"t": time.monotonic(), "tool": tool_name}
+        self._emit(payload)
+
+    def on_tool_end(self, output, **kwargs):
+        run_id = kwargs.get("run_id")
+        info = self._starts.pop(run_id, None) if run_id else None
+        duration_ms = None
+        tool_name = None
+        if info:
+            tool_name = info.get("tool")
+            duration_ms = int((time.monotonic() - info.get("t", time.monotonic())) * 1000)
+        payload = {
+            "event": "tool_end",
+            "tool": tool_name,
+            "output": output,
+            "time": datetime.now(timezone.utc).isoformat()
+        }
+        if duration_ms is not None:
+            payload["duration_ms"] = duration_ms
+        self._emit(payload)
+
+    def on_tool_error(self, error, **kwargs):
+        run_id = kwargs.get("run_id")
+        info = self._starts.pop(run_id, None) if run_id else None
+        payload = {
+            "event": "tool_error",
+            "tool": info.get("tool") if info else None,
+            "error": str(error),
+            "time": datetime.now(timezone.utc).isoformat()
+        }
+        self._emit(payload)
+
+    def on_agent_action(self, action, **kwargs):
+        payload = {
+            "event": "agent_action",
+            "tool": getattr(action, "tool", None),
+            "tool_input": getattr(action, "tool_input", None),
+            "log": getattr(action, "log", None),
+            "time": datetime.now(timezone.utc).isoformat()
+        }
+        self._emit(payload)
+
+    def on_agent_finish(self, finish, **kwargs):
+        payload = {
+            "event": "agent_finish",
+            "output": getattr(finish, "return_values", None),
+            "log": getattr(finish, "log", None),
+            "time": datetime.now(timezone.utc).isoformat()
+        }
+        self._emit(payload)
 
 def _requests_all_memory_search(text: str):
     t = str(text or "").strip()
@@ -947,7 +1030,10 @@ def main():
 
     print("正在初始化 Agent...")
     try:
-        agent_executor = create_agent_executor()
+        project_id = _extract_project_id()
+        user_id = os.getenv("LOCAL_USER_ID", "local_user")
+        tool_trace_callbacks = [ShortTermToolTraceHandler(project_id, user_id)]
+        agent_executor = create_agent_executor(callbacks=tool_trace_callbacks)
         summary_llm = create_llm()
     except Exception as e:
         print(f"初始化失败: {e}")
@@ -982,18 +1068,18 @@ def main():
                 os.environ["LLM_PROVIDER"] = provider
                 try:
                     if tool_router_enabled and current_skill_allowlist:
-                        agent_executor = create_agent_executor(skill_allowlist=current_skill_allowlist)
+                        agent_executor = create_agent_executor(skill_allowlist=current_skill_allowlist, callbacks=tool_trace_callbacks)
                     else:
-                        agent_executor = create_agent_executor()
+                        agent_executor = create_agent_executor(callbacks=tool_trace_callbacks)
                     chat_history = []
                     print(f">>> 系统: 已切换模型为 {provider}\n")
                 except Exception as e:
                     os.environ["LLM_PROVIDER"] = previous_provider
                     try:
                         if tool_router_enabled and current_skill_allowlist:
-                            agent_executor = create_agent_executor(skill_allowlist=current_skill_allowlist)
+                            agent_executor = create_agent_executor(skill_allowlist=current_skill_allowlist, callbacks=tool_trace_callbacks)
                         else:
-                            agent_executor = create_agent_executor()
+                            agent_executor = create_agent_executor(callbacks=tool_trace_callbacks)
                     except Exception:
                         pass
                     print(f">>> 系统: 切换模型失败: {e}\n")
@@ -1009,8 +1095,6 @@ def main():
             if user_input.strip().lower() in ["y", "yes", "n", "no"]:
                 continue
 
-            project_id = _extract_project_id()
-            user_id = os.getenv("LOCAL_USER_ID", "local_user")
             _add_short_term_message("user", user_input, project_id, user_id)
             resume_keywords = {"继续", "继续执行", "继续做", "continue"}
             if user_input.strip().lower() in resume_keywords:
@@ -1037,7 +1121,7 @@ def main():
                 if selected_key != current_skill_allowlist_key:
                     current_skill_allowlist = selected_skill_allowlist
                     current_skill_allowlist_key = selected_key
-                    agent_executor = create_agent_executor(skill_allowlist=current_skill_allowlist)
+                    agent_executor = create_agent_executor(skill_allowlist=current_skill_allowlist, callbacks=tool_trace_callbacks)
             for step in range(max_auto_steps):
                 chat_history = maybe_summarize_history(chat_history, summary_llm, max_recent_turns=8)
                 raw_output = ""

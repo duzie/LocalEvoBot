@@ -179,7 +179,7 @@ def create_llm():
 
     raise ValueError(f"不支持的 LLM_PROVIDER: {provider}")
 
-def create_agent_executor(tool_allowlist: List[str] = None, skill_allowlist: List[str] = None):
+def create_agent_executor(tool_allowlist: List[str] = None, skill_allowlist: List[str] = None, callbacks: List = None):
     """
     创建并配置 Agent Executor
     """
@@ -216,12 +216,13 @@ def create_agent_executor(tool_allowlist: List[str] = None, skill_allowlist: Lis
     max_iterations = None if limits_disabled else _read_int_env("AGENT_MAX_ITERATIONS", 50000000)
     max_execution_time = None if limits_disabled else _read_int_env("AGENT_MAX_EXECUTION_TIME", 600)
     executor = AgentExecutor(
-        agent=agent, 
-        tools=tools, 
+        agent=agent,
+        tools=tools,
         verbose=True,
         handle_parsing_errors=True,
         max_iterations=max_iterations,
-        max_execution_time=max_execution_time
+        max_execution_time=max_execution_time,
+        callbacks=callbacks
     )
 
     return executor
