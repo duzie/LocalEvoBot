@@ -436,6 +436,15 @@ def _build_cognition_summary(chat_history, llm, project_id, user_id):
     content = getattr(resp, "content", "") or str(resp)
     return content.strip()
 
+def _build_task_reflection(chat_history, llm, project_id, user_id):
+    transcript = _format_history_for_summary(chat_history[-50:])
+    system_text = "你是任务复盘器。基于对话与执行过程进行复盘，输出严格 JSON。字段: project, user_id, blockers, mistakes, improvements{template, prompt, skill}, evidence, proposed_tags。blockers/mistakes/evidence 为字符串数组；improvements 各字段为字符串数组。无法判断则输出空数组或空对象。只输出 JSON，不要额外文本。"
+    user_text = f"项目: {project_id}\n用户: {user_id}\n对话:\n{transcript}\n\n请输出 JSON："
+    from langchain_core.messages import SystemMessage, HumanMessage
+    resp = llm.invoke([SystemMessage(content=system_text), HumanMessage(content=user_text)])
+    content = getattr(resp, "content", "") or str(resp)
+    return content.strip()
+
 def _ensure_task_templates(summary_data, chat_history, llm, project_id, user_id):
     if not isinstance(summary_data, dict):
         return summary_data
@@ -597,6 +606,21 @@ def _save_cognition_summary(summary, project_id, user_id):
 
     return saved
 
+def _save_task_reflection(reflection, project_id, user_id):
+    data = reflection if isinstance(reflection, dict) else None
+    proposed_tags = _normalize_tags(data.get("proposed_tags") or []) if data else []
+    tags = _normalize_tags(proposed_tags + ["scope:project", f"project:{project_id}", "topic:reflection"])
+    content = json.dumps(data, ensure_ascii=False, indent=2) if data else str(reflection)
+    return add_operation_experience.invoke({
+        "system_name": "task_reflection",
+        "content": content,
+        "tags": tags,
+        "scope": "project",
+        "project_id": project_id,
+        "user_id": user_id,
+        "memory_type": "reflection"
+    })
+
 def _save_task_templates(task_templates, project_id, user_id, base_tags, saved):
     if not task_templates:
         return
@@ -636,6 +660,27 @@ def _should_prompt_save(summary_text):
 def _should_auto_save_summary():
     value = os.getenv("SUMMARY_AUTO_SAVE", "1")
     return str(value).strip().lower() not in ["0", "false", "no"]
+
+def _should_auto_save_reflection():
+    value = os.getenv("REFLECTION_AUTO_SAVE", "1")
+    return str(value).strip().lower() not in ["0", "false", "no"]
+
+def _run_reflection_async(chat_history, project_id, user_id):
+    try:
+        llm = create_llm()
+        reflection_text = _build_task_reflection(chat_history, llm, project_id, user_id)
+        reflection_json = _parse_json_object_from_text(reflection_text)
+        if reflection_json is not None:
+            reflection_text = json.dumps(reflection_json, ensure_ascii=False, indent=2)
+        shared.broadcast_threadsafe(">>> 系统: 复盘已生成")
+        if _should_auto_save_reflection():
+            result = _save_task_reflection(reflection_json or reflection_text, project_id, user_id)
+            shared.broadcast_threadsafe(f">>> 系统: 复盘已保存 {result}")
+        else:
+            shared.broadcast_threadsafe(">>> 系统: 复盘已生成，未保存")
+    except Exception as e:
+        shared.set_error(f"生成复盘失败: {e}")
+        shared.broadcast_threadsafe(f">>> 系统: 生成复盘失败: {e}")
 
 def _run_summary_async(chat_history, project_id, user_id):
     try:
@@ -1228,6 +1273,12 @@ def main():
                             daemon=True
                         )
                         summary_thread.start()
+                        reflection_thread = threading.Thread(
+                            target=_run_reflection_async,
+                            args=(chat_snapshot, project_id, user_id),
+                            daemon=True
+                        )
+                        reflection_thread.start()
                     except Exception as e:
                         print(f"Agent: 生成总结失败: {e}\n")
                         shared.set_error(f"生成总结失败: {e}")

@@ -26,7 +26,7 @@ def get_agent_prompt(tools: List[BaseTool] = None, extra_system: str = None):
    - 复杂任务 (>3步)：调用 `create_task_plan` 创建计划。
    - 多角色任务：调用 `create_board` 初始化公告板，拆分角色与任务；需要并发时使用 `run_role_agents_parallel`，依赖策略用 `dep_policy`。
    - 问候或者无意义的语句，回复完用户后，直接STATE: DONE。
-   所有任务必须**先调用’inspect_environment’检查工具, `get_operation_experience` 检索经验，
+   所有任务必须**先调用’inspect_environment’检查工具，
 2. **拆解与规划 (Plan - 仅复杂任务)**：
    - **循环执行机制**：每次调用 `read_task_plan` 获取一个子任务 -> 执行该子任务 -> **执行完后必须立即调用 `mark_task_completed`** (否则会无限重复执行该子任务)。
    - 若用户输入“继续/continue”，必须先调用 `read_task_plan`，从未完成的步骤继续，并在完成后标记。
