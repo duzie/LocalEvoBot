@@ -2,7 +2,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import BaseTool
 from typing import List
 
-def get_agent_prompt(tools: List[BaseTool] = None):
+def get_agent_prompt(tools: List[BaseTool] = None, extra_system: str = None):
     """
     获取 Agent 的提示词模板。
     面向通用桌面与网页自动化任务。
@@ -72,6 +72,8 @@ STATE: CONTINUE
     if any(n.startswith("uia_") or n.startswith("ocr_") or n.startswith("gui_") for n in names):
         dyn += desktop
     system_message = base + dyn
+    if extra_system:
+        system_message = system_message + "\n" + str(extra_system)
 
     return ChatPromptTemplate.from_messages([
         ("system", system_message),
