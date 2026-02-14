@@ -5,26 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cookie 管理 - 小冬瓜智能助手</title>
     <style>
-        :root{--card:rgba(255,255,255,.88);--border:rgba(255,255,255,.3);--muted:#6b7280;--text:#1f2937;--primary:#ec4899;--primary2:#f97316;--radius:14px;--radius2:999px;--mono:ui-monospace,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;--sans:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+        :root{--bg:#f5f7fb;--card:#ffffff;--border:#e5e7eb;--muted:#6b7280;--text:#0f172a;--primary:#6366f1;--primary2:#8b5cf6;--radius:14px;--radius2:10px;--shadow:0 8px 24px rgba(15,23,42,.08);--mono:ui-monospace,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;--sans:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
         *{box-sizing:border-box}
-        body{margin:0;font-family:var(--sans);color:var(--text);background:linear-gradient(135deg,#a8e6cf 0%,#dcedc1 25%,#ffd3b6 50%,#ffaaa5 75%,#ff8b94 100%)}
-        .app{max-width:1100px;margin:0 auto;padding:0 12px}
-        .header{margin-top:12px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);display:flex;align-items:center;justify-content:space-between}
+        body{margin:0;font-family:var(--sans);color:var(--text);background:var(--bg)}
+        .app{max-width:1120px;margin:0 auto;padding:16px}
+        .header{margin-top:6px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);display:flex;align-items:center;justify-content:space-between;box-shadow:var(--shadow)}
         .brand{font-weight:800;display:flex;align-items:center;gap:10px}
-        .nav{margin:10px 0;display:flex;gap:8px;flex-wrap:wrap}
-        .nav a{display:inline-block;padding:8px 12px;border-radius:999px;background:rgba(255,255,255,.7);border:1px solid var(--border);text-decoration:none;color:rgba(31,41,55,.9);font-weight:700}
-        .nav a.active{background:rgba(255,255,255,.95);border-color:rgba(236,72,153,.45);color:rgba(236,72,153,.95)}
-        .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 10px 30px rgba(31,38,135,.18);overflow:hidden;margin-bottom:12px}
-        .panelHeader{padding:10px 12px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.6);display:flex;align-items:center;justify-content:space-between}
+        .nav{margin:12px 0;display:flex;gap:8px;flex-wrap:wrap}
+        .nav a{display:inline-block;padding:8px 12px;border-radius:999px;background:#fff;border:1px solid var(--border);text-decoration:none;color:#334155;font-weight:700}
+        .nav a.active{background:#eef2ff;border-color:#c7d2fe;color:#4338ca}
+        .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:12px}
+        .panelHeader{padding:10px 12px;border-bottom:1px solid var(--border);background:#f8fafc;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
         .panelTitle{font-weight:800}
-        .btn{height:36px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.75);cursor:pointer}
-        .btn.primary{border-color:rgba(236,72,153,.55);background:linear-gradient(135deg,var(--primary) 0%,var(--primary2) 100%);color:#fff}
-        .btn.danger{border-color:rgba(239,68,68,.55);background:linear-gradient(135deg,#ef4444 0%,#f97316 100%);color:#fff}
+        .btn{height:36px;padding:0 14px;border-radius:10px;border:1px solid var(--border);background:#fff;cursor:pointer}
+        .btn.primary{border-color:#c7d2fe;background:linear-gradient(135deg,var(--primary) 0%,var(--primary2) 100%);color:#fff}
+        .btn.danger{border-color:#fca5a5;background:linear-gradient(135deg,#ef4444 0%,#f97316 100%);color:#fff}
         .tableWrap{padding:12px;overflow:auto}
         table{width:100%;border-collapse:collapse;font-size:12px;min-width:640px}
-        th,td{padding:8px;border-bottom:1px solid rgba(255,255,255,.4);text-align:left;vertical-align:top}
-        th{font-weight:800;background:rgba(255,255,255,.6);position:sticky;top:0}
-        .detail{padding:12px;border-top:1px solid var(--border);background:rgba(255,255,255,.6);display:none}
+        th,td{padding:8px;border-bottom:1px solid #f1f5f9;text-align:left;vertical-align:top}
+        th{font-weight:800;background:#f8fafc;position:sticky;top:0}
+        .detail{padding:12px;border-top:1px solid var(--border);background:#f8fafc;display:none}
         .detail.active{display:block}
         .mono{font-family:var(--mono);font-size:12px;white-space:pre-wrap;word-break:break-word}
         .help{font-size:12px;color:var(--muted)}

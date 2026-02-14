@@ -5,32 +5,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>记忆管理 - 小冬瓜智能助手</title>
     <style>
-        :root{--card:rgba(255,255,255,.88);--border:rgba(255,255,255,.3);--muted:#6b7280;--text:#1f2937;--primary:#ec4899;--primary2:#f97316;--radius:14px;--radius2:999px;--mono:ui-monospace,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;--sans:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+        :root{--bg:#f5f7fb;--card:#ffffff;--border:#e5e7eb;--muted:#6b7280;--text:#0f172a;--primary:#6366f1;--primary2:#8b5cf6;--radius:14px;--radius2:10px;--shadow:0 8px 24px rgba(15,23,42,.08);--mono:ui-monospace,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;--sans:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
         *{box-sizing:border-box}
-        body{margin:0;font-family:var(--sans);color:var(--text);background:linear-gradient(135deg,#a8e6cf 0%,#dcedc1 25%,#ffd3b6 50%,#ffaaa5 75%,#ff8b94 100%)}
-        .app{max-width:1200px;margin:0 auto;padding:0 12px}
-        .header{margin-top:12px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);display:flex;align-items:center;justify-content:space-between}
+        body{margin:0;font-family:var(--sans);color:var(--text);background:var(--bg)}
+        .app{max-width:1200px;margin:0 auto;padding:16px}
+        .header{margin-top:6px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);display:flex;align-items:center;justify-content:space-between;box-shadow:var(--shadow)}
         .brand{font-weight:800;display:flex;align-items:center;gap:10px}
-        .nav{margin:10px 0;display:flex;gap:8px;flex-wrap:wrap}
-        .nav a{display:inline-block;padding:8px 12px;border-radius:999px;background:rgba(255,255,255,.7);border:1px solid var(--border);text-decoration:none;color:rgba(31,41,55,.9);font-weight:700}
-        .nav a.active{background:rgba(255,255,255,.95);border-color:rgba(236,72,153,.45);color:rgba(236,72,153,.95)}
-        .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 10px 30px rgba(31,38,135,.18);overflow:hidden;margin-bottom:12px}
-        .panelHeader{padding:10px 12px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.6);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
+        .nav{margin:12px 0;display:flex;gap:8px;flex-wrap:wrap}
+        .nav a{display:inline-block;padding:8px 12px;border-radius:999px;background:#fff;border:1px solid var(--border);text-decoration:none;color:#334155;font-weight:700}
+        .nav a.active{background:#eef2ff;border-color:#c7d2fe;color:#4338ca}
+        .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:12px}
+        .panelHeader{padding:10px 12px;border-bottom:1px solid var(--border);background:#f8fafc;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
         .panelTitle{font-weight:800}
-        .btn{height:36px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.75);cursor:pointer}
-        .btn.primary{border-color:rgba(236,72,153,.55);background:linear-gradient(135deg,var(--primary) 0%,var(--primary2) 100%);color:#fff}
-        .btn.danger{border-color:rgba(239,68,68,.55);background:linear-gradient(135deg,#ef4444 0%,#f97316 100%);color:#fff}
+        .btn{height:36px;padding:0 14px;border-radius:10px;border:1px solid var(--border);background:#fff;cursor:pointer}
+        .btn.primary{border-color:#c7d2fe;background:linear-gradient(135deg,var(--primary) 0%,var(--primary2) 100%);color:#fff}
+        .btn.danger{border-color:#fca5a5;background:linear-gradient(135deg,#ef4444 0%,#f97316 100%);color:#fff}
         .filters{padding:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
-        .input,.select{height:36px;border-radius:10px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.75);padding:0 12px;outline:none;min-width:160px}
-        .tableWrap{padding:12px;overflow:auto}
+        .input,.select{height:36px;border-radius:10px;border:1px solid var(--border);background:#fff;padding:0 12px;outline:none;min-width:160px}
+        .tableWrap{padding:12px;overflow:auto;max-height:60vh}
         table{width:100%;border-collapse:collapse;font-size:12px;min-width:960px}
-        th,td{padding:8px;border-bottom:1px solid rgba(255,255,255,.4);text-align:left;vertical-align:top}
-        th{font-weight:800;background:rgba(255,255,255,.6);position:sticky;top:0}
+        th,td{padding:8px;border-bottom:1px solid #f1f5f9;text-align:left;vertical-align:top}
+        th{font-weight:800;background:#f8fafc;position:sticky;top:0}
+        .actionsCell{display:flex;gap:6px;align-items:center;flex-wrap:nowrap;min-width:120px}
+        .actionsCell .btn{height:30px;padding:0 10px}
+        .pager{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px;border-top:1px solid var(--border);background:#f8fafc}
+        .pager .info{font-size:12px;color:var(--muted)}
+        .pager .btn[disabled]{opacity:.5;cursor:not-allowed}
         .mono{font-family:var(--mono)}
-        .pill{font-size:12px;color:var(--muted);background:rgba(255,255,255,.55);border:1px solid var(--border);padding:4px 8px;border-radius:999px}
-        .editor{padding:12px;border-top:1px solid var(--border);display:none;flex-direction:column;gap:10px;background:rgba(255,255,255,.6)}
+        .pill{font-size:12px;color:var(--muted);background:#f1f5f9;border:1px solid #e2e8f0;padding:4px 8px;border-radius:999px}
+        .editor{padding:12px;border-top:1px solid var(--border);display:none;flex-direction:column;gap:10px;background:#f8fafc}
         .editor.active{display:flex}
-        .textarea{width:100%;min-height:120px;border-radius:10px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.75);padding:10px 12px;outline:none;font-family:var(--mono);font-size:12px}
+        .textarea{width:100%;min-height:120px;border-radius:10px;border:1px solid var(--border);background:#fff;padding:10px 12px;outline:none;font-family:var(--mono);font-size:12px}
         .help{font-size:12px;color:var(--muted)}
     </style>
 </head>
@@ -65,12 +70,13 @@
                 <input id="projectInput" class="input" type="text" placeholder="Project ID" autocomplete="off" />
                 <input id="userInput" class="input" type="text" placeholder="User ID" autocomplete="off" />
                 <input id="typeInput" class="input" type="text" placeholder="Memory Type" autocomplete="off" />
-                <input id="limitInput" class="input" type="number" min="1" max="500" value="200" />
+                <input id="limitInput" class="input" type="number" min="1" max="500" value="100" />
             </div>
             <div class="tableWrap">
                 <table>
                     <thead>
                         <tr>
+                            <th>操作</th>
                             <th>时间</th>
                             <th>System</th>
                             <th>类型</th>
@@ -78,14 +84,17 @@
                             <th>Scope</th>
                             <th>Project</th>
                             <th>User</th>
-                            <th>URL</th>
                             <th>内容</th>
-                            <th>操作</th>
                         </tr>
                     </thead>
                     <tbody id="memoriesBody"></tbody>
                 </table>
                 <div id="memoriesEmpty" class="help" style="padding:8px 0;"></div>
+            </div>
+            <div class="pager">
+                <button id="prevPageBtn" class="btn" type="button">上一页</button>
+                <button id="nextPageBtn" class="btn" type="button">下一页</button>
+                <span id="pageInfo" class="info"></span>
             </div>
             <div id="memoryEditor" class="editor">
                 <div class="panelTitle">编辑记忆</div>
@@ -96,7 +105,6 @@
                     <input id="editProject" class="input" type="text" placeholder="Project ID" />
                     <input id="editUser" class="input" type="text" placeholder="User ID" />
                     <input id="editType" class="input" type="text" placeholder="Memory Type" />
-                    <input id="editUrl" class="input" type="text" placeholder="URL" />
                 </div>
                 <textarea id="editContent" class="textarea" placeholder="内容"></textarea>
                 <div class="filters">
@@ -111,7 +119,7 @@
     <script>
         (function(){
             function el(id){return document.getElementById(id)}
-            var state = {items:[],editing:null}
+            var state = {items:[],editing:null,page:1,hasNext:false}
 
             function buildParams(){
                 var params = new URLSearchParams()
@@ -134,6 +142,12 @@
                 return params
             }
 
+            function updatePager(){
+                el('pageInfo').textContent = '第 ' + state.page + ' 页'
+                el('prevPageBtn').disabled = state.page <= 1
+                el('nextPageBtn').disabled = !state.hasNext
+            }
+
             function renderTable(list){
                 var body = el('memoriesBody')
                 body.textContent = ''
@@ -145,24 +159,8 @@
                 }
                 list.forEach(function(item){
                     var row = document.createElement('tr')
-                    var fields = [
-                        item.created_at || '',
-                        item.system || '',
-                        item.memory_type || '',
-                        Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags || ''),
-                        item.scope || '',
-                        item.project_id || '',
-                        item.user_id || '',
-                        item.url || '',
-                        item.content || ''
-                    ]
-                    fields.forEach(function(text, idx){
-                        var cell = document.createElement('td')
-                        cell.textContent = text
-                        if (idx === 8) cell.className = 'mono'
-                        row.appendChild(cell)
-                    })
                     var actions = document.createElement('td')
+                    actions.className = 'actionsCell'
                     var editBtn = document.createElement('button')
                     editBtn.className = 'btn'
                     editBtn.type = 'button'
@@ -176,16 +174,38 @@
                     actions.appendChild(editBtn)
                     actions.appendChild(delBtn)
                     row.appendChild(actions)
+                    var fields = [
+                        item.created_at || '',
+                        item.system || '',
+                        item.memory_type || '',
+                        Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags || ''),
+                        item.scope || '',
+                        item.project_id || '',
+                        item.user_id || '',
+                        item.content || ''
+                    ]
+                    fields.forEach(function(text, idx){
+                        var cell = document.createElement('td')
+                        cell.textContent = text
+                        if (idx === 7) cell.className = 'mono'
+                        row.appendChild(cell)
+                    })
                     body.appendChild(row)
                 })
             }
 
             function loadMemories(){
                 var params = buildParams()
+                var limit = parseInt(el('limitInput').value || '100', 10)
+                if (isNaN(limit) || limit <= 0) limit = 100
+                var offset = (state.page - 1) * limit
+                params.append('offset', String(offset))
                 fetch('/api/config/experiences?' + params.toString()).then(function(r){return r.json()}).then(function(data){
                     var list = (data && data.items) ? data.items : []
                     state.items = list
+                    state.hasNext = list.length >= limit
                     renderTable(list)
+                    updatePager()
                 }).catch(function(e){
                     var empty = el('memoriesEmpty')
                     empty.textContent = '加载记忆失败: ' + e
@@ -194,6 +214,10 @@
 
             function exportData(format){
                 var params = buildParams()
+                var limit = parseInt(el('limitInput').value || '100', 10)
+                if (isNaN(limit) || limit <= 0) limit = 100
+                var offset = (state.page - 1) * limit
+                params.append('offset', String(offset))
                 params.append('format', format)
                 var url = '/api/config/experiences/export?' + params.toString()
                 window.open(url, '_blank')
@@ -208,7 +232,6 @@
                 el('editProject').value = item.project_id || ''
                 el('editUser').value = item.user_id || ''
                 el('editType').value = item.memory_type || ''
-                el('editUrl').value = item.url || ''
                 el('editContent').value = item.content || ''
                 el('editStatus').textContent = ''
             }
@@ -228,7 +251,7 @@
                     project_id: el('editProject').value,
                     user_id: el('editUser').value,
                     memory_type: el('editType').value,
-                    url: el('editUrl').value
+                    url: ''
                 }
                 el('editStatus').textContent = '保存中...'
                 fetch('/api/config/experiences/' + encodeURIComponent(state.editing.id), {
@@ -259,11 +282,24 @@
                 }).catch(function(e){ alert('删除出错 ' + e) })
             }
 
-            el('searchBtn').onclick = loadMemories
+            el('searchBtn').onclick = function(){
+                state.page = 1
+                loadMemories()
+            }
             el('exportJsonBtn').onclick = function(){ exportData('json') }
             el('exportCsvBtn').onclick = function(){ exportData('csv') }
             el('saveEditBtn').onclick = saveEdit
             el('cancelEditBtn').onclick = closeEditor
+            el('prevPageBtn').onclick = function(){
+                if (state.page <= 1) return
+                state.page -= 1
+                loadMemories()
+            }
+            el('nextPageBtn').onclick = function(){
+                if (!state.hasNext) return
+                state.page += 1
+                loadMemories()
+            }
 
             loadMemories()
         })()
