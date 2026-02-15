@@ -1,4 +1,4 @@
-from langchain_core.tools import tool
+from langchain_core.tools import tool, BaseTool
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 import os
 import json
@@ -12,6 +12,69 @@ from app.skills.registry import load_skills
 from app.integrations.mcp_client import load_mcp_tools
 from app.prompts import get_agent_prompt
 from web.backend.shared import shared
+
+_PATH_KEYS = {"file_path", "path", "dir", "directory", "folder", "target_dir", "output_dir", "root", "base_dir", "file"}
+_LIST_PATH_KEYS = {"file_paths", "paths", "files", "dirs", "directories"}
+
+def _is_url(value: str) -> bool:
+    return bool(re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", value or ""))
+
+def _normalize_path_value(value: str, workdir: str) -> str:
+    if not value:
+        return value
+    s = str(value).strip()
+    if not s or _is_url(s):
+        return value
+    if os.path.isabs(s):
+        return s
+    return os.path.abspath(os.path.join(workdir, s))
+
+def _rewrite_paths(data, workdir: str, key: str = ""):
+    if not workdir:
+        return data
+    if isinstance(data, dict):
+        out = {}
+        for k, v in data.items():
+            if k in _PATH_KEYS:
+                out[k] = _rewrite_paths(v, workdir, k)
+            elif k in _LIST_PATH_KEYS:
+                out[k] = _rewrite_paths(v, workdir, k)
+            else:
+                out[k] = v
+        return out
+    if isinstance(data, list):
+        if key in _PATH_KEYS or key in _LIST_PATH_KEYS:
+            return [_rewrite_paths(v, workdir, key) for v in data]
+        return data
+    if isinstance(data, str) and (key in _PATH_KEYS or key in _LIST_PATH_KEYS):
+        return _normalize_path_value(data, workdir)
+    return data
+
+def _wrap_tool_with_workdir(tool: BaseTool, workdir: str) -> BaseTool:
+    if not workdir:
+        return tool
+    class _WorkdirTool(BaseTool):
+        name = getattr(tool, "name", "")
+        description = getattr(tool, "description", "")
+        args_schema = getattr(tool, "args_schema", None)
+        return_direct = getattr(tool, "return_direct", False)
+        def _run(self, *args, **kwargs):
+            if kwargs:
+                data = _rewrite_paths(kwargs, workdir)
+                return tool.invoke(data)
+            if args:
+                data = _rewrite_paths(args[0], workdir)
+                return tool.invoke(data)
+            return tool.invoke({})
+        async def _arun(self, *args, **kwargs):
+            if kwargs:
+                data = _rewrite_paths(kwargs, workdir)
+                return await tool.ainvoke(data)
+            if args:
+                data = _rewrite_paths(args[0], workdir)
+                return await tool.ainvoke(data)
+            return await tool.ainvoke({})
+    return _WorkdirTool()
 
 def _get_board_path():
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
@@ -205,11 +268,14 @@ def _compose_task_input(task_input: str, payload: Dict[str, Any], board_snapshot
     output_dir = payload.get("output_dir") or payload.get("target_dir") or payload.get("directory")
     if output_dir:
         context_parts.append(f"目标目录: {str(output_dir).strip()}")
+    workdir = payload.get("workdir")
+    if workdir:
+        context_parts.append(f"工作目录: {str(workdir).strip()}")
     if context_parts:
         parts.append("上下文信息:\n" + "\n".join(context_parts))
     return "\n\n".join(parts).strip()
 
-def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", tools_allowlist: List[str] = None, skills_allowlist: List[str] = None, max_iterations: int = 30, max_execution_time: int = 300) -> Dict[str, Any]:
+def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", tools_allowlist: List[str] = None, skills_allowlist: List[str] = None, max_iterations: int = 30, max_execution_time: int = 300, workdir: str = "") -> Dict[str, Any]:
     if shared.stop_requested:
         shared.clear_stop()
         shared.set_status("stopped", "已停止", task_input)
@@ -219,6 +285,11 @@ def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", t
     mcp_tools = load_mcp_tools()
     if mcp_tools:
         tools.extend(mcp_tools)
+    wd = (workdir or "").strip()
+    if wd and not os.path.isabs(wd):
+        wd = os.path.abspath(wd)
+    if wd:
+        tools = [_wrap_tool_with_workdir(t, wd) for t in tools]
     allow = tools_allowlist or []
     allow.extend(_collect_tools_for_skills(skills_allowlist or []))
     tools = _filter_tools(tools, allow)
@@ -448,14 +519,15 @@ def _deps_satisfied(board: Dict[str, Any], deps: List[Any], policy: str) -> bool
     return _deps_completed(board, dep_ids)
 
 @tool
-def run_role_agent(role_name: str, task_input: str, role_prompt: str = "", tools_allowlist: List[str] = None, skills_allowlist: List[str] = None, task_id: int = 0, status_after: str = "待验收", max_iterations: int = 30, max_execution_time: int = 300, context: str = "", summary: str = "", output_dir: str = "") -> Dict[str, Any]:
+def run_role_agent(role_name: str, task_input: str, role_prompt: str = "", tools_allowlist: List[str] = None, skills_allowlist: List[str] = None, task_id: int = 0, status_after: str = "待验收", max_iterations: int = 30, max_execution_time: int = 300, context: str = "", summary: str = "", output_dir: str = "", workdir: str = "") -> Dict[str, Any]:
     """
     创建角色 Agent 并执行单次任务，返回输出结果。
     """
     board_snapshot = _load_board_locked()
     task = _get_task_by_id(board_snapshot, int(task_id)) if board_snapshot and task_id else None
-    payload = {"context": context, "summary": summary, "output_dir": output_dir}
+    payload = {"context": context, "summary": summary, "output_dir": output_dir, "workdir": workdir}
     merged_input = _compose_task_input(task_input, payload, board_snapshot, task)
+    selected_workdir = workdir or output_dir
     result = _execute_role_task(
         role_name=role_name,
         task_input=merged_input,
@@ -463,7 +535,8 @@ def run_role_agent(role_name: str, task_input: str, role_prompt: str = "", tools
         tools_allowlist=tools_allowlist,
         skills_allowlist=skills_allowlist,
         max_iterations=max_iterations,
-        max_execution_time=max_execution_time
+        max_execution_time=max_execution_time,
+        workdir=selected_workdir
     )
     output = result.get("output")
     if task_id:
@@ -561,6 +634,7 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
                 if board_snapshot and payload.get("task_id"):
                     task = _get_task_by_id(board_snapshot, int(payload.get("task_id")))
                 merged_input = _compose_task_input(payload.get("task_input") or "", payload, board_snapshot, task)
+                selected_workdir = payload.get("workdir") or payload.get("output_dir") or payload.get("target_dir") or payload.get("directory")
                 future = executor.submit(
                     _execute_role_task,
                     role_name=payload.get("role_name") or "",
@@ -569,7 +643,8 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
                     tools_allowlist=payload.get("tools_allowlist") or [],
                     skills_allowlist=payload.get("skills_allowlist") or [],
                     max_iterations=payload.get("max_iterations") or 30,
-                    max_execution_time=payload.get("max_execution_time") or 300
+                    max_execution_time=payload.get("max_execution_time") or 300,
+                    workdir=selected_workdir
                 )
                 futures[future] = meta
             for future in as_completed(futures):
