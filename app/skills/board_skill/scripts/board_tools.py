@@ -11,6 +11,7 @@ from app.agent import create_llm
 from app.skills.registry import load_skills
 from app.integrations.mcp_client import load_mcp_tools
 from app.prompts import get_agent_prompt
+from web.backend.shared import shared
 
 def _get_board_path():
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
@@ -162,7 +163,57 @@ def _build_role_prompt(role_name: str, role_prompt: str) -> str:
         parts.append(role_prompt)
     return "\n".join(parts).strip()
 
+def _compose_task_input(task_input: str, payload: Dict[str, Any], board_snapshot: Optional[Dict[str, Any]], task: Optional[Dict[str, Any]]) -> str:
+    parts = []
+    base = (task_input or "").strip()
+    if base:
+        parts.append(base)
+    context_parts = []
+    if board_snapshot:
+        goal = str(board_snapshot.get("goal") or "").strip()
+        phase = str(board_snapshot.get("phase") or "").strip()
+        milestone = str(board_snapshot.get("milestone") or "").strip()
+        if goal:
+            context_parts.append(f"总体目标: {goal}")
+        if phase:
+            context_parts.append(f"阶段: {phase}")
+        if milestone:
+            context_parts.append(f"里程碑: {milestone}")
+    if task:
+        title = str(task.get("title") or "").strip()
+        acceptance = str(task.get("acceptance") or "").strip()
+        deps = task.get("deps") or []
+        outputs = task.get("outputs") or []
+        if title:
+            context_parts.append(f"任务: {title}")
+        if acceptance:
+            context_parts.append(f"验收: {acceptance}")
+        if deps:
+            context_parts.append(f"依赖任务: {', '.join([str(d) for d in deps])}")
+        if outputs:
+            recent = outputs[-3:]
+            texts = []
+            for item in recent:
+                content = item.get("content")
+                if content:
+                    texts.append(str(content))
+            if texts:
+                context_parts.append("最近产物: " + " | ".join(texts))
+    extra_context = payload.get("context") or payload.get("summary") or payload.get("notes")
+    if extra_context:
+        context_parts.append(f"补充说明: {str(extra_context).strip()}")
+    output_dir = payload.get("output_dir") or payload.get("target_dir") or payload.get("directory")
+    if output_dir:
+        context_parts.append(f"目标目录: {str(output_dir).strip()}")
+    if context_parts:
+        parts.append("上下文信息:\n" + "\n".join(context_parts))
+    return "\n\n".join(parts).strip()
+
 def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", tools_allowlist: List[str] = None, skills_allowlist: List[str] = None, max_iterations: int = 30, max_execution_time: int = 300) -> Dict[str, Any]:
+    if shared.stop_requested:
+        shared.clear_stop()
+        shared.set_status("stopped", "已停止", task_input)
+        return {"ok": False, "stopped": True, "role": role_name, "output": ""}
     llm = create_llm()
     tools = load_skills(package_name="app.skills")
     mcp_tools = load_mcp_tools()
@@ -182,8 +233,22 @@ def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", t
         max_iterations=max(1, int(max_iterations or 30)),
         max_execution_time=max(1, int(max_execution_time or 300))
     )
-    result = executor.invoke({"input": task_input or ""})
-    output = result.get("output") if isinstance(result, dict) else str(result)
+    raw_output = ""
+    for chunk in executor.stream({"input": task_input or ""}):
+        if shared.stop_requested:
+            shared.clear_stop()
+            shared.set_status("stopped", "已停止", task_input)
+            return {"ok": False, "stopped": True, "role": role_name, "output": raw_output}
+        if not isinstance(chunk, dict):
+            continue
+        text = chunk.get("output")
+        if text is None:
+            continue
+        if text.startswith(raw_output):
+            raw_output = text
+        else:
+            raw_output += text
+    output = raw_output
     return {"ok": True, "role": role_name, "output": output}
 
 @tool
@@ -383,13 +448,17 @@ def _deps_satisfied(board: Dict[str, Any], deps: List[Any], policy: str) -> bool
     return _deps_completed(board, dep_ids)
 
 @tool
-def run_role_agent(role_name: str, task_input: str, role_prompt: str = "", tools_allowlist: List[str] = None, skills_allowlist: List[str] = None, task_id: int = 0, status_after: str = "待验收", max_iterations: int = 30, max_execution_time: int = 300) -> Dict[str, Any]:
+def run_role_agent(role_name: str, task_input: str, role_prompt: str = "", tools_allowlist: List[str] = None, skills_allowlist: List[str] = None, task_id: int = 0, status_after: str = "待验收", max_iterations: int = 30, max_execution_time: int = 300, context: str = "", summary: str = "", output_dir: str = "") -> Dict[str, Any]:
     """
     创建角色 Agent 并执行单次任务，返回输出结果。
     """
+    board_snapshot = _load_board_locked()
+    task = _get_task_by_id(board_snapshot, int(task_id)) if board_snapshot and task_id else None
+    payload = {"context": context, "summary": summary, "output_dir": output_dir}
+    merged_input = _compose_task_input(task_input, payload, board_snapshot, task)
     result = _execute_role_task(
         role_name=role_name,
-        task_input=task_input,
+        task_input=merged_input,
         role_prompt=role_prompt,
         tools_allowlist=tools_allowlist,
         skills_allowlist=skills_allowlist,
@@ -408,6 +477,10 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
     """
     并发运行多个角色 Agent。
     """
+    if shared.stop_requested:
+        shared.clear_stop()
+        shared.set_status("stopped", "已停止", "")
+        return {"ok": False, "stopped": True, "results": []}
     items = tasks or []
     if not isinstance(items, list) or not items:
         return {"ok": False, "error": "tasks 不能为空"}
@@ -421,6 +494,18 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
     effective_policy = dep_policy or "all"
     pending = [{"index": idx, "task": (item or {})} for idx, item in enumerate(items)]
     while pending:
+        if shared.stop_requested:
+            shared.clear_stop()
+            shared.set_status("stopped", "已停止", "")
+            return {
+                "ok": False,
+                "stopped": True,
+                "total": len(items),
+                "success_count": success_count,
+                "error_count": error_count,
+                "skipped_count": skipped_count,
+                "results": sorted(results, key=lambda x: x.get("index", 0))
+            }
         board_snapshot = _load_board_locked()
         ready = []
         blocked = []
@@ -472,10 +557,14 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
             futures = {}
             for meta in ready:
                 payload = meta["task"]
+                task = None
+                if board_snapshot and payload.get("task_id"):
+                    task = _get_task_by_id(board_snapshot, int(payload.get("task_id")))
+                merged_input = _compose_task_input(payload.get("task_input") or "", payload, board_snapshot, task)
                 future = executor.submit(
                     _execute_role_task,
                     role_name=payload.get("role_name") or "",
-                    task_input=payload.get("task_input") or "",
+                    task_input=merged_input,
                     role_prompt=payload.get("role_prompt") or "",
                     tools_allowlist=payload.get("tools_allowlist") or [],
                     skills_allowlist=payload.get("skills_allowlist") or [],

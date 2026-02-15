@@ -143,6 +143,62 @@ async def whatsapp_webhook(request: Request, payload: dict = Body(...)):
 async def get_status():
     return shared.get_status()
 
+def _get_task_plan_path():
+    base_dir = os.path.dirname(_get_env_path())
+    return os.path.join(base_dir, "app", "skills", "system_skill", "scripts", "current_task_plan.json")
+
+def _load_task_plan():
+    path = _get_task_plan_path()
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+@router.get("/progress")
+async def get_progress():
+    status = shared.get_status()
+    plan = _load_task_plan()
+    completed_steps = []
+    pending_steps = []
+    total_steps = 0
+    if isinstance(plan, dict):
+        steps = plan.get("steps") or []
+        total_steps = len(steps)
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            desc = str(step.get("desc") or "").strip()
+            if not desc:
+                continue
+            if step.get("status") == "completed":
+                completed_steps.append(desc)
+            elif step.get("status") == "pending":
+                pending_steps.append(desc)
+    next_steps = pending_steps[:1]
+    current_activity = (status.get("status_message") or "").strip()
+    if not current_activity:
+        current_activity = (status.get("current_task") or "").strip()
+    if not current_activity and next_steps:
+        current_activity = next_steps[0]
+    blocked_points = []
+    if status.get("last_error"):
+        blocked_points.append(status.get("last_error"))
+    return {
+        "execution_status": status.get("execution_status"),
+        "current_activity": current_activity,
+        "completed_steps": completed_steps,
+        "completed_count": len(completed_steps),
+        "total_steps": total_steps,
+        "progress_text": f"{len(completed_steps)}/{total_steps}" if total_steps else "",
+        "blocked_points": blocked_points,
+        "next_steps": next_steps,
+        "last_task_done_at": status.get("last_task_done_at"),
+        "last_error_at": status.get("last_error_at")
+    }
+
 def _get_cookie_dir():
     base_dir = os.path.dirname(_get_env_path())
     data_dir = os.path.join(base_dir, "app", "data", "cookies")

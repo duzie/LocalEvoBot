@@ -256,7 +256,75 @@ class ShortTermToolTraceHandler(BaseCallbackHandler):
         self.max_len = max_len
         self._starts = {}
 
+    def _try_parse_json(self, value):
+        if not isinstance(value, str):
+            return None
+        return _parse_json_object_from_text(value)
+
+    def _extract_file_summary(self, tool_name: str, data):
+        payload = data
+        if isinstance(payload, str):
+            parsed = self._try_parse_json(payload)
+            if parsed is not None:
+                payload = parsed
+        if not isinstance(payload, dict):
+            return None
+        file_path = payload.get("file_path") or payload.get("path") or payload.get("file")
+        stats = payload.get("stats")
+        if not file_path and isinstance(stats, dict):
+            file_path = stats.get("file_path") or stats.get("path")
+        if not file_path:
+            return None
+        start_line = payload.get("start_line")
+        end_line = payload.get("end_line")
+        line_number = payload.get("line_number")
+        message = payload.get("message") if isinstance(payload.get("message"), str) else ""
+        if (start_line is None or end_line is None) and message:
+            m = re.search(r"行\\s*(\\d+)\\s*-\\s*(\\d+)", message)
+            if m:
+                start_line = start_line if start_line is not None else int(m.group(1))
+                end_line = end_line if end_line is not None else int(m.group(2))
+        content = payload.get("content")
+        line_count = None
+        if content is not None:
+            line_count = len(str(content).splitlines())
+        if line_number is not None:
+            start_line = int(line_number)
+            end_line = int(line_number)
+        if start_line is None and end_line is None and line_count:
+            start_line = 1
+            end_line = line_count
+        summary = {"file": file_path}
+        try:
+            summary["name"] = os.path.basename(str(file_path))
+        except Exception:
+            pass
+        if start_line is not None:
+            if end_line is not None:
+                summary["lines"] = f"{int(start_line)}-{int(end_line)}"
+            else:
+                summary["lines"] = str(int(start_line))
+        return summary
+
+    def _compact_payload(self, payload: dict):
+        event = payload.get("event")
+        tool_name = payload.get("tool") or ""
+        if event == "tool_start":
+            info = self._extract_file_summary(tool_name, payload.get("input"))
+            if info:
+                payload["input"] = info
+        elif event == "tool_end":
+            info = self._extract_file_summary(tool_name, payload.get("output"))
+            if info:
+                payload["output"] = info
+        elif event == "agent_action":
+            info = self._extract_file_summary(tool_name, payload.get("tool_input"))
+            if info:
+                payload["tool_input"] = info
+        return payload
+
     def _emit(self, payload: dict):
+        payload = self._compact_payload(payload)
         try:
             text = json.dumps(payload, ensure_ascii=False)
         except Exception:

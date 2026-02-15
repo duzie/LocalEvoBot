@@ -22,6 +22,11 @@
         .panelTitle{display:flex;align-items:center;gap:10px;font-weight:800}
         .pill{font-size:12px;color:var(--muted);background:#f1f5f9;border:1px solid #e2e8f0;padding:5px 10px;border-radius:999px}
         .select{height:36px;border-radius:10px;border:1px solid var(--border);background:#fff;padding:0 12px;outline:none}
+        .progressGrid{padding:12px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+        .progressItem{border:1px solid var(--border);border-radius:var(--radius2);padding:12px;background:#fff;min-height:92px;display:flex;flex-direction:column;gap:8px}
+        .progressLabel{font-size:12px;color:var(--muted);font-weight:700}
+        .progressValue{font-size:14px;color:#1f2937;white-space:pre-wrap;word-break:break-word}
+        .progressList{font-size:12px;color:#475569;background:#f8fafc;border:1px dashed #e2e8f0;border-radius:10px;padding:8px;min-height:34px;white-space:pre-wrap;word-break:break-word}
         .chatSplit{padding:12px;display:flex;gap:12px;height:62vh;min-height:0;overflow:hidden}
         .chatPane,.auxPane{display:flex;flex-direction:column;min-height:0;border:1px solid var(--border);background:#fff;border-radius:var(--radius);overflow:hidden}
         .chatPane{flex:2 1 0;min-width:0}
@@ -49,7 +54,7 @@
         .confirmInlineContent{font-size:13px;color:#334155;white-space:pre-wrap;word-break:break-word}
         .confirmInlineActions{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}
         .confirmInlineStatus{font-size:12px;color:var(--muted)}
-        @media (max-width:640px){.header{flex-wrap:wrap;gap:10px}.status{width:100%;justify-content:flex-start}.chatSplit{flex-direction:column;height:auto}.auxPane{display:none}.bubble{max-width:92vw}}
+        @media (max-width:640px){.header{flex-wrap:wrap;gap:10px}.status{width:100%;justify-content:flex-start}.progressGrid{grid-template-columns:1fr}.chatSplit{flex-direction:column;height:auto}.auxPane{display:none}.bubble{max-width:92vw}}
     </style>
 </head>
 <body>
@@ -66,6 +71,36 @@
             <a href="/memories.html">记忆</a>
             <a href="/cookies.html">Cookie</a>
         </nav>
+        <section class="card" style="margin-bottom:12px;">
+            <div class="panelHeader">
+                <div class="panelTitle">
+                    <span>进度</span>
+                    <span id="progressMeta" class="pill"></span>
+                </div>
+                <span id="progressStatus" class="pill">空闲</span>
+            </div>
+            <div class="progressGrid">
+                <div class="progressItem">
+                    <div class="progressLabel">当前在做什么</div>
+                    <div id="progressCurrent" class="progressValue">-</div>
+                </div>
+                <div class="progressItem">
+                    <div class="progressLabel">已完成</div>
+                    <div id="progressDone" class="progressValue">-</div>
+                    <div id="progressDoneList" class="progressList"></div>
+                </div>
+                <div class="progressItem">
+                    <div class="progressLabel">卡住的点</div>
+                    <div id="progressBlocked" class="progressValue">-</div>
+                    <div id="progressBlockedList" class="progressList"></div>
+                </div>
+                <div class="progressItem">
+                    <div class="progressLabel">下一步计划</div>
+                    <div id="progressNext" class="progressValue">-</div>
+                    <div id="progressNextList" class="progressList"></div>
+                </div>
+            </div>
+        </section>
         <section class="card">
             <div class="panelHeader">
                 <div class="panelTitle">
@@ -157,6 +192,43 @@
                     btn.textContent = '发送'
                     btn.disabled = state.isSending || !connected
                 }
+            }
+
+            function setProgressText(id, text){
+                var node = el(id)
+                if (!node) return
+                node.textContent = text || '-'
+            }
+
+            function setProgressList(id, items){
+                var node = el(id)
+                if (!node) return
+                if (!items || !items.length){
+                    node.textContent = ''
+                    return
+                }
+                node.textContent = items.map(function(item){return '• ' + item}).join('\n')
+            }
+
+            function renderProgress(data){
+                if (!data) return
+                setProgressText('progressStatus', data.execution_status || 'idle')
+                setProgressText('progressMeta', data.progress_text || '')
+                setProgressText('progressCurrent', data.current_activity || '-')
+                setProgressText('progressDone', data.completed_count != null && data.total_steps ? (data.completed_count + '/' + data.total_steps) : '-')
+                setProgressList('progressDoneList', data.completed_steps || [])
+                setProgressText('progressBlocked', (data.blocked_points && data.blocked_points.length) ? data.blocked_points[0] : '-')
+                setProgressList('progressBlockedList', data.blocked_points || [])
+                setProgressText('progressNext', (data.next_steps && data.next_steps.length) ? data.next_steps[0] : '-')
+                setProgressList('progressNextList', data.next_steps || [])
+            }
+
+            function pollProgress(){
+                fetch('/api/chat/progress').then(function(r){return r.json()}).then(function(data){
+                    renderProgress(data)
+                }).catch(function(){
+                    renderProgress(null)
+                })
             }
 
             function appendAuxMessage(raw){
@@ -653,6 +725,8 @@
             setModelInfo('')
             loadHistory()
             loadModels()
+            pollProgress()
+            setInterval(pollProgress, 2000)
             connectLogWS()
             connectChatWS()
         })();

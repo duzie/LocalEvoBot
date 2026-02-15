@@ -30,8 +30,8 @@ def register_agent(name: str, description: str) -> Dict:
             os.makedirs(cred_dir, exist_ok=True)
             
             cred_path = os.path.join(cred_dir, "credentials.json")
-            with open(cred_path, "w") as f:
-                json.dump(credentials, f, indent=2)
+            with open(cred_path, "w", encoding="utf-8") as f:
+                json.dump(credentials, f, ensure_ascii=False, indent=2)
             
             result["credentials_saved_to"] = cred_path
         

@@ -183,7 +183,7 @@ async def update_config(config: ConfigUpdate):
 
     try:
         if not os.path.exists(env_path):
-            with open(env_path, 'w') as f:
+            with open(env_path, "w", encoding="utf-8") as f:
                 f.write("")
         
         set_key(env_path, config.key, config.value)
