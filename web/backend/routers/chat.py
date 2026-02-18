@@ -147,6 +147,38 @@ def _get_task_plan_path():
     base_dir = os.path.dirname(_get_env_path())
     return os.path.join(base_dir, "app", "skills", "system_skill", "scripts", "current_task_plan.json")
 
+def _get_board_path():
+    base_dir = os.path.dirname(_get_env_path())
+    return os.path.join(base_dir, "app", "data", "board", "board.json")
+
+def _load_board():
+    path = _get_board_path()
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+def _normalize_status(status: str) -> str:
+    s = (status or "").strip()
+    mapping = {
+        "pending": "待处理",
+        "todo": "待处理",
+        "in_progress": "进行中",
+        "doing": "进行中",
+        "review": "待验收",
+        "done": "已完成",
+        "completed": "已完成",
+        "rework": "需返工"
+    }
+    if s in mapping:
+        return mapping[s]
+    if s in {"待处理", "进行中", "待验收", "已完成", "需返工"}:
+        return s
+    return s or "待处理"
+
 def _load_task_plan():
     path = _get_task_plan_path()
     if not os.path.exists(path):
@@ -161,6 +193,7 @@ def _load_task_plan():
 async def get_progress():
     status = shared.get_status()
     plan = _load_task_plan()
+    board = _load_board()
     completed_steps = []
     pending_steps = []
     total_steps = 0
@@ -186,6 +219,26 @@ async def get_progress():
     blocked_points = []
     if status.get("last_error"):
         blocked_points.append(status.get("last_error"))
+    by_owner = []
+    if isinstance(board, dict):
+        tasks = board.get("tasks") or []
+        grouped = {}
+        for task in tasks:
+            owner = str(task.get("owner") or "").strip() or "未分配"
+            bucket = grouped.setdefault(owner, {"owner": owner, "total": 0, "done": 0, "doing": 0, "pending": 0, "review": 0, "rework": 0})
+            bucket["total"] += 1
+            st = _normalize_status(task.get("status") or "")
+            if st == "已完成":
+                bucket["done"] += 1
+            elif st == "进行中":
+                bucket["doing"] += 1
+            elif st == "待处理":
+                bucket["pending"] += 1
+            elif st == "待验收":
+                bucket["review"] += 1
+            elif st == "需返工":
+                bucket["rework"] += 1
+        by_owner = sorted(grouped.values(), key=lambda x: x["owner"])
     return {
         "execution_status": status.get("execution_status"),
         "current_activity": current_activity,
@@ -195,9 +248,39 @@ async def get_progress():
         "progress_text": f"{len(completed_steps)}/{total_steps}" if total_steps else "",
         "blocked_points": blocked_points,
         "next_steps": next_steps,
+        "by_owner": by_owner,
         "last_task_done_at": status.get("last_task_done_at"),
         "last_error_at": status.get("last_error_at")
     }
+
+def _get_role_log_dir():
+    base_dir = os.path.dirname(_get_env_path())
+    return os.path.join(base_dir, "app", "data", "board", "role_logs")
+
+def _read_tail_lines(path: str, limit: int = 200) -> List[str]:
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.read().splitlines()
+    except Exception:
+        return []
+    if limit and len(lines) > limit:
+        return lines[-limit:]
+    return lines
+
+@router.get("/role-logs")
+async def role_logs(limit: int = 200):
+    safe_limit = max(1, min(int(limit or 200), 1000))
+    base = _get_role_log_dir()
+    if not os.path.isdir(base):
+        return {"logs": []}
+    items = []
+    for path in sorted(glob.glob(os.path.join(base, "*.log"))):
+        role = os.path.splitext(os.path.basename(path))[0]
+        lines = _read_tail_lines(path, safe_limit)
+        items.append({"role": role, "lines": lines, "line_count": len(lines)})
+    return {"logs": items}
 
 def _get_cookie_dir():
     base_dir = os.path.dirname(_get_env_path())

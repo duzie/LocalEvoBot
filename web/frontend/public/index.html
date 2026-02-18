@@ -27,6 +27,7 @@
         .progressLabel{font-size:12px;color:var(--muted);font-weight:700}
         .progressValue{font-size:14px;color:#1f2937;white-space:pre-wrap;word-break:break-word}
         .progressList{font-size:12px;color:#475569;background:#f8fafc;border:1px dashed #e2e8f0;border-radius:10px;padding:8px;min-height:34px;white-space:pre-wrap;word-break:break-word}
+        .roleLogPre{margin:0;padding:12px;height:240px;overflow:auto;font-family:var(--mono);font-size:12px;background:#fff;border-top:1px solid var(--border)}
         .chatSplit{padding:12px;display:flex;gap:12px;height:62vh;min-height:0;overflow:hidden}
         .chatPane,.auxPane{display:flex;flex-direction:column;min-height:0;border:1px solid var(--border);background:#fff;border-radius:var(--radius);overflow:hidden}
         .chatPane{flex:2 1 0;min-width:0}
@@ -99,7 +100,24 @@
                     <div id="progressNext" class="progressValue">-</div>
                     <div id="progressNextList" class="progressList"></div>
                 </div>
+                <div class="progressItem">
+                    <div class="progressLabel">角色进度</div>
+                    <div id="progressOwners" class="progressValue">-</div>
+                    <div id="progressOwnersList" class="progressList"></div>
+                </div>
             </div>
+        </section>
+        <section class="card" style="margin-bottom:12px;">
+            <div class="panelHeader">
+                <div class="panelTitle">
+                    <span>子Agent终端</span>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <select id="roleLogSelect" class="select" style="min-width:160px;flex:0 0 auto;"></select>
+                    <span id="roleLogMeta" class="pill"></span>
+                </div>
+            </div>
+            <pre id="roleLogPre" class="roleLogPre"></pre>
         </section>
         <section class="card">
             <div class="panelHeader">
@@ -142,7 +160,7 @@
     <script>
         (function(){
             function el(id){return document.getElementById(id)}
-            var state = {chatConnected:false,logConnected:false,chatWs:null,logWs:null,modelCurrent:'doubao',modelOptions:[],lastAgentBubble:null,auxCapture:false,isSending:false,isRunning:false,confirmTimer:null,confirmCountdown:null}
+            var state = {chatConnected:false,logConnected:false,chatWs:null,logWs:null,modelCurrent:'doubao',modelOptions:[],lastAgentBubble:null,auxCapture:false,isSending:false,isRunning:false,confirmTimer:null,confirmCountdown:null,roleLogs:[],roleLogSelected:''}
 
             function setOnline(online){
                 var dot = el('statusDot')
@@ -221,6 +239,17 @@
                 setProgressList('progressBlockedList', data.blocked_points || [])
                 setProgressText('progressNext', (data.next_steps && data.next_steps.length) ? data.next_steps[0] : '-')
                 setProgressList('progressNextList', data.next_steps || [])
+                var owners = data.by_owner || []
+                if (!owners.length){
+                    setProgressText('progressOwners', '-')
+                    setProgressList('progressOwnersList', [])
+                }else{
+                    setProgressText('progressOwners', owners.length + ' 个角色')
+                    var lines = owners.map(function(o){
+                        return o.owner + ': ' + o.done + '/' + o.total + ' 已完成, ' + o.doing + ' 进行中, ' + o.pending + ' 待处理, ' + o.review + ' 待验收, ' + o.rework + ' 返工'
+                    })
+                    setProgressList('progressOwnersList', lines)
+                }
             }
 
             function pollProgress(){
@@ -228,6 +257,43 @@
                     renderProgress(data)
                 }).catch(function(){
                     renderProgress(null)
+                })
+            }
+
+            function renderRoleLogs(data){
+                var logs = (data && data.logs) ? data.logs : []
+                state.roleLogs = logs
+                var select = el('roleLogSelect')
+                var pre = el('roleLogPre')
+                var meta = el('roleLogMeta')
+                if (!select || !pre || !meta) return
+                select.textContent = ''
+                var roles = logs.map(function(item){ return item.role })
+                if (!roles.length){
+                    pre.textContent = ''
+                    meta.textContent = ''
+                    return
+                }
+                roles.forEach(function(role){
+                    var opt = document.createElement('option')
+                    opt.value = role
+                    opt.textContent = role
+                    select.appendChild(opt)
+                })
+                if (!state.roleLogSelected || roles.indexOf(state.roleLogSelected) === -1){
+                    state.roleLogSelected = roles[0]
+                }
+                select.value = state.roleLogSelected
+                var entry = logs.find(function(item){ return item.role === state.roleLogSelected })
+                pre.textContent = entry && entry.lines ? entry.lines.join('\n') : ''
+                meta.textContent = entry ? ('行数 ' + (entry.line_count || 0)) : ''
+            }
+
+            function pollRoleLogs(){
+                fetch('/api/chat/role-logs?limit=300').then(function(r){return r.json()}).then(function(data){
+                    renderRoleLogs(data)
+                }).catch(function(){
+                    renderRoleLogs(null)
                 })
             }
 
@@ -249,6 +315,10 @@
             function appendChatMessage(raw, opts){
                 var msg = (raw == null ? '' : String(raw))
                 if (!msg) return
+                if (msg.indexOf('发生错误') !== -1 || msg.indexOf('❌') !== -1 || msg.indexOf('Finished chain') !== -1 || msg.indexOf('STATE: DONE') !== -1){
+                    setRunning(false)
+                    setSending(false)
+                }
                 opts = opts || {}
                 if (opts.allowConfirm !== false){
                     var confirmInfo = parseConfirmPrompt(msg)
@@ -345,11 +415,15 @@
                 }
                 ws.onclose = function(){
                     setChatConn(false)
+                    setRunning(false)
+                    setSending(false)
                     appendChatMessage('>>> 系统: 连接断开，3秒后重连...')
                     setTimeout(connectChatWS, 3000)
                 }
                 ws.onerror = function(){
                     setChatConn(false)
+                    setRunning(false)
+                    setSending(false)
                 }
             }
 
@@ -388,6 +462,7 @@
                 }).catch(function(e){
                     appendChatMessage('>>> 系统: 发送出错 ' + e)
                     setSending(false)
+                    setRunning(false)
                 })
             }
 
@@ -717,6 +792,13 @@
                 voiceBtn.addEventListener('pointerleave', function(e){ e.preventDefault(); stopVoiceRecord() })
                 voiceBtn.addEventListener('pointercancel', function(e){ e.preventDefault(); stopVoiceRecord() })
             }
+            var roleLogSelect = el('roleLogSelect')
+            if (roleLogSelect){
+                roleLogSelect.addEventListener('change', function(){
+                    state.roleLogSelected = roleLogSelect.value
+                    renderRoleLogs({ logs: state.roleLogs })
+                })
+            }
             el('clearAuxBtn').addEventListener('click', function(){ el('auxList').textContent = '' })
             el('modelSelect').addEventListener('change', changeModel)
 
@@ -727,6 +809,8 @@
             loadModels()
             pollProgress()
             setInterval(pollProgress, 2000)
+            pollRoleLogs()
+            setInterval(pollRoleLogs, 3000)
             connectLogWS()
             connectChatWS()
         })();

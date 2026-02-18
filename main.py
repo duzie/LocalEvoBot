@@ -771,15 +771,15 @@ def _run_summary_async(chat_history, project_id, user_id):
                 else:
                     shared.broadcast_threadsafe(">>> 系统: 总结未提取到可保存条目")
             except Exception:
-                result = add_operation_experience(
-                    system_name="personal_cognition",
-                    content=summary_text,
-                    tags=["scope:project", f"project:{project_id}", "topic:summary"],
-                    scope="project",
-                    project_id=project_id,
-                    user_id=user_id,
-                    memory_type="task"
-                )
+                result = add_operation_experience.invoke({
+                    "system_name": "personal_cognition",
+                    "content": summary_text,
+                    "tags": ["scope:project", f"project:{project_id}", "topic:summary"],
+                    "scope": "project",
+                    "project_id": project_id,
+                    "user_id": user_id,
+                    "memory_type": "task"
+                })
                 shared.broadcast_threadsafe(f">>> 系统: 已保存摘要。{result}")
         elif should_prompt:
             shared.broadcast_threadsafe(">>> 系统: 总结已生成，未保存")

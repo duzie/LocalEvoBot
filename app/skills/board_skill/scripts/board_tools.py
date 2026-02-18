@@ -6,7 +6,7 @@ import re
 import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Type
 from app.agent import create_llm
 from app.skills.registry import load_skills
 from app.integrations.mcp_client import load_mcp_tools
@@ -15,6 +15,57 @@ from web.backend.shared import shared
 
 _PATH_KEYS = {"file_path", "path", "dir", "directory", "folder", "target_dir", "output_dir", "root", "base_dir", "file"}
 _LIST_PATH_KEYS = {"file_paths", "paths", "files", "dirs", "directories"}
+
+class WorkdirTool(BaseTool):
+    name: str
+    description: str
+    args_schema: Optional[Type[Any]] = None
+    return_direct: bool = False
+    inner_tool: BaseTool
+    workdir: str
+
+    def _run(self, *args, **kwargs):
+        tool = self.inner_tool
+        wd = self.workdir
+        if kwargs:
+            data = _rewrite_paths(kwargs, wd)
+            return tool.invoke(data)
+        if args:
+            data = _rewrite_paths(args[0], wd)
+            return tool.invoke(data)
+        return tool.invoke({})
+
+    async def _arun(self, *args, **kwargs):
+        tool = self.inner_tool
+        wd = self.workdir
+        if kwargs:
+            data = _rewrite_paths(kwargs, wd)
+            return await tool.ainvoke(data)
+        if args:
+            data = _rewrite_paths(args[0], wd)
+            return await tool.ainvoke(data)
+        return await tool.ainvoke({})
+
+def _get_role_log_dir():
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+    base = os.path.join(root, "app", "data", "board", "role_logs")
+    os.makedirs(base, exist_ok=True)
+    return base
+
+def _safe_role_name(name: str) -> str:
+    s = str(name or "").strip()
+    if not s:
+        return "role"
+    s = re.sub(r"[^\w\-\.]+", "_", s)
+    return s.strip("_") or "role"
+
+def _append_role_log(role_name: str, text: str):
+    if text is None:
+        return
+    role = _safe_role_name(role_name)
+    path = os.path.join(_get_role_log_dir(), f"{role}.log")
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(str(text))
 
 def _is_url(value: str) -> bool:
     return bool(re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", value or ""))
@@ -53,34 +104,26 @@ def _rewrite_paths(data, workdir: str, key: str = ""):
 def _wrap_tool_with_workdir(tool: BaseTool, workdir: str) -> BaseTool:
     if not workdir:
         return tool
-    class _WorkdirTool(BaseTool):
-        name = getattr(tool, "name", "")
-        description = getattr(tool, "description", "")
-        args_schema = getattr(tool, "args_schema", None)
-        return_direct = getattr(tool, "return_direct", False)
-        def _run(self, *args, **kwargs):
-            if kwargs:
-                data = _rewrite_paths(kwargs, workdir)
-                return tool.invoke(data)
-            if args:
-                data = _rewrite_paths(args[0], workdir)
-                return tool.invoke(data)
-            return tool.invoke({})
-        async def _arun(self, *args, **kwargs):
-            if kwargs:
-                data = _rewrite_paths(kwargs, workdir)
-                return await tool.ainvoke(data)
-            if args:
-                data = _rewrite_paths(args[0], workdir)
-                return await tool.ainvoke(data)
-            return await tool.ainvoke({})
-    return _WorkdirTool()
+    return WorkdirTool(
+        name=getattr(tool, "name", ""),
+        description=getattr(tool, "description", ""),
+        args_schema=getattr(tool, "args_schema", None),
+        return_direct=getattr(tool, "return_direct", False),
+        inner_tool=tool,
+        workdir=workdir
+    )
 
 def _get_board_path():
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
     base = os.path.join(root, "app", "data", "board")
     os.makedirs(base, exist_ok=True)
     return os.path.join(base, "board.json")
+
+def _get_board_output_dir():
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+    base = os.path.join(root, "app", "data", "board", "outputs")
+    os.makedirs(base, exist_ok=True)
+    return base
 
 def _get_lock_path():
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
@@ -304,11 +347,14 @@ def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", t
         max_iterations=max(1, int(max_iterations or 30)),
         max_execution_time=max(1, int(max_execution_time or 300))
     )
+    started_at = datetime.now().isoformat()
+    _append_role_log(role_name, f"\n[{started_at}] START\n")
     raw_output = ""
     for chunk in executor.stream({"input": task_input or ""}):
         if shared.stop_requested:
             shared.clear_stop()
             shared.set_status("stopped", "已停止", task_input)
+            _append_role_log(role_name, f"\n[{datetime.now().isoformat()}] STOPPED\n")
             return {"ok": False, "stopped": True, "role": role_name, "output": raw_output}
         if not isinstance(chunk, dict):
             continue
@@ -316,10 +362,15 @@ def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", t
         if text is None:
             continue
         if text.startswith(raw_output):
+            delta = text[len(raw_output):]
             raw_output = text
         else:
-            raw_output += text
+            delta = text
+            raw_output += delta
+        if delta:
+            _append_role_log(role_name, delta)
     output = raw_output
+    _append_role_log(role_name, f"\n[{datetime.now().isoformat()}] END\n")
     return {"ok": True, "role": role_name, "output": output}
 
 @tool
@@ -525,9 +576,12 @@ def run_role_agent(role_name: str, task_input: str, role_prompt: str = "", tools
     """
     board_snapshot = _load_board_locked()
     task = _get_task_by_id(board_snapshot, int(task_id)) if board_snapshot and task_id else None
+    effective_workdir = (workdir or output_dir or "").strip() or _get_board_output_dir()
     payload = {"context": context, "summary": summary, "output_dir": output_dir, "workdir": workdir}
+    if not output_dir and not workdir:
+        payload["output_dir"] = effective_workdir
     merged_input = _compose_task_input(task_input, payload, board_snapshot, task)
-    selected_workdir = workdir or output_dir
+    selected_workdir = effective_workdir
     result = _execute_role_task(
         role_name=role_name,
         task_input=merged_input,
@@ -540,9 +594,16 @@ def run_role_agent(role_name: str, task_input: str, role_prompt: str = "", tools
     )
     output = result.get("output")
     if task_id:
-        append_board_task_output(task_id, output, "role_result")
+        append_board_task_output.invoke({
+            "task_id": task_id,
+            "output": output,
+            "output_type": "role_result"
+        })
         if status_after:
-            update_board_task(task_id, status_after)
+            update_board_task.invoke({
+                "task_id": task_id,
+                "status": status_after
+            })
     return result
 
 @tool
@@ -633,8 +694,14 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
                 task = None
                 if board_snapshot and payload.get("task_id"):
                     task = _get_task_by_id(board_snapshot, int(payload.get("task_id")))
-                merged_input = _compose_task_input(payload.get("task_input") or "", payload, board_snapshot, task)
-                selected_workdir = payload.get("workdir") or payload.get("output_dir") or payload.get("target_dir") or payload.get("directory")
+                working_payload = payload
+                selected_workdir = payload.get("workdir") or payload.get("output_dir") or payload.get("target_dir") or payload.get("directory") or ""
+                if not selected_workdir:
+                    selected_workdir = _get_board_output_dir()
+                    working_payload = dict(payload)
+                    if not working_payload.get("workdir") and not working_payload.get("output_dir"):
+                        working_payload["output_dir"] = selected_workdir
+                merged_input = _compose_task_input(working_payload.get("task_input") or "", working_payload, board_snapshot, task)
                 future = executor.submit(
                     _execute_role_task,
                     role_name=payload.get("role_name") or "",
@@ -653,8 +720,15 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
                 try:
                     result = future.result()
                     if payload.get("task_id"):
-                        append_board_task_output(int(payload.get("task_id")), result.get("output") or "", "role_result")
-                        update_board_task(int(payload.get("task_id")), payload.get("status_after") or status_after)
+                        append_board_task_output.invoke({
+                            "task_id": int(payload.get("task_id")),
+                            "output": result.get("output") or "",
+                            "output_type": "role_result"
+                        })
+                        update_board_task.invoke({
+                            "task_id": int(payload.get("task_id")),
+                            "status": payload.get("status_after") or status_after
+                        })
                     success_count += 1
                     results.append({"ok": True, "index": meta["index"], "result": result})
                 except Exception as e:
