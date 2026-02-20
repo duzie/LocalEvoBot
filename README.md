@@ -300,5 +300,25 @@ requirements.txt   项目依赖
 
 程序会根据 Agent 输出中的 `STATE: CONTINUE` 或 `STATE: DONE` 自动进行多轮调用，直到任务完成或达到上限。
 
+## 运行限制与停止
+
+### 运行上限（步数/时间）
+
+`AgentExecutor` 默认启用运行上限，防止无限循环：
+- `AGENT_MAX_ITERATIONS`：最大步数，默认 `50000000`
+- `AGENT_MAX_EXECUTION_TIME`：最大执行时间（秒），默认 `600`
+
+当 `AGENT_LIMITS_DISABLED=1/true` 时，将忽略以上两个上限（传入 `None`），任务仅受显式停止/链路结束影响。
+
+可在 Web 配置页 `/config.html` 的 “Agent 运行参数” 中设置：
+- “是否解除限制”：是（解除限制）/ 否（保持限制）
+- “最大步数”、“最大执行时间(秒)”：保存后对新会话生效
+
+### 停止当前任务
+
+- Web 控制台点击 “停止” 会调用后端接口：`POST /api/chat/stop`
+- 正常情况下，停止后状态会从 “执行中” 变为 “已停止/空闲”，按钮回到 “发送”
+- 如果发生异常或进程被中断，建议刷新页面；若后端进程仍卡在旧代码/旧状态，重启 `python main.py`（`reload_skills` 只热加载技能，不会重载 `main.py`）
+
 <img width="2085" height="1359" alt="" src="https://github.com/user-attachments/assets/c2432457-359b-430b-9b35-2faad619d138" />
 

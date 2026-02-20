@@ -67,6 +67,23 @@ def _append_role_log(role_name: str, text: str):
     with open(path, "a", encoding="utf-8") as f:
         f.write(str(text))
 
+def _append_role_event(role_name: str, event: str, **fields):
+    payload = {"event": str(event or ""), "time": datetime.now().isoformat()}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    _append_role_log(role_name, json.dumps(payload, ensure_ascii=False) + "\n")
+
+def _error_payload(code: str, message: str, **fields) -> Dict[str, Any]:
+    info = {"code": str(code or "error"), "message": str(message or "")}
+    payload: Dict[str, Any] = {"ok": False, "error": info["message"], "error_info": info}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
 def _is_url(value: str) -> bool:
     return bool(re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", value or ""))
 
@@ -320,9 +337,9 @@ def _compose_task_input(task_input: str, payload: Dict[str, Any], board_snapshot
 
 def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", tools_allowlist: List[str] = None, skills_allowlist: List[str] = None, max_iterations: int = 30, max_execution_time: int = 300, workdir: str = "") -> Dict[str, Any]:
     if shared.stop_requested:
-        shared.clear_stop()
         shared.set_status("stopped", "已停止", task_input)
-        return {"ok": False, "stopped": True, "role": role_name, "output": ""}
+        _append_role_event(role_name, "stopped", role=role_name)
+        return _error_payload("stopped", "已停止", stopped=True, role=role_name, output="")
     llm = create_llm()
     tools = load_skills(package_name="app.skills")
     mcp_tools = load_mcp_tools()
@@ -347,30 +364,33 @@ def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", t
         max_iterations=max(1, int(max_iterations or 30)),
         max_execution_time=max(1, int(max_execution_time or 300))
     )
-    started_at = datetime.now().isoformat()
-    _append_role_log(role_name, f"\n[{started_at}] START\n")
+    _append_role_event(role_name, "start", role=role_name, workdir=wd)
     raw_output = ""
-    for chunk in executor.stream({"input": task_input or ""}):
-        if shared.stop_requested:
-            shared.clear_stop()
-            shared.set_status("stopped", "已停止", task_input)
-            _append_role_log(role_name, f"\n[{datetime.now().isoformat()}] STOPPED\n")
-            return {"ok": False, "stopped": True, "role": role_name, "output": raw_output}
-        if not isinstance(chunk, dict):
-            continue
-        text = chunk.get("output")
-        if text is None:
-            continue
-        if text.startswith(raw_output):
-            delta = text[len(raw_output):]
-            raw_output = text
-        else:
-            delta = text
-            raw_output += delta
-        if delta:
-            _append_role_log(role_name, delta)
+    try:
+        for chunk in executor.stream({"input": task_input or ""}):
+            if shared.stop_requested:
+                shared.set_status("stopped", "已停止", task_input)
+                _append_role_event(role_name, "stopped", role=role_name)
+                return _error_payload("stopped", "已停止", stopped=True, role=role_name, output=raw_output)
+            if not isinstance(chunk, dict):
+                continue
+            text = chunk.get("output")
+            if text is None:
+                continue
+            if text.startswith(raw_output):
+                delta = text[len(raw_output):]
+                raw_output = text
+            else:
+                delta = text
+                raw_output += delta
+            if delta:
+                _append_role_log(role_name, delta)
+    except Exception as e:
+        shared.set_status("idle", "空闲", task_input, error=f"{e}")
+        _append_role_event(role_name, "error", role=role_name, error=str(e), error_type=type(e).__name__)
+        return _error_payload("exception", str(e), role=role_name, output=raw_output, error_type=type(e).__name__)
     output = raw_output
-    _append_role_log(role_name, f"\n[{datetime.now().isoformat()}] END\n")
+    _append_role_event(role_name, "end", role=role_name)
     return {"ok": True, "role": role_name, "output": output}
 
 @tool
@@ -599,11 +619,18 @@ def run_role_agent(role_name: str, task_input: str, role_prompt: str = "", tools
             "output": output,
             "output_type": "role_result"
         })
-        if status_after:
-            update_board_task.invoke({
-                "task_id": task_id,
-                "status": status_after
-            })
+        current_status = _normalize_status((task or {}).get("status") or "")
+        should_update = current_status != "已完成"
+        if result.get("stopped"):
+            shared.clear_stop()
+            if should_update:
+                update_board_task.invoke({"task_id": task_id, "status": "待处理"})
+        elif result.get("ok"):
+            if status_after and should_update:
+                update_board_task.invoke({"task_id": task_id, "status": status_after})
+        else:
+            if should_update:
+                update_board_task.invoke({"task_id": task_id, "status": "需返工"})
     return result
 
 @tool
@@ -614,10 +641,10 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
     if shared.stop_requested:
         shared.clear_stop()
         shared.set_status("stopped", "已停止", "")
-        return {"ok": False, "stopped": True, "results": []}
+        return _error_payload("stopped", "已停止", stopped=True, results=[])
     items = tasks or []
     if not isinstance(items, list) or not items:
-        return {"ok": False, "error": "tasks 不能为空"}
+        return _error_payload("invalid_args", "tasks 不能为空")
     worker_count = max(1, min(int(max_workers or 3), 10))
     allow_status = allowed_statuses if allowed_statuses is not None else ["待处理", "需返工"]
     allow_status = [_normalize_status(s) for s in (allow_status or [])]
@@ -627,19 +654,21 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
     skipped_count = 0
     effective_policy = dep_policy or "all"
     pending = [{"index": idx, "task": (item or {})} for idx, item in enumerate(items)]
+    stopped_found = False
     while pending:
         if shared.stop_requested:
             shared.clear_stop()
             shared.set_status("stopped", "已停止", "")
-            return {
-                "ok": False,
-                "stopped": True,
-                "total": len(items),
-                "success_count": success_count,
-                "error_count": error_count,
-                "skipped_count": skipped_count,
-                "results": sorted(results, key=lambda x: x.get("index", 0))
-            }
+            return _error_payload(
+                "stopped",
+                "已停止",
+                stopped=True,
+                total=len(items),
+                success_count=success_count,
+                error_count=error_count,
+                skipped_count=skipped_count,
+                results=sorted(results, key=lambda x: x.get("index", 0)),
+            )
         board_snapshot = _load_board_locked()
         ready = []
         blocked = []
@@ -719,28 +748,53 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
                 payload = meta["task"]
                 try:
                     result = future.result()
-                    if payload.get("task_id"):
+                    task_id = payload.get("task_id")
+                    if task_id:
                         append_board_task_output.invoke({
-                            "task_id": int(payload.get("task_id")),
+                            "task_id": int(task_id),
                             "output": result.get("output") or "",
                             "output_type": "role_result"
                         })
-                        update_board_task.invoke({
-                            "task_id": int(payload.get("task_id")),
-                            "status": payload.get("status_after") or status_after
-                        })
-                    success_count += 1
-                    results.append({"ok": True, "index": meta["index"], "result": result})
+                        task = _get_task_by_id(board_snapshot, int(task_id)) if board_snapshot else None
+                        current_status = _normalize_status((task or {}).get("status") or "")
+                        should_update = current_status != "已完成"
+                        desired_status = None
+                        if result.get("stopped"):
+                            desired_status = "待处理"
+                            stopped_found = True
+                        elif result.get("ok"):
+                            desired_status = payload.get("status_after") or status_after
+                        else:
+                            desired_status = "需返工"
+                        if desired_status and should_update:
+                            update_board_task.invoke({
+                                "task_id": int(task_id),
+                                "status": desired_status
+                            })
+                    if result.get("ok"):
+                        success_count += 1
+                        results.append({"ok": True, "index": meta["index"], "result": result})
+                    elif result.get("stopped"):
+                        results.append({"ok": False, "stopped": True, "index": meta["index"], "result": result})
+                    else:
+                        error_count += 1
+                        results.append({"ok": False, "index": meta["index"], "result": result})
                 except Exception as e:
                     error_count += 1
+                    shared.set_error(str(e))
                     results.append({"ok": False, "index": meta["index"], "error": str(e), "task": payload})
+        if stopped_found or shared.stop_requested:
+            shared.clear_stop()
+            shared.set_status("stopped", "已停止", "")
+            break
         pending = blocked
     results = sorted(results, key=lambda x: x.get("index", 0))
     return {
-        "ok": error_count == 0,
+        "ok": (error_count == 0) and (not stopped_found),
         "total": len(items),
         "success_count": success_count,
         "error_count": error_count,
         "skipped_count": skipped_count,
+        "stopped": stopped_found,
         "results": results
     }

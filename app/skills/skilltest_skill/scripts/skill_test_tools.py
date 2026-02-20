@@ -252,9 +252,10 @@ def evaluate_skill_requirements(skill_name: str, requirement_text: str) -> Dict[
     }
 
 def _invoke_tool(tool_obj: BaseTool, args: Dict[str, Any]):
-    if hasattr(tool_obj, "invoke"):
-        return tool_obj.invoke(args or {})
-    return tool_obj(**(args or {}))
+    payload = args or {}
+    if not isinstance(payload, dict):
+        payload = {"input": payload}
+    return tool_obj.invoke(payload)
 
 @tool
 def run_skill_test_cases(skill_name: str, test_cases: List[Dict[str, Any]]) -> Dict[str, Any]:

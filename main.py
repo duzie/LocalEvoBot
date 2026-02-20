@@ -1376,6 +1376,9 @@ def main():
             break
         except Exception as e:
             print(f"❌ 发生错误: {e}")
+            shared.set_status("idle", "空闲", error=f"{e}")
+            print(">>> 系统: 状态=空闲")
+            shared.broadcast_threadsafe(f">>> 系统: 发生错误: {e}")
 
 if __name__ == "__main__":
     main()
