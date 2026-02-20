@@ -3,6 +3,35 @@ import platform
 import json
 import ctypes
 from typing import Dict, List, Any
+from datetime import datetime
+from web.backend.shared import shared
+
+def _error_payload(code: str, message: str, **fields) -> Dict[str, Any]:
+    info = {"code": str(code or "error"), "message": str(message or "")}
+    payload: Dict[str, Any] = {"ok": False, "error": info["message"], "error_info": info}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _ok_payload(message: str = "", **fields) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"ok": True}
+    if message:
+        payload["message"] = str(message)
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _emit_event(tool_name: str, event: str, **fields):
+    payload = {"event": str(event or ""), "tool": str(tool_name or ""), "time": datetime.now().isoformat()}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    shared.broadcast_threadsafe(json.dumps(payload, ensure_ascii=False))
 
 def _is_admin() -> bool:
     try:
@@ -56,7 +85,7 @@ def _get_element_info(element) -> Dict[str, Any]:
         return {"error": str(e)}
 
 @tool
-def uia_dump_tree(window_title: str = None, depth: int = 5, max_children: int = 20, output_format: str = "json") -> str:
+def uia_dump_tree(window_title: str = None, depth: int = 5, max_children: int = 20, output_format: str = "json") -> Dict[str, Any]:
     """
     获取指定窗口的 UI 控件树结构（分层分析）。
     
@@ -66,8 +95,9 @@ def uia_dump_tree(window_title: str = None, depth: int = 5, max_children: int = 
         max_children: (可选) 每个节点最大返回子节点数，默认 20。防止树过大。
         output_format: (可选) 输出格式，支持 "json" 或 "xml" (简化版)。默认 "json"。
     """
+    tool_name = "uia_dump_tree"
     if platform.system() != "Windows":
-        return "错误: 当前仅支持 Windows UI Automation"
+        return _error_payload("unsupported_platform", "当前仅支持 Windows UI Automation", tool=tool_name)
 
     try:
         from pywinauto import Desktop
@@ -80,11 +110,9 @@ def uia_dump_tree(window_title: str = None, depth: int = 5, max_children: int = 
                 msg = f"未找到窗口: {window_title}"
                 if not _is_admin():
                     msg += "\n[提示] 权限提示：若目标窗口是管理员权限，请尝试以管理员身份运行 Agent。"
-                return msg
+                return _error_payload("window_not_found", msg, tool=tool_name, is_admin=_is_admin())
         else:
-            # 如果没指定标题，尝试获取当前活动窗口（排除任务栏等）
-            # 这里简单处理：获取 Desktop 的第一个非空子窗口，或者提示用户输入
-            return "请指定 window_title 以精确定位窗口。"
+            return _error_payload("invalid_args", "请指定 window_title 以精确定位窗口。", tool=tool_name)
 
         # 定义递归遍历函数
         def walk(element, current_depth):
@@ -122,16 +150,20 @@ def uia_dump_tree(window_title: str = None, depth: int = 5, max_children: int = 
         root_element = target.wrapper_object()
         tree = walk(root_element, 0)
         
-        if output_format.lower() == "xml":
-            return _to_xml(tree)
-        else:
-            return json.dumps(tree, ensure_ascii=False, indent=2)
+        output_format_val = str(output_format or "json").lower()
+        if output_format_val == "xml":
+            data = _to_xml(tree)
+            _emit_event(tool_name, "dump_tree", format="xml")
+            return _ok_payload("控件树获取完成", format="xml", data=data)
+        _emit_event(tool_name, "dump_tree", format="json")
+        return _ok_payload("控件树获取完成", format="json", data=tree)
 
     except Exception as e:
         msg = f"获取控件树失败: {e}"
         if not _is_admin():
             msg += "\n[提示] 权限提示：若目标窗口是管理员权限，请尝试以管理员身份运行 Agent。"
-        return msg
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("dump_tree_failed", msg, tool=tool_name, is_admin=_is_admin())
 
 def _to_xml(node, level=0):
     """Helper to convert JSON tree to simplified XML string"""

@@ -5,6 +5,7 @@ import re
 import shutil
 import time
 from datetime import datetime, timezone
+from typing import Optional
 
 _playwright = None
 _browser = None
@@ -217,6 +218,33 @@ def _get_default_extension_dir():
     return path if os.path.isdir(path) else None
 
 
+def _get_timeout_ms(env_key: str) -> Optional[int]:
+    raw = os.getenv(env_key)
+    if raw is None:
+        return None
+    try:
+        value = int(str(raw).strip())
+        return value if value > 0 else None
+    except Exception:
+        return None
+
+
+def _apply_default_timeouts():
+    global _context, _page
+    timeout_ms = _get_timeout_ms("PLAYWRIGHT_DEFAULT_TIMEOUT_MS")
+    nav_timeout_ms = _get_timeout_ms("PLAYWRIGHT_DEFAULT_NAV_TIMEOUT_MS")
+    if _context:
+        if timeout_ms:
+            _context.set_default_timeout(timeout_ms)
+        if nav_timeout_ms:
+            _context.set_default_navigation_timeout(nav_timeout_ms)
+    if _page:
+        if timeout_ms:
+            _page.set_default_timeout(timeout_ms)
+        if nav_timeout_ms:
+            _page.set_default_navigation_timeout(nav_timeout_ms)
+
+
 def _ensure_page(headless: bool = False, user_data_dir: str = None, extension_dir: str = None):
     global _playwright, _browser, _context, _page, _persistent_dir, _extension_dir
 
@@ -298,6 +326,7 @@ def _ensure_page(headless: bool = False, user_data_dir: str = None, extension_di
             _sync_latest_page()
             if not _page:
                 _page = _context.new_page()
+        _apply_default_timeouts()
 
         return _page, None
     except Exception as e:

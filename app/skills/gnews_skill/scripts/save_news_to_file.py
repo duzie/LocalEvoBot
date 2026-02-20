@@ -3,6 +3,34 @@ import json
 import os
 from typing import Dict, Any
 from datetime import datetime
+from web.backend.shared import shared
+
+def _error_payload(code: str, message: str, **fields) -> Dict[str, Any]:
+    info = {"code": str(code or "error"), "message": str(message or "")}
+    payload: Dict[str, Any] = {"ok": False, "error": info["message"], "error_info": info}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _ok_payload(message: str = "", **fields) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"ok": True}
+    if message:
+        payload["message"] = str(message)
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _emit_event(tool_name: str, event: str, **fields):
+    payload = {"event": str(event or ""), "tool": str(tool_name or ""), "time": datetime.now().isoformat()}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    shared.broadcast_threadsafe(json.dumps(payload, ensure_ascii=False))
 
 @tool
 def save_news_to_file(
@@ -22,7 +50,10 @@ def save_news_to_file(
         包含操作结果的字典
     """
     
+    tool_name = "save_news_to_file"
     try:
+        if not file_path:
+            return _error_payload("invalid_args", "file_path 不能为空", tool=tool_name)
         # 确保目录存在
         directory = os.path.dirname(file_path)
         if directory and not os.path.exists(directory):
@@ -34,13 +65,13 @@ def save_news_to_file(
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(news_data, f, ensure_ascii=False, indent=2)
             
-            return {
-                "success": True,
-                "message": f"新闻数据已保存为JSON文件: {file_path}",
-                "file_path": file_path,
-                "format": "json",
-                "file_size": os.path.getsize(file_path) if os.path.exists(file_path) else 0
-            }
+            _emit_event(tool_name, "saved", file_path=file_path, format="json")
+            return _ok_payload(
+                "新闻数据已保存",
+                file_path=file_path,
+                format="json",
+                file_size=os.path.getsize(file_path) if os.path.exists(file_path) else 0
+            )
             
         elif format.lower() == "txt":
             # 保存为文本格式
@@ -91,36 +122,23 @@ def save_news_to_file(
                     if "suggestion" in news_data:
                         f.write(f"建议: {news_data['suggestion']}\n")
             
-            return {
-                "success": True,
-                "message": f"新闻数据已保存为文本文件: {file_path}",
-                "file_path": file_path,
-                "format": "txt",
-                "file_size": os.path.getsize(file_path) if os.path.exists(file_path) else 0
-            }
+            _emit_event(tool_name, "saved", file_path=file_path, format="txt")
+            return _ok_payload(
+                "新闻数据已保存",
+                file_path=file_path,
+                format="txt",
+                file_size=os.path.getsize(file_path) if os.path.exists(file_path) else 0
+            )
             
         else:
-            return {
-                "success": False,
-                "error": f"不支持的格式: {format}",
-                "suggestion": "请使用 'json' 或 'txt' 格式"
-            }
+            return _error_payload("invalid_format", f"不支持的格式: {format}", tool=tool_name)
             
     except PermissionError as e:
-        return {
-            "success": False,
-            "error": f"权限错误: {str(e)}",
-            "suggestion": "请检查文件路径是否有写入权限"
-        }
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("permission_denied", f"权限错误: {str(e)}", tool=tool_name)
     except IOError as e:
-        return {
-            "success": False,
-            "error": f"IO错误: {str(e)}",
-            "suggestion": "请检查文件路径是否正确"
-        }
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("io_error", f"IO错误: {str(e)}", tool=tool_name)
     except Exception as e:
-        return {
-            "success": False,
-            "error": f"保存失败: {str(e)}",
-            "suggestion": "请检查数据格式和文件路径"
-        }
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("save_failed", f"保存失败: {str(e)}", tool=tool_name)

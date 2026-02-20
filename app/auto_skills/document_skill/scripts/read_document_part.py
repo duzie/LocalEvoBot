@@ -2,6 +2,24 @@ from langchain_core.tools import tool
 import os
 from typing import Optional, Dict, Any
 
+def _read_text_with_encoding(file_path: str, encoding: Optional[str]):
+    with open(file_path, "rb") as f:
+        raw = f.read()
+    candidates = []
+    if encoding:
+        candidates.append(str(encoding).strip())
+    candidates.extend(["utf-8-sig", "utf-8", "gb18030", "gbk", "cp936", "latin-1"])
+    seen = set()
+    for enc in candidates:
+        if not enc or enc in seen:
+            continue
+        seen.add(enc)
+        try:
+            return raw.decode(enc), enc
+        except Exception:
+            continue
+    return raw.decode("utf-8", errors="replace"), "utf-8-replace"
+
 @tool
 def read_document_part(file_path: str, start_line: int = 0, end_line: Optional[int] = None, 
                       max_chars: int = 5000, encoding: str = "utf-8") -> Dict[str, Any]:
@@ -37,9 +55,8 @@ def read_document_part(file_path: str, start_line: int = 0, end_line: Optional[i
                 "stats": {}
             }
         
-        # 读取文件内容
-        with open(file_path, 'r', encoding=encoding, errors='ignore') as f:
-            lines = f.readlines()
+        content_all, encoding_used = _read_text_with_encoding(file_path, encoding)
+        lines = content_all.splitlines(True)
         
         total_lines = len(lines)
         
@@ -90,7 +107,8 @@ def read_document_part(file_path: str, start_line: int = 0, end_line: Optional[i
             "char_count": char_count,
             "max_chars": max_chars,
             "file_size": os.path.getsize(file_path),
-            "file_path": file_path
+            "file_path": file_path,
+            "encoding": encoding_used
         }
         
         return {

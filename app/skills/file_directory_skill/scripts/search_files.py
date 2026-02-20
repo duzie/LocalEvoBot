@@ -4,6 +4,35 @@ import fnmatch
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any, Optional
+import json
+from web.backend.shared import shared
+
+def _error_payload(code: str, message: str, **fields) -> Dict[str, Any]:
+    info = {"code": str(code or "error"), "message": str(message or "")}
+    payload: Dict[str, Any] = {"ok": False, "error": info["message"], "error_info": info}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _ok_payload(message: str = "", **fields) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"ok": True}
+    if message:
+        payload["message"] = str(message)
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _emit_event(tool_name: str, event: str, **fields):
+    payload = {"event": str(event or ""), "tool": str(tool_name or ""), "time": datetime.now().isoformat()}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    shared.broadcast_threadsafe(json.dumps(payload, ensure_ascii=False))
 
 
 @tool
@@ -29,6 +58,7 @@ def search_files(
     Returns:
         包含搜索结果的信息字典
     """
+    tool_name = "search_files"
     try:
         # 设置默认目录
         if directory_path is None:
@@ -36,18 +66,10 @@ def search_files(
         
         # 检查目录是否存在
         if not os.path.exists(directory_path):
-            return {
-                "success": False,
-                "error": f"目录不存在: {directory_path}",
-                "directory": directory_path
-            }
+            return _error_payload("directory_not_found", f"目录不存在: {directory_path}", tool=tool_name, directory=directory_path)
         
         if not os.path.isdir(directory_path):
-            return {
-                "success": False,
-                "error": f"路径不是目录: {directory_path}",
-                "directory": directory_path
-            }
+            return _error_payload("not_a_directory", f"路径不是目录: {directory_path}", tool=tool_name, directory=directory_path)
         
         # 准备搜索条件
         search_conditions = []
@@ -139,37 +161,31 @@ def search_files(
                             # 跳过无法访问的文件
                             continue
             except Exception as e:
-                return {
-                    "success": False,
-                    "error": f"无法读取目录内容: {str(e)}",
-                    "directory": directory_path
-                }
+                return _error_payload("read_directory_failed", f"无法读取目录内容: {str(e)}", tool=tool_name, directory=directory_path)
         
         # 准备返回结果
-        result_data = {
-            "success": True,
-            "directory": directory_path,
-            "absolute_path": os.path.abspath(directory_path),
-            "search_conditions": search_conditions,
-            "recursive": recursive,
-            "searched_directories": searched_dirs,
-            "total_results": len(results),
-            "results": results,
-            "timestamp": datetime.now().isoformat()
-        }
+        result_data = _ok_payload(
+            "文件搜索完成",
+            directory=directory_path,
+            absolute_path=os.path.abspath(directory_path),
+            search_conditions=search_conditions,
+            recursive=recursive,
+            searched_directories=searched_dirs,
+            total_results=len(results),
+            results=results,
+            timestamp=datetime.now().isoformat()
+        )
         
         # 如果达到最大结果数，添加提示
         if len(results) >= max_results:
             result_data["note"] = f"达到最大结果数限制 ({max_results})，可能还有更多匹配文件"
         
+        _emit_event(tool_name, "search_files", total_results=len(results), directory=directory_path)
         return result_data
         
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "directory": directory_path if directory_path else "current directory"
-        }
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("search_files_failed", str(e), tool=tool_name, directory=directory_path if directory_path else "current directory")
 
 
 def _matches_search_criteria(

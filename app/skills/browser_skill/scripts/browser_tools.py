@@ -1,7 +1,10 @@
 from langchain_core.tools import tool
 import json
+import os
 import time
 from typing import Optional, Dict, Any
+from datetime import datetime
+from web.backend.shared import shared
 
 # 由于我们无法直接访问OpenClaw的内部浏览器服务，
 # 我们将创建一个与OpenClaw功能相似的基于Playwright的实现
@@ -11,6 +14,58 @@ from typing import Optional, Dict, Any
 _browser_instance = None
 _browser_context = None
 _current_page = None
+
+def _get_timeout_ms(env_key: str) -> Optional[int]:
+    raw = os.getenv(env_key)
+    if raw is None:
+        return None
+    try:
+        value = int(str(raw).strip())
+        return value if value > 0 else None
+    except Exception:
+        return None
+
+def _apply_default_timeouts():
+    global _browser_context, _current_page
+    timeout_ms = _get_timeout_ms("PLAYWRIGHT_DEFAULT_TIMEOUT_MS")
+    nav_timeout_ms = _get_timeout_ms("PLAYWRIGHT_DEFAULT_NAV_TIMEOUT_MS")
+    if _browser_context:
+        if timeout_ms:
+            _browser_context.set_default_timeout(timeout_ms)
+        if nav_timeout_ms:
+            _browser_context.set_default_navigation_timeout(nav_timeout_ms)
+    if _current_page:
+        if timeout_ms:
+            _current_page.set_default_timeout(timeout_ms)
+        if nav_timeout_ms:
+            _current_page.set_default_navigation_timeout(nav_timeout_ms)
+
+def _error_payload(code: str, message: str, **fields) -> Dict[str, Any]:
+    info = {"code": str(code or "error"), "message": str(message or "")}
+    payload: Dict[str, Any] = {"ok": False, "error": info["message"], "error_info": info}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _ok_payload(message: str = "", **fields) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"ok": True}
+    if message:
+        payload["message"] = str(message)
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _emit_event(tool_name: str, event: str, **fields):
+    payload = {"event": str(event or ""), "tool": str(tool_name or ""), "time": datetime.now().isoformat()}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    shared.broadcast_threadsafe(json.dumps(payload, ensure_ascii=False))
 
 def _get_or_create_browser():
     """获取或创建浏览器实例（类似OpenClaw的浏览器管理）"""
@@ -33,7 +88,7 @@ def _get_or_create_browser():
             _current_page = _browser_context.new_page()
         except Exception as e:
             return None, f"启动浏览器失败: {str(e)}"
-    
+    _apply_default_timeouts()
     return _current_page, None
 
 def _ensure_browser_ready(page):
@@ -186,22 +241,30 @@ def browser_open(url: str):
     Args:
         url: 要打开的网页地址
     """
+    tool_name = "browser_open"
+    if not str(url or "").strip():
+        return _error_payload("invalid_args", "url 不能为空", tool=tool_name)
     result = _simulate_openclaw_browser_call("open", {"url": url})
     if "error" in result:
-        return f"打开网页失败: {result['error']}"
-    return f"已打开网页: {result.get('url', url)}\n页面标题: {result.get('title', 'Unknown')}"
+        _emit_event(tool_name, "error", error=result["error"])
+        return _error_payload("open_failed", result["error"], tool=tool_name)
+    _emit_event(tool_name, "open", url=result.get("url", url))
+    return _ok_payload("已打开网页", url=result.get("url", url), title=result.get("title", "Unknown"))
 
 @tool
 def browser_snapshot():
     """
     获取当前页面的DOM快照和可交互元素。
     """
+    tool_name = "browser_snapshot"
     result = _simulate_openclaw_browser_call("snapshot", {})
     if "error" in result:
-        return f"获取快照失败: {result['error']}"
-    
-    elements_info = result.get('element_summary', 'No elements info')
-    return f"页面标题: {result.get('title', 'Unknown')}\nURL: {result.get('url', 'Unknown')}\n{elements_info}\n\n如需详细DOM结构，请使用browser_execute_js获取特定内容。"
+        _emit_event(tool_name, "error", error=result["error"])
+        return _error_payload("snapshot_failed", result["error"], tool=tool_name)
+    elements_info = result.get("element_summary", "No elements info")
+    summary = f"页面标题: {result.get('title', 'Unknown')}\nURL: {result.get('url', 'Unknown')}\n{elements_info}\n\n如需详细DOM结构，请使用browser_execute_js获取特定内容。"
+    _emit_event(tool_name, "snapshot", url=result.get("url", "Unknown"))
+    return _ok_payload(summary, title=result.get("title", "Unknown"), url=result.get("url", "Unknown"))
 
 @tool
 def browser_click(selector: str):
@@ -211,10 +274,15 @@ def browser_click(selector: str):
     Args:
         selector: 选择器，可以是CSS选择器或文本内容
     """
+    tool_name = "browser_click"
+    if not str(selector or "").strip():
+        return _error_payload("invalid_args", "selector 不能为空", tool=tool_name)
     result = _simulate_openclaw_browser_call("click", {"selector": selector})
     if "error" in result:
-        return f"点击失败: {result['error']}"
-    return f"已点击元素: {result.get('clicked_selector', selector)}"
+        _emit_event(tool_name, "error", error=result["error"])
+        return _error_payload("click_failed", result["error"], tool=tool_name, selector=selector)
+    _emit_event(tool_name, "click", selector=result.get("clicked_selector", selector))
+    return _ok_payload("已点击元素", selector=result.get("clicked_selector", selector))
 
 @tool
 def browser_fill(selector: str, text: str):
@@ -225,10 +293,15 @@ def browser_fill(selector: str, text: str):
         selector: CSS选择器，用于定位要填充的元素
         text: 要填入的文本
     """
+    tool_name = "browser_fill"
+    if not str(selector or "").strip():
+        return _error_payload("invalid_args", "selector 不能为空", tool=tool_name)
     result = _simulate_openclaw_browser_call("fill", {"selector": selector, "text": text})
     if "error" in result:
-        return f"填充失败: {result['error']}"
-    return f"已在 {result.get('filled_selector', selector)} 中填入: {repr(result.get('text', text))}"
+        _emit_event(tool_name, "error", error=result["error"])
+        return _error_payload("fill_failed", result["error"], tool=tool_name, selector=selector)
+    _emit_event(tool_name, "fill", selector=result.get("filled_selector", selector))
+    return _ok_payload("已填充文本", selector=result.get("filled_selector", selector))
 
 @tool
 def browser_type(text: str):
@@ -238,10 +311,15 @@ def browser_type(text: str):
     Args:
         text: 要输入的文本
     """
+    tool_name = "browser_type"
+    if text is None:
+        return _error_payload("invalid_args", "text 不能为空", tool=tool_name)
     result = _simulate_openclaw_browser_call("type", {"text": text})
     if "error" in result:
-        return f"输入失败: {result['error']}"
-    return f"已输入文本: {repr(result.get('typed_text', text))}"
+        _emit_event(tool_name, "error", error=result["error"])
+        return _error_payload("type_failed", result["error"], tool=tool_name)
+    _emit_event(tool_name, "type")
+    return _ok_payload("已输入文本")
 
 @tool
 def browser_navigate(url: str):
@@ -251,10 +329,15 @@ def browser_navigate(url: str):
     Args:
         url: 要导航到的网页地址
     """
+    tool_name = "browser_navigate"
+    if not str(url or "").strip():
+        return _error_payload("invalid_args", "url 不能为空", tool=tool_name)
     result = _simulate_openclaw_browser_call("navigate", {"url": url})
     if "error" in result:
-        return f"导航失败: {result['error']}"
-    return f"已导航到: {result.get('url', url)}\n页面标题: {result.get('title', 'Unknown')}"
+        _emit_event(tool_name, "error", error=result["error"])
+        return _error_payload("navigate_failed", result["error"], tool=tool_name)
+    _emit_event(tool_name, "navigate", url=result.get("url", url))
+    return _ok_payload("已导航到", url=result.get("url", url), title=result.get("title", "Unknown"))
 
 @tool
 def browser_screenshot(path: str = "browser_screenshot.png", full_page: bool = False):
@@ -265,10 +348,15 @@ def browser_screenshot(path: str = "browser_screenshot.png", full_page: bool = F
         path: 保存截图的路径，默认为"browser_screenshot.png"
         full_page: 是否截取完整页面，默认为False
     """
+    tool_name = "browser_screenshot"
+    if not str(path or "").strip():
+        return _error_payload("invalid_args", "path 不能为空", tool=tool_name)
     result = _simulate_openclaw_browser_call("screenshot", {"path": path, "full_page": full_page})
     if "error" in result:
-        return f"截图失败: {result['error']}"
-    return f"截图已保存至: {result.get('screenshot_path', path)}"
+        _emit_event(tool_name, "error", error=result["error"])
+        return _error_payload("screenshot_failed", result["error"], tool=tool_name)
+    _emit_event(tool_name, "screenshot", path=result.get("screenshot_path", path))
+    return _ok_payload("已保存截图", path=result.get("screenshot_path", path))
 
 @tool
 def browser_execute_js(script: str):
@@ -278,17 +366,25 @@ def browser_execute_js(script: str):
     Args:
         script: 要执行的JavaScript代码
     """
+    tool_name = "browser_execute_js"
+    if not str(script or "").strip():
+        return _error_payload("invalid_args", "script 不能为空", tool=tool_name)
     result = _simulate_openclaw_browser_call("execute_js", {"script": script})
     if "error" in result:
-        return f"执行JS失败: {result['error']}"
-    return f"JS执行结果: {result.get('result')}"
+        _emit_event(tool_name, "error", error=result["error"])
+        return _error_payload("execute_js_failed", result["error"], tool=tool_name)
+    _emit_event(tool_name, "execute_js")
+    return _ok_payload("JS执行结果", result=result.get("result"))
 
 @tool
 def browser_close():
     """
     关闭浏览器会话。
     """
+    tool_name = "browser_close"
     result = _simulate_openclaw_browser_call("close", {})
     if "error" in result:
-        return f"关闭失败: {result['error']}"
-    return "浏览器已关闭"
+        _emit_event(tool_name, "error", error=result["error"])
+        return _error_payload("close_failed", result["error"], tool=tool_name)
+    _emit_event(tool_name, "close")
+    return _ok_payload("浏览器已关闭")

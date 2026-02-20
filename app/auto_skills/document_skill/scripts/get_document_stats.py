@@ -4,6 +4,24 @@ import re
 from typing import Dict, Any
 from datetime import datetime
 
+def _read_text_with_encoding(file_path: str, encoding: str):
+    with open(file_path, "rb") as f:
+        raw = f.read()
+    candidates = []
+    if encoding:
+        candidates.append(str(encoding).strip())
+    candidates.extend(["utf-8-sig", "utf-8", "gb18030", "gbk", "cp936", "latin-1"])
+    seen = set()
+    for enc in candidates:
+        if not enc or enc in seen:
+            continue
+        seen.add(enc)
+        try:
+            return raw.decode(enc), enc
+        except Exception:
+            continue
+    return raw.decode("utf-8", errors="replace"), "utf-8-replace"
+
 @tool
 def get_document_stats(file_path: str, encoding: str = "utf-8") -> Dict[str, Any]:
     """
@@ -38,10 +56,8 @@ def get_document_stats(file_path: str, encoding: str = "utf-8") -> Dict[str, Any
         modified_time = os.path.getmtime(file_path)
         modified_date = datetime.fromtimestamp(modified_time).strftime('%Y-%m-%d %H:%M:%S')
         
-        # 读取文件内容进行分析
-        with open(file_path, 'r', encoding=encoding, errors='ignore') as f:
-            content = f.read()
-            lines = content.splitlines()
+        content, encoding_used = _read_text_with_encoding(file_path, encoding)
+        lines = content.splitlines()
         
         # 计算各种统计信息
         total_lines = len(lines)
@@ -108,7 +124,8 @@ def get_document_stats(file_path: str, encoding: str = "utf-8") -> Dict[str, Any
                 "size_human": f"{file_size / 1024:.2f} KB" if file_size < 1024 * 1024 else f"{file_size / (1024 * 1024):.2f} MB",
                 "modified": modified_date,
                 "extension": file_ext,
-                "type": file_type
+                "type": file_type,
+                "encoding": encoding_used
             },
             "content_stats": {
                 "total_lines": total_lines,

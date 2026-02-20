@@ -4,8 +4,143 @@ import pkgutil
 import inspect
 import os
 import sys
+import json
+import re
+from datetime import datetime
 from typing import List, Dict, Any
 from langchain_core.tools import BaseTool
+from web.backend.shared import shared
+
+def _error_payload(code: str, message: str, **fields) -> Dict[str, Any]:
+    info = {"code": str(code or "error"), "message": str(message or "")}
+    payload: Dict[str, Any] = {"ok": False, "error": info["message"], "error_info": info}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _ok_payload(message: str = "", **fields) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"ok": True}
+    if message:
+        payload["message"] = str(message)
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _emit_event(tool_name: str, event: str, **fields):
+    payload = {"event": str(event or ""), "tool": str(tool_name or ""), "time": datetime.now().isoformat()}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    shared.broadcast_threadsafe(json.dumps(payload, ensure_ascii=False))
+
+def _normalize_result(result: Any, tool_name: str, scope: str) -> Dict[str, Any]:
+    if isinstance(result, dict):
+        if "ok" in result:
+            return result
+        if "success" in result:
+            ok = bool(result.get("success"))
+            rest = {k: v for k, v in result.items() if k != "success"}
+            if ok:
+                rest["ok"] = True
+                return rest
+            msg = str(result.get("error") or result.get("message") or "执行失败")
+            return _error_payload("tool_failed", msg, tool=tool_name, scope=scope, data=rest)
+        if "status" in result:
+            status = result.get("status")
+            if isinstance(status, str):
+                ok = status.strip().lower() in ["ok", "success", "succeeded", "done", "passed", "true"]
+            else:
+                ok = bool(status)
+            rest = {k: v for k, v in result.items() if k != "status"}
+            if ok:
+                rest["ok"] = True
+                return rest
+            msg = str(result.get("error") or result.get("message") or "执行失败")
+            return _error_payload("tool_failed", msg, tool=tool_name, scope=scope, data=rest)
+        code_key = None
+        for key in ["code", "errcode", "errno", "error_code"]:
+            if key in result:
+                code_key = key
+                break
+        if code_key:
+            code_value = result.get(code_key)
+            ok = False
+            if isinstance(code_value, bool):
+                ok = code_value
+            elif isinstance(code_value, (int, float)):
+                ok = code_value == 0
+            elif isinstance(code_value, str):
+                s = code_value.strip().lower()
+                if s.isdigit():
+                    ok = int(s) == 0
+                else:
+                    ok = s in ["ok", "success", "succeeded", "true"]
+            if ok:
+                rest = {k: v for k, v in result.items() if k != code_key}
+                rest["ok"] = True
+                return rest
+            msg = str(result.get("error") or result.get("message") or "执行失败")
+            return _error_payload("tool_failed", msg, tool=tool_name, scope=scope, data=result)
+        if "error" in result:
+            msg = str(result.get("error") or "执行失败")
+            return _error_payload("tool_failed", msg, tool=tool_name, scope=scope, data=result)
+        return _ok_payload("", tool=tool_name, scope=scope, result=result)
+    if result is None:
+        return _ok_payload("", tool=tool_name, scope=scope, result=None)
+    if isinstance(result, str):
+        return _ok_payload(result, tool=tool_name, scope=scope)
+    return _ok_payload("", tool=tool_name, scope=scope, result=result)
+
+class StandardizedTool(BaseTool):
+    name: str
+    description: str
+    args_schema: Any = None
+    return_direct: bool = False
+    inner_tool: BaseTool
+    scope: str
+
+    def _run(self, *args, **kwargs):
+        payload = kwargs if kwargs else (args[0] if args else {})
+        if not isinstance(payload, dict):
+            payload = {"input": payload}
+        try:
+            result = self.inner_tool.invoke(payload)
+        except Exception as e:
+            _emit_event(self.name, "error", scope=self.scope, error=str(e))
+            return _error_payload("tool_exception", str(e), tool=self.name, scope=self.scope)
+        normalized = _normalize_result(result, self.name, self.scope)
+        _emit_event(self.name, "invoke", scope=self.scope, ok=normalized.get("ok"))
+        return normalized
+
+    async def _arun(self, *args, **kwargs):
+        payload = kwargs if kwargs else (args[0] if args else {})
+        if not isinstance(payload, dict):
+            payload = {"input": payload}
+        try:
+            result = await self.inner_tool.ainvoke(payload)
+        except Exception as e:
+            _emit_event(self.name, "error", scope=self.scope, error=str(e))
+            return _error_payload("tool_exception", str(e), tool=self.name, scope=self.scope)
+        normalized = _normalize_result(result, self.name, self.scope)
+        _emit_event(self.name, "invoke", scope=self.scope, ok=normalized.get("ok"))
+        return normalized
+
+def _wrap_auto_tool(tool: BaseTool, scope: str) -> BaseTool:
+    if isinstance(tool, StandardizedTool):
+        return tool
+    return StandardizedTool(
+        name=getattr(tool, "name", ""),
+        description=getattr(tool, "description", ""),
+        args_schema=getattr(tool, "args_schema", None),
+        return_direct=getattr(tool, "return_direct", False),
+        inner_tool=tool,
+        scope=scope,
+    )
 
 def _read_skill_entry(skill_md_path: str):
     try:
@@ -20,7 +155,13 @@ def _read_skill_entry(skill_md_path: str):
                 j += 1
             if j < len(lines):
                 entry = lines[j].strip()
-                return entry or None
+                if not entry:
+                    return None
+                if entry.startswith("##") or " " in entry:
+                    return None
+                if not re.match(r"^[A-Za-z_][A-Za-z0-9_\\.]*$", entry):
+                    return None
+                return entry
             return None
     return None
 
@@ -132,7 +273,8 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
     tools = []
     tools.extend(_load_from_package(package_name))
     if auto_package_name and auto_package_name != package_name:
-        tools.extend(_load_from_package(auto_package_name))
+        auto_tools = _load_from_package(auto_package_name)
+        tools.extend([_wrap_auto_tool(t, "auto_skills") for t in auto_tools])
 
     # 去重 (根据 name)
     unique_tools = {t.name: t for t in tools}

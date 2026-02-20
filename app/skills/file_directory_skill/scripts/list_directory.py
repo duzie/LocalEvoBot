@@ -4,6 +4,34 @@ import json
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any, Optional
+from web.backend.shared import shared
+
+def _error_payload(code: str, message: str, **fields) -> Dict[str, Any]:
+    info = {"code": str(code or "error"), "message": str(message or "")}
+    payload: Dict[str, Any] = {"ok": False, "error": info["message"], "error_info": info}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _ok_payload(message: str = "", **fields) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"ok": True}
+    if message:
+        payload["message"] = str(message)
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _emit_event(tool_name: str, event: str, **fields):
+    payload = {"event": str(event or ""), "tool": str(tool_name or ""), "time": datetime.now().isoformat()}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    shared.broadcast_threadsafe(json.dumps(payload, ensure_ascii=False))
 
 
 @tool
@@ -27,6 +55,7 @@ def list_directory(
     Returns:
         包含目录信息的字典
     """
+    tool_name = "list_directory"
     try:
         # 设置默认目录
         if directory_path is None:
@@ -34,18 +63,10 @@ def list_directory(
         
         # 检查目录是否存在
         if not os.path.exists(directory_path):
-            return {
-                "success": False,
-                "error": f"目录不存在: {directory_path}",
-                "directory": directory_path
-            }
+            return _error_payload("directory_not_found", f"目录不存在: {directory_path}", tool=tool_name, directory=directory_path)
         
         if not os.path.isdir(directory_path):
-            return {
-                "success": False,
-                "error": f"路径不是目录: {directory_path}",
-                "directory": directory_path
-            }
+            return _error_payload("not_a_directory", f"路径不是目录: {directory_path}", tool=tool_name, directory=directory_path)
         
         # 获取目录内容
         items = []
@@ -98,21 +119,24 @@ def list_directory(
         dir_count = sum(1 for item in items if item.get("is_directory", False))
         file_count = sum(1 for item in items if item.get("is_file", False))
         
-        return {
-            "success": True,
-            "directory": directory_path,
-            "absolute_path": os.path.abspath(directory_path),
-            "total_items": len(items),
-            "directories": dir_count,
-            "files": file_count,
-            "items": items,
-            "parent_directory": os.path.dirname(directory_path) if directory_path != os.path.sep else None,
-            "timestamp": datetime.now().isoformat()
-        }
+        _emit_event(tool_name, "list_directory", total=len(items), directory=directory_path)
+        return _ok_payload(
+            "目录列表获取完成",
+            directory=directory_path,
+            absolute_path=os.path.abspath(directory_path),
+            total_items=len(items),
+            directories=dir_count,
+            files=file_count,
+            items=items,
+            parent_directory=os.path.dirname(directory_path) if directory_path != os.path.sep else None,
+            timestamp=datetime.now().isoformat()
+        )
         
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "directory": directory_path if directory_path else "current directory"
-        }
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload(
+            "list_directory_failed",
+            str(e),
+            tool=tool_name,
+            directory=directory_path if directory_path else "current directory"
+        )

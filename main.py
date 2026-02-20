@@ -936,9 +936,9 @@ def _maybe_apply_template(user_input, project_id, user_id):
     preview = _format_template_for_prompt(template)
     print("Agent: 检索到可用模板\n")
     print(preview + "\n")
-    print("User: 是否使用该模板执行？(yes/no) ", end="", flush=True)
-    ok, deferred = _read_yes_no_or_defer()
-    if ok is None and deferred:
+    print("User: 是否使用该模板执行？(yes/no) 5秒内不选择默认不使用 ", end="", flush=True)
+    ok, deferred, timed_out = _read_yes_no_or_timeout(5)
+    if ok is None and deferred and not timed_out:
         shared.put_back(deferred)
     if ok is True:
         experiences = _get_task_experiences(user_input, project_id, user_id)
@@ -1158,7 +1158,7 @@ def main():
 
     chat_history = []
     max_auto_steps = 60
-    tool_router_enabled = _env_flag("TOOL_ROUTER_ENABLED", True)
+    tool_router_enabled = _env_flag("TOOL_ROUTER_ENABLED", False)
     current_skill_allowlist = None
     current_skill_allowlist_key = None
     '''

@@ -6,6 +6,9 @@ from typing import List, Dict, Any
 import subprocess
 import csv
 import io
+import json
+from datetime import datetime
+from web.backend.shared import shared
 
 # --- Ctypes setup for Process Name ---
 kernel32 = ctypes.windll.kernel32
@@ -13,6 +16,33 @@ psapi = ctypes.windll.psapi
 
 PROCESS_QUERY_INFORMATION = 0x0400
 PROCESS_VM_READ = 0x0010
+
+def _error_payload(code: str, message: str, **fields) -> Dict[str, Any]:
+    info = {"code": str(code or "error"), "message": str(message or "")}
+    payload: Dict[str, Any] = {"ok": False, "error": info["message"], "error_info": info}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _ok_payload(message: str = "", **fields) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"ok": True}
+    if message:
+        payload["message"] = str(message)
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _emit_event(tool_name: str, event: str, **fields):
+    payload = {"event": str(event or ""), "tool": str(tool_name or ""), "time": datetime.now().isoformat()}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    shared.broadcast_threadsafe(json.dumps(payload, ensure_ascii=False))
 
 def _get_process_map_tasklist() -> Dict[int, str]:
     """Get all processes as {pid: name} dict using tasklist (robust fallback)."""
@@ -70,7 +100,7 @@ def _is_admin() -> bool:
         return False
 
 @tool
-def uia_list_windows(filter_title: str = None, filter_process: str = None, show_invisible: bool = False) -> str:
+def uia_list_windows(filter_title: str = None, filter_process: str = None, show_invisible: bool = False) -> Dict[str, Any]:
     """
     列出当前所有顶级窗口的信息（标题、进程名、PID）。
     当不知道确切的 window_title 时，用此工具查找。
@@ -80,8 +110,9 @@ def uia_list_windows(filter_title: str = None, filter_process: str = None, show_
         filter_process: (可选) 简单的字符串包含匹配，过滤进程名 (如 "notepad")。
         show_invisible: (可选) 是否显示不可见窗口。默认 False (仅显示可见窗口)。
     """
+    tool_name = "uia_list_windows"
     if platform.system() != "Windows":
-        return "错误: 仅支持 Windows"
+        return _error_payload("unsupported_platform", "仅支持 Windows", tool=tool_name)
 
     try:
         from pywinauto import Desktop
@@ -158,9 +189,9 @@ def uia_list_windows(filter_title: str = None, filter_process: str = None, show_
                     msg = f"未找到匹配的窗口。\n检测到进程 '{filter_process}' 正在运行 (PID: {', '.join(found_pids)})，但未找到属于它的顶级窗口。\n可能原因：\n1. 窗口被最小化到系统托盘 (Tray)\n2. 它是后台服务或无界面进程"
                     if not is_agent_admin:
                         msg += "\n3. 权限不足 (Agent 为非管理员，目标进程可能是管理员权限，导致无法获取窗口句柄)"
-                    return msg
+                    return _ok_payload(msg, results=[], found_pids=found_pids)
 
-            return "未找到匹配的窗口。"
+            return _ok_payload("未找到匹配的窗口。", results=[])
             
         output = []
         if not is_agent_admin:
@@ -174,7 +205,10 @@ def uia_list_windows(filter_title: str = None, filter_process: str = None, show_
             vis_mark = "" if r['visible'] else "[Hidden] "
             output.append(f"- Process: {r['process']:<20} | PID: {r['pid']:<6} | Title: {vis_mark}{r['title']}")
             
-        return "\n".join(output)
+        message = "\n".join(output)
+        _emit_event(tool_name, "list_windows", count=len(results))
+        return _ok_payload(message, results=results, count=len(results), is_admin=is_agent_admin)
 
     except Exception as e:
-        return f"列出窗口失败: {str(e)}"
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("list_windows_failed", str(e), tool=tool_name)

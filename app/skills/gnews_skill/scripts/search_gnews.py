@@ -3,6 +3,36 @@ import os
 import requests
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
+import json
+from datetime import datetime
+from web.backend.shared import shared
+
+def _error_payload(code: str, message: str, **fields) -> Dict[str, Any]:
+    info = {"code": str(code or "error"), "message": str(message or "")}
+    payload: Dict[str, Any] = {"ok": False, "error": info["message"], "error_info": info}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _ok_payload(message: str = "", **fields) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"ok": True}
+    if message:
+        payload["message"] = str(message)
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _emit_event(tool_name: str, event: str, **fields):
+    payload = {"event": str(event or ""), "tool": str(tool_name or ""), "time": datetime.now().isoformat()}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    shared.broadcast_threadsafe(json.dumps(payload, ensure_ascii=False))
 
 @tool
 def search_gnews(
@@ -30,17 +60,14 @@ def search_gnews(
         包含搜索结果的字典
     """
     
+    tool_name = "search_gnews"
     # 每次调用都重新加载环境变量，确保获取最新值
     load_dotenv(override=True)
     
     # 从环境变量获取API Key
     api_key = os.getenv("GNEWS_API_KEY")
     if not api_key:
-        return {
-            "success": False,
-            "error": "GNEWS_API_KEY环境变量未设置",
-            "suggestion": "请设置环境变量GNEWS_API_KEY，或直接在代码中提供API Key"
-        }
+        return _error_payload("missing_api_key", "GNEWS_API_KEY环境变量未设置", tool=tool_name)
     
     # 从环境变量获取默认值
     default_country = os.getenv("GNEWS_DEFAULT_COUNTRY", "us")
@@ -81,19 +108,15 @@ def search_gnews(
         
         # 检查API返回的错误
         if "errors" in data:
-            return {
-                "success": False,
-                "error": f"API返回错误: {data['errors']}",
-                "data": data
-            }
+            return _error_payload("api_error", f"API返回错误: {data['errors']}", tool=tool_name, data=data)
         
         # 格式化返回数据
-        result = {
-            "success": True,
-            "query": query,
-            "total_articles": data.get("totalArticles", 0),
-            "articles": []
-        }
+        result = _ok_payload(
+            "搜索完成",
+            query=query,
+            total_articles=data.get("totalArticles", 0),
+            articles=[]
+        )
         
         # 提取文章信息
         for article in data.get("articles", []):
@@ -125,23 +148,15 @@ def search_gnews(
             "env_default_language": default_language
         }
         
+        _emit_event(tool_name, "search", query=query, total=len(result.get("articles") or []))
         return result
         
     except requests.exceptions.RequestException as e:
-        return {
-            "success": False,
-            "error": f"请求失败: {str(e)}",
-            "suggestion": "请检查网络连接或API Key是否正确"
-        }
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("request_failed", f"请求失败: {str(e)}", tool=tool_name)
     except ValueError as e:
-        return {
-            "success": False,
-            "error": f"JSON解析失败: {str(e)}",
-            "suggestion": "API响应格式可能已更改"
-        }
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("json_parse_failed", f"JSON解析失败: {str(e)}", tool=tool_name)
     except Exception as e:
-        return {
-            "success": False,
-            "error": f"未知错误: {str(e)}",
-            "suggestion": "请检查代码逻辑"
-        }
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("unknown_error", f"未知错误: {str(e)}", tool=tool_name)

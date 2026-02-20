@@ -4,6 +4,34 @@ import json
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, Optional
+from web.backend.shared import shared
+
+def _error_payload(code: str, message: str, **fields) -> Dict[str, Any]:
+    info = {"code": str(code or "error"), "message": str(message or "")}
+    payload: Dict[str, Any] = {"ok": False, "error": info["message"], "error_info": info}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _ok_payload(message: str = "", **fields) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"ok": True}
+    if message:
+        payload["message"] = str(message)
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _emit_event(tool_name: str, event: str, **fields):
+    payload = {"event": str(event or ""), "tool": str(tool_name or ""), "time": datetime.now().isoformat()}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    shared.broadcast_threadsafe(json.dumps(payload, ensure_ascii=False))
 
 
 @tool
@@ -21,21 +49,15 @@ def get_file_info(
     Returns:
         包含文件/目录信息的字典
     """
+    tool_name = "get_file_info"
     try:
         # 检查路径是否提供
         if path is None:
-            return {
-                "success": False,
-                "error": "未提供路径参数"
-            }
+            return _error_payload("invalid_args", "未提供路径参数", tool=tool_name)
         
         # 检查路径是否存在
         if not os.path.exists(path):
-            return {
-                "success": False,
-                "error": f"路径不存在: {path}",
-                "path": path
-            }
+            return _error_payload("path_not_found", f"路径不存在: {path}", tool=tool_name, path=path)
         
         # 基本路径信息
         path_obj = Path(path)
@@ -43,16 +65,16 @@ def get_file_info(
         is_dir = os.path.isdir(path)
         is_file = os.path.isfile(path)
         
-        result = {
-            "success": True,
-            "path": path,
-            "absolute_path": absolute_path,
-            "name": path_obj.name,
-            "parent": str(path_obj.parent),
-            "is_directory": is_dir,
-            "is_file": is_file,
-            "exists": True
-        }
+        result = _ok_payload(
+            "文件信息获取完成",
+            path=path,
+            absolute_path=absolute_path,
+            name=path_obj.name,
+            parent=str(path_obj.parent),
+            is_directory=is_dir,
+            is_file=is_file,
+            exists=True
+        )
         
         # 如果包含统计信息
         if include_stats:
@@ -144,14 +166,12 @@ def get_file_info(
             pass
         
         result["timestamp"] = datetime.now().isoformat()
+        _emit_event(tool_name, "get_info", path=path)
         return result
         
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "path": path if path else "unknown"
-        }
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("get_file_info_failed", str(e), tool=tool_name, path=path if path else "unknown")
 
 
 def _format_size(size_bytes: int) -> str:

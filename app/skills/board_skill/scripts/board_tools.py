@@ -192,14 +192,18 @@ def _load_board_locked() -> Optional[Dict[str, Any]]:
 
 def _update_board_locked(update_fn):
     if not _acquire_lock():
-        return {"ok": False, "error": "公告板正被占用，请稍后重试"}
+        return _error_payload("board_locked", "公告板正被占用，请稍后重试")
     try:
         board = _load_board()
         if not board:
-            return {"ok": False, "error": "公告板尚未创建"}
+            return _error_payload("board_missing", "公告板尚未创建")
         result = update_fn(board)
         if isinstance(result, dict) and result.get("ok") is False:
-            return result
+            if result.get("error_info"):
+                return result
+            msg = str(result.get("error") or "")
+            extra = {k: v for k, v in result.items() if k not in {"ok", "error"}}
+            return _error_payload("error", msg, **extra)
         _save_board(board)
         return result
     finally:
@@ -365,9 +369,14 @@ def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", t
         max_execution_time=max(1, int(max_execution_time or 300))
     )
     _append_role_event(role_name, "start", role=role_name, workdir=wd)
+    started_at = time.monotonic()
     raw_output = ""
     try:
         for chunk in executor.stream({"input": task_input or ""}):
+            if max_execution_time and (time.monotonic() - started_at) > float(max_execution_time):
+                shared.set_status("idle", "空闲", task_input, error="执行超时")
+                _append_role_event(role_name, "timeout", role=role_name, max_execution_time=max_execution_time)
+                return _error_payload("timeout", "执行超时", timed_out=True, role=role_name, output=raw_output)
             if shared.stop_requested:
                 shared.set_status("stopped", "已停止", task_input)
                 _append_role_event(role_name, "stopped", role=role_name)
@@ -399,7 +408,7 @@ def create_board(goal: str, phase: str = "", milestone: str = "", roles: List[Di
     创建新的公告板并覆盖旧状态。
     """
     if not _acquire_lock():
-        return {"ok": False, "error": "公告板正被占用，请稍后重试"}
+        return _error_payload("board_locked", "公告板正被占用，请稍后重试")
     try:
         now = datetime.now().isoformat()
         board = {
@@ -441,7 +450,7 @@ def get_board() -> Dict[str, Any]:
     """
     board = _load_board_locked()
     if not board:
-        return {"ok": False, "error": "公告板尚未创建"}
+        return _error_payload("board_missing", "公告板尚未创建")
     return {"ok": True, "board": board}
 
 @tool
@@ -452,7 +461,7 @@ def add_board_role(role_name: str, description: str = "", skills: List[str] = No
     def _update(board):
         roles = board.get("roles") or []
         if any(r.get("name") == role_name for r in roles):
-            return {"ok": False, "error": "角色已存在"}
+            return _error_payload("role_exists", "角色已存在")
         roles.append({
             "name": role_name,
             "description": description or "",
@@ -505,7 +514,7 @@ def update_board_task(task_id: int, status: str = "", owner: str = "", title: st
                     task["acceptance"] = acceptance
                 task["updated_at"] = datetime.now().isoformat()
                 return {"ok": True, "task": task}
-        return {"ok": False, "error": "未找到任务"}
+        return _error_payload("task_not_found", "未找到任务")
     return _update_board_locked(_update)
 
 @tool
@@ -526,7 +535,7 @@ def append_board_task_output(task_id: int, output: str, output_type: str = "text
                 task["outputs"] = outputs
                 task["updated_at"] = datetime.now().isoformat()
                 return {"ok": True, "task": task}
-        return {"ok": False, "error": "未找到任务"}
+        return _error_payload("task_not_found", "未找到任务")
     return _update_board_locked(_update)
 
 @tool
@@ -536,7 +545,7 @@ def list_board_tasks(status: str = "", owner: str = "") -> Dict[str, Any]:
     """
     board = _load_board_locked()
     if not board:
-        return {"ok": False, "error": "公告板尚未创建"}
+        return _error_payload("board_missing", "公告板尚未创建")
     tasks = board.get("tasks") or []
     if status:
         status = _normalize_status(status)

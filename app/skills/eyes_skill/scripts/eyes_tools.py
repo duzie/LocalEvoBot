@@ -8,6 +8,8 @@ import platform
 from typing import List, Dict, Any
 from openai import OpenAI
 from dotenv import load_dotenv
+from datetime import datetime
+from web.backend.shared import shared
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(current_dir))))
@@ -63,16 +65,44 @@ def _is_admin():
     except Exception:
         return False
 
+def _error_payload(code: str, message: str, **fields) -> Dict[str, Any]:
+    info = {"code": str(code or "error"), "message": str(message or "")}
+    payload: Dict[str, Any] = {"ok": False, "error": info["message"], "error_info": info}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _ok_payload(message: str = "", **fields) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"ok": True}
+    if message:
+        payload["message"] = str(message)
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _emit_event(tool_name: str, event: str, **fields):
+    payload = {"event": str(event or ""), "tool": str(tool_name or ""), "time": datetime.now().isoformat()}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    shared.broadcast_threadsafe(json.dumps(payload, ensure_ascii=False))
+
 @tool
 def eyes_find_text(window_title: str, target_text: str, return_normalized: bool = True) -> str:
     """
     在指定窗口截图中定位文字，返回坐标（眼睛：视觉定位）。
     """
+    tool_name = "eyes_find_text"
     if platform.system() != "Windows":
-        return "Error: Only Windows supported"
+        return _error_payload("unsupported_platform", "仅支持 Windows", tool=tool_name)
     client, model, err = _create_client()
     if err:
-        return err
+        return _error_payload("missing_config", err, tool=tool_name)
     try:
         from pywinauto import Desktop
         desktop = Desktop(backend="uia")
@@ -81,7 +111,7 @@ def eyes_find_text(window_title: str, target_text: str, return_normalized: bool 
             msg = f"未找到窗口: {window_title}"
             if not _is_admin():
                 msg += "\n[提示] 可能为管理员权限窗口，请以管理员身份运行 Agent。"
-            return msg
+            return _error_payload("window_not_found", msg, tool=tool_name, is_admin=_is_admin())
         img = window.capture_as_image()
         base64_image = _encode_image_bytes(img)
         fmt = "normalized between 0 and 1" if return_normalized else "pixel coordinates"
@@ -97,23 +127,27 @@ def eyes_find_text(window_title: str, target_text: str, return_normalized: bool 
         )
         content = response.choices[0].message.content
         data = _extract_json(content)
-        return json.dumps(data if data is not None else {"raw": content}, ensure_ascii=False)
+        payload = data if data is not None else {"raw": content}
+        _emit_event(tool_name, "find_text")
+        return _ok_payload("定位完成", data=payload)
     except Exception as e:
         msg = f"眼睛定位文字失败: {e}"
         if not _is_admin():
             msg += "\n[提示] 可能为管理员权限窗口，请以管理员身份运行 Agent。"
-        return msg
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("find_text_failed", msg, tool=tool_name, is_admin=_is_admin())
 
 @tool
 def eyes_find_ui(window_title: str, description: str, return_normalized: bool = True) -> str:
     """
     在指定窗口截图中按描述定位 UI 元素，返回坐标（眼睛：视觉定位）。
     """
+    tool_name = "eyes_find_ui"
     if platform.system() != "Windows":
-        return "Error: Only Windows supported"
+        return _error_payload("unsupported_platform", "仅支持 Windows", tool=tool_name)
     client, model, err = _create_client()
     if err:
-        return err
+        return _error_payload("missing_config", err, tool=tool_name)
     try:
         from pywinauto import Desktop
         desktop = Desktop(backend="uia")
@@ -122,7 +156,7 @@ def eyes_find_ui(window_title: str, description: str, return_normalized: bool = 
             msg = f"未找到窗口: {window_title}"
             if not _is_admin():
                 msg += "\n[提示] 可能为管理员权限窗口，请以管理员身份运行 Agent。"
-            return msg
+            return _error_payload("window_not_found", msg, tool=tool_name, is_admin=_is_admin())
         img = window.capture_as_image()
         base64_image = _encode_image_bytes(img)
         fmt = "normalized between 0 and 1" if return_normalized else "pixel coordinates"
@@ -138,23 +172,27 @@ def eyes_find_ui(window_title: str, description: str, return_normalized: bool = 
         )
         content = response.choices[0].message.content
         data = _extract_json(content)
-        return json.dumps(data if data is not None else {"raw": content}, ensure_ascii=False)
+        payload = data if data is not None else {"raw": content}
+        _emit_event(tool_name, "find_ui")
+        return _ok_payload("定位完成", data=payload)
     except Exception as e:
         msg = f"眼睛定位UI失败: {e}"
         if not _is_admin():
             msg += "\n[提示] 可能为管理员权限窗口，请以管理员身份运行 Agent。"
-        return msg
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("find_ui_failed", msg, tool=tool_name, is_admin=_is_admin())
 
 @tool
 def eyes_find_multiple(window_title: str, descriptions: list, return_normalized: bool = True) -> str:
     """
     在指定窗口截图中批量定位多个目标，返回坐标列表（眼睛：视觉定位）。
     """
+    tool_name = "eyes_find_multiple"
     if platform.system() != "Windows":
-        return "Error: Only Windows supported"
+        return _error_payload("unsupported_platform", "仅支持 Windows", tool=tool_name)
     client, model, err = _create_client()
     if err:
-        return err
+        return _error_payload("missing_config", err, tool=tool_name)
     try:
         from pywinauto import Desktop
         desktop = Desktop(backend="uia")
@@ -163,7 +201,7 @@ def eyes_find_multiple(window_title: str, descriptions: list, return_normalized:
             msg = f"未找到窗口: {window_title}"
             if not _is_admin():
                 msg += "\n[提示] 可能为管理员权限窗口，请以管理员身份运行 Agent。"
-            return msg
+            return _error_payload("window_not_found", msg, tool=tool_name, is_admin=_is_admin())
         img = window.capture_as_image()
         base64_image = _encode_image_bytes(img)
         fmt = "normalized between 0 and 1" if return_normalized else "pixel coordinates"
@@ -179,23 +217,27 @@ def eyes_find_multiple(window_title: str, descriptions: list, return_normalized:
         )
         content = response.choices[0].message.content
         data = _extract_json(content)
-        return json.dumps(data if data is not None else {"raw": content}, ensure_ascii=False)
+        payload = data if data is not None else {"raw": content}
+        _emit_event(tool_name, "find_multiple")
+        return _ok_payload("定位完成", data=payload)
     except Exception as e:
         msg = f"眼睛批量定位失败: {e}"
         if not _is_admin():
             msg += "\n[提示] 可能为管理员权限窗口，请以管理员身份运行 Agent。"
-        return msg
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("find_multiple_failed", msg, tool=tool_name, is_admin=_is_admin())
 
 @tool
 def eyes_map_ui(window_title: str, functions: list, return_normalized: bool = True) -> str:
     """
     在指定窗口截图中按“功能描述”批量返回 UI 坐标（眼睛：视觉定位）。
     """
+    tool_name = "eyes_map_ui"
     if platform.system() != "Windows":
-        return "Error: Only Windows supported"
+        return _error_payload("unsupported_platform", "仅支持 Windows", tool=tool_name)
     client, model, err = _create_client()
     if err:
-        return err
+        return _error_payload("missing_config", err, tool=tool_name)
     try:
         from pywinauto import Desktop
         desktop = Desktop(backend="uia")
@@ -204,7 +246,7 @@ def eyes_map_ui(window_title: str, functions: list, return_normalized: bool = Tr
             msg = f"未找到窗口: {window_title}"
             if not _is_admin():
                 msg += "\n[提示] 可能为管理员权限窗口，请以管理员身份运行 Agent。"
-            return msg
+            return _error_payload("window_not_found", msg, tool=tool_name, is_admin=_is_admin())
         img = window.capture_as_image()
         base64_image = _encode_image_bytes(img)
         fmt = "normalized between 0 and 1" if return_normalized else "pixel coordinates"
@@ -222,24 +264,28 @@ def eyes_map_ui(window_title: str, functions: list, return_normalized: bool = Tr
         )
         content = response.choices[0].message.content
         data = _extract_json(content)
-        return json.dumps(data if data is not None else {"raw": content}, ensure_ascii=False)
+        payload = data if data is not None else {"raw": content}
+        _emit_event(tool_name, "map_ui")
+        return _ok_payload("映射完成", data=payload)
     except Exception as e:
         msg = f"眼睛功能映射失败: {e}"
         if not _is_admin():
             msg += "\n[提示] 可能为管理员权限窗口，请以管理员身份运行 Agent。"
-        return msg
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("map_ui_failed", msg, tool=tool_name, is_admin=_is_admin())
 
 @tool
 def eyes_click_ui(window_title: str, description: str, min_conf: float = 0.3, offset_x: int = 0, offset_y: int = 0, double_click: bool = False) -> str:
     """
     视觉 → 坐标 → 自动点击：在指定窗口内按功能描述定位并点击（眼睛：视觉点击）。
     """
+    tool_name = "eyes_click_ui"
     if platform.system() != "Windows":
-        return "Error: Only Windows supported"
+        return _error_payload("unsupported_platform", "仅支持 Windows", tool=tool_name)
     api_key = os.getenv("ARK_API_KEY")
     model = os.getenv("DOUBAO_VISION_MODEL_NAME")
     if not api_key or not model:
-        return "Error: Missing ARK_API_KEY or DOUBAO_VISION_MODEL_NAME"
+        return _error_payload("missing_config", "缺少 ARK_API_KEY 或 DOUBAO_VISION_MODEL_NAME", tool=tool_name)
     try:
         from pywinauto import Desktop
         desktop = Desktop(backend="uia")
@@ -248,7 +294,7 @@ def eyes_click_ui(window_title: str, description: str, min_conf: float = 0.3, of
             msg = f"未找到窗口: {window_title}"
             if not _is_admin():
                 msg += "\n[提示] 可能为管理员权限窗口，请以管理员身份运行 Agent。"
-            return msg
+            return _error_payload("window_not_found", msg, tool=tool_name, is_admin=_is_admin())
         img = window.capture_as_image()
         base64_image = _encode_image_bytes(img)
         client = OpenAI(api_key=api_key, base_url="https://ark.cn-beijing.volces.com/api/v3")
@@ -265,7 +311,7 @@ def eyes_click_ui(window_title: str, description: str, min_conf: float = 0.3, of
         content = response.choices[0].message.content
         data = _extract_json(content)
         if not data or isinstance(data, dict) and data.get("error"):
-            return f"未找到元素: {description}"
+            return _error_payload("element_not_found", f"未找到元素: {description}", tool=tool_name)
         if isinstance(data, list) and data:
             data = data[0]
         bbox = data.get("bbox") if isinstance(data, dict) else None
@@ -273,15 +319,15 @@ def eyes_click_ui(window_title: str, description: str, min_conf: float = 0.3, of
         if conf is not None:
             try:
                 if float(conf) < min_conf:
-                    return f"置信度过低: {conf}"
+                    return _error_payload("low_confidence", f"置信度过低: {conf}", tool=tool_name, confidence=conf, min_conf=min_conf)
             except Exception:
                 pass
         if not bbox:
-            return f"未获取到坐标: {data}"
+            return _error_payload("bbox_missing", f"未获取到坐标: {data}", tool=tool_name)
         try:
             left = float(bbox.get("left")); top = float(bbox.get("top")); right = float(bbox.get("right")); bottom = float(bbox.get("bottom"))
         except Exception:
-            return f"坐标格式错误: {bbox}"
+            return _error_payload("bbox_invalid", f"坐标格式错误: {bbox}", tool=tool_name)
         w, h = img.size
         cx = int(((left+right)/2) * w) + offset_x
         cy = int(((top+bottom)/2) * h) + offset_y
@@ -291,9 +337,11 @@ def eyes_click_ui(window_title: str, description: str, min_conf: float = 0.3, of
         else:
             window.click_input(coords=(cx, cy))
             act = "点击"
-        return f"已通过视觉模型{act} '{description}' at ({cx}, {cy})"
+        _emit_event(tool_name, "click", action=act, x=cx, y=cy, description=description)
+        return _ok_payload("视觉点击完成", action=act, x=cx, y=cy, description=description)
     except Exception as e:
         msg = f"眼睛视觉点击失败: {e}"
         if not _is_admin():
             msg += "\n[提示] 可能为管理员权限窗口，请以管理员身份运行 Agent。"
-        return msg
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("click_failed", msg, tool=tool_name, is_admin=_is_admin())

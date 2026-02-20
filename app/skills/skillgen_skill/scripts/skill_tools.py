@@ -649,6 +649,37 @@ def scaffold_skill(skill_name: str, tools: list, description: str = None, overwr
             args_doc = f"\n    Args:\n{args_doc}"
         header = [
             "from langchain_core.tools import tool",
+            "import json",
+            "from datetime import datetime",
+            "from typing import Dict, Any",
+            "from web.backend.shared import shared",
+            "",
+            "def _error_payload(code: str, message: str, **fields) -> Dict[str, Any]:",
+            "    info = {\"code\": str(code or \"error\"), \"message\": str(message or \"\")}",
+            "    payload: Dict[str, Any] = {\"ok\": False, \"error\": info[\"message\"], \"error_info\": info}",
+            "    for k, v in (fields or {}).items():",
+            "        if v is None:",
+            "            continue",
+            "        payload[str(k)] = v",
+            "    return payload",
+            "",
+            "def _ok_payload(message: str = \"\", **fields) -> Dict[str, Any]:",
+            "    payload: Dict[str, Any] = {\"ok\": True}",
+            "    if message:",
+            "        payload[\"message\"] = str(message)",
+            "    for k, v in (fields or {}).items():",
+            "        if v is None:",
+            "            continue",
+            "        payload[str(k)] = v",
+            "    return payload",
+            "",
+            "def _emit_event(tool_name: str, event: str, **fields):",
+            "    payload = {\"event\": str(event or \"\"), \"tool\": str(tool_name or \"\"), \"time\": datetime.now().isoformat()}",
+            "    for k, v in (fields or {}).items():",
+            "        if v is None:",
+            "            continue",
+            "        payload[str(k)] = v",
+            "    shared.broadcast_threadsafe(json.dumps(payload, ensure_ascii=False))",
             "",
             "@tool",
             f"def {tool_name}({args_sig}):",
@@ -656,7 +687,10 @@ def scaffold_skill(skill_name: str, tools: list, description: str = None, overwr
             f"    {tool_desc}{args_doc}",
             '    """',
         ]
-        body = []
+        body = [
+            f"    tool_name = \"{tool_name}\"",
+            "    try:",
+        ]
         if impl and isinstance(impl, str) and impl.strip():
             impl_lines = impl.splitlines()
             first_non_empty = ""
@@ -686,9 +720,17 @@ def scaffold_skill(skill_name: str, tools: list, description: str = None, overwr
                 created.append(file_path)
                 continue
             for line in impl_lines:
-                body.append(f"    {line}")
+                body.append(f"        {line}")
         else:
-            body.append('    return "未实现"')
+            body.append("        err = _error_payload(\"not_implemented\", \"未实现\", tool=tool_name)")
+            body.append("        _emit_event(tool_name, \"not_implemented\")")
+            body.append("        return err")
+        body.extend([
+            "    except Exception as e:",
+            "        err = _error_payload(\"unknown_error\", f\"未知错误: {e}\", tool=tool_name)",
+            "        _emit_event(tool_name, \"error\", error=str(e))",
+            "        return err",
+        ])
         content = header + body + [""]
         file_path = os.path.join(scripts_dir, f"{tool_name}.py")
         _snap(file_path)

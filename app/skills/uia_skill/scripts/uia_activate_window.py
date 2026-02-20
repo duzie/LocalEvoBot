@@ -2,6 +2,37 @@ from langchain_core.tools import tool
 import platform
 import time
 import ctypes
+import json
+from datetime import datetime
+from typing import Any, Dict
+from web.backend.shared import shared
+
+def _error_payload(code: str, message: str, **fields) -> Dict[str, Any]:
+    info = {"code": str(code or "error"), "message": str(message or "")}
+    payload: Dict[str, Any] = {"ok": False, "error": info["message"], "error_info": info}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _ok_payload(message: str = "", **fields) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"ok": True}
+    if message:
+        payload["message"] = str(message)
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    return payload
+
+def _emit_event(tool_name: str, event: str, **fields):
+    payload = {"event": str(event or ""), "tool": str(tool_name or ""), "time": datetime.now().isoformat()}
+    for k, v in (fields or {}).items():
+        if v is None:
+            continue
+        payload[str(k)] = v
+    shared.broadcast_threadsafe(json.dumps(payload, ensure_ascii=False))
 
 def _is_admin() -> bool:
     try:
@@ -18,8 +49,9 @@ def uia_activate_window(window_title: str):
     Args:
         window_title: 窗口标题或正则，例如 "微信" 或 ".*WeChat.*"
     """
+    tool_name = "uia_activate_window"
     if platform.system() != "Windows":
-        return "当前仅支持 Windows UI Automation"
+        return _error_payload("unsupported_platform", "当前仅支持 Windows UI Automation", tool=tool_name)
     try:
         from pywinauto import Desktop
         desktop = Desktop(backend="uia")
@@ -30,7 +62,7 @@ def uia_activate_window(window_title: str):
             msg = f"未找到窗口: {window_title}"
             if not _is_admin():
                 msg += "\n[提示] 当前 Agent 非管理员权限，可能无法看到管理员权限运行的窗口。"
-            return msg
+            return _error_payload("window_not_found", msg, tool=tool_name, is_admin=_is_admin())
             
         # 尝试还原和激活
         # 注意: minimize() / restore() 等方法有时需要 wrapper
@@ -46,9 +78,11 @@ def uia_activate_window(window_title: str):
                 pass
         
         window.set_focus()
-        return f"已激活窗口: {window_title}"
+        _emit_event(tool_name, "activate", window_title=window_title)
+        return _ok_payload("已激活窗口", window_title=window_title)
     except Exception as e:
         msg = f"激活窗口失败: {e}"
         if not _is_admin():
             msg += "\n[提示] 目标窗口可能拥有更高权限 (管理员)，请尝试以管理员身份运行此 Agent。"
-        return msg
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("activate_failed", msg, tool=tool_name, is_admin=_is_admin())

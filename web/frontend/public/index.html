@@ -486,11 +486,15 @@
                 text = text.replace(/^\s*User\s*:?\s*/i, '').trim()
                 var timeoutMatch = text.match(/(\d+)\s*秒后自动放弃/)
                 var timeoutSeconds = timeoutMatch ? parseInt(timeoutMatch[1], 10) : null
+                if (!timeoutSeconds){
+                    var altMatch = text.match(/(\d+)\s*秒内不选择默认不使用/)
+                    timeoutSeconds = altMatch ? parseInt(altMatch[1], 10) : null
+                }
                 if (text.indexOf('是否保存以上总结？') !== -1) {
                     return {title:'保存总结确认',content:text,okText:'保存',cancelText:'不保存',okValue:'yes',cancelValue:'no',timeoutSeconds:timeoutSeconds}
                 }
                 if (text.indexOf('是否使用该模板执行？') !== -1) {
-                    return {title:'模板确认',content:text,okText:'使用',cancelText:'不使用',okValue:'yes',cancelValue:'no',timeoutSeconds:timeoutSeconds}
+                    return {title:'模板确认',content:text,okText:'使用',cancelText:'不使用',okValue:'yes',cancelValue:'no',timeoutSeconds:timeoutSeconds || 5}
                 }
                 return null
             }
@@ -502,6 +506,7 @@
                 var ok = el('confirmInlineOk')
                 var cancel = el('confirmInlineCancel')
                 var status = el('confirmInlineStatus')
+                var timedOut = false
                 title.textContent = info.title || '提示'
                 content.textContent = info.content || ''
                 ok.textContent = info.okText || '是'
@@ -509,6 +514,7 @@
                 status.textContent = ''
                 box.classList.add('active')
                 var close = function(){
+                    timedOut = true
                     box.classList.remove('active')
                     ok.onclick = null
                     cancel.onclick = null
@@ -531,10 +537,23 @@
                         }
                     }, 1000)
                     if (state.confirmTimer) clearTimeout(state.confirmTimer)
-                    state.confirmTimer = setTimeout(function(){ close() }, seconds * 1000)
+                    state.confirmTimer = setTimeout(function(){
+                        if (timedOut) return
+                        timedOut = true
+                        sendMessageSilent(info.cancelValue || 'no')
+                        status.textContent = '已选择：' + (info.cancelText || '否')
+                        ok.disabled = true
+                        cancel.disabled = true
+                        setTimeout(function(){
+                            ok.disabled = false
+                            cancel.disabled = false
+                            close()
+                        }, 1200)
+                    }, seconds * 1000)
                 }
                 startTimeout()
                 ok.onclick = function(){
+                    if (timedOut) return
                     sendMessageSilent(info.okValue || 'yes')
                     status.textContent = '已选择：' + (info.okText || '是')
                     ok.disabled = true
@@ -546,6 +565,7 @@
                     }, 1200)
                 }
                 cancel.onclick = function(){
+                    if (timedOut) return
                     sendMessageSilent(info.cancelValue || 'no')
                     status.textContent = '已选择：' + (info.cancelText || '否')
                     ok.disabled = true
