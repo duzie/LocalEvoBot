@@ -9,11 +9,6 @@
         *{box-sizing:border-box}
         body{margin:0;font-family:var(--sans);color:var(--text);background:var(--bg)}
         .app{max-width:1120px;margin:0 auto;padding:16px}
-        .header{margin-top:6px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);display:flex;align-items:center;justify-content:space-between;box-shadow:var(--shadow)}
-        .brand{font-weight:800;display:flex;align-items:center;gap:10px}
-        .nav{margin:12px 0;display:flex;gap:8px;flex-wrap:wrap}
-        .nav a{display:inline-block;padding:8px 12px;border-radius:999px;background:#fff;border:1px solid var(--border);text-decoration:none;color:#334155;font-weight:700}
-        .nav a.active{background:#eef2ff;border-color:#c7d2fe;color:#4338ca}
         .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:12px}
         .panelHeader{padding:10px 12px;border-bottom:1px solid var(--border);background:#f8fafc;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
         .panelTitle{font-weight:800}
@@ -32,18 +27,7 @@
 </head>
 <body>
     <div class="app">
-        <header class="header">
-            <div class="brand"><span>🍈</span><span>Cookie 管理</span></div>
-        </header>
-        <nav class="nav">
-            <a href="/index.html">对话</a>
-            <a href="/logs.html">日志</a>
-            <a href="/config.html">配置</a>
-            <a href="/skills.html">技能</a>
-            <a href="/templates.html">模板</a>
-            <a href="/memories.html">记忆</a>
-            <a href="/cookies.html" class="active">Cookie</a>
-        </nav>
+        <div id="shell"></div>
 
         <section class="card">
             <div class="panelHeader">
@@ -71,6 +55,8 @@
         </section>
     </div>
 
+    <script src="/shell.js"></script>
+    <script>renderShell({title:'Cookie'})</script>
     <script>
         (function(){
             function el(id){return document.getElementById(id)}

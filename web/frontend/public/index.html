@@ -9,14 +9,6 @@
         *{box-sizing:border-box}
         body{margin:0;font-family:var(--sans);color:var(--text);background:var(--bg)}
         .app{max-width:1120px;margin:0 auto;padding:16px}
-        .header{margin-top:6px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);display:flex;align-items:center;justify-content:space-between;box-shadow:var(--shadow)}
-        .brand{font-weight:800;display:flex;align-items:center;gap:10px}
-        .status{font-size:12px;display:flex;align-items:center;gap:8px;color:var(--muted)}
-        .dot{width:10px;height:10px;border-radius:999px;background:#cbd5f5;box-shadow:0 0 0 3px #eef2ff}
-        .dot.online{background:var(--green)}
-        .nav{margin:12px 0;display:flex;gap:8px;flex-wrap:wrap}
-        .nav a{display:inline-block;padding:8px 12px;border-radius:999px;background:#fff;border:1px solid var(--border);text-decoration:none;color:#334155;font-weight:700}
-        .nav a.active{background:#eef2ff;border-color:#c7d2fe;color:#4338ca}
         .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
         .panelHeader{padding:10px 12px;border-bottom:1px solid var(--border);background:#f8fafc;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
         .panelTitle{display:flex;align-items:center;gap:10px;font-weight:800}
@@ -59,24 +51,12 @@
         .confirmInlineContent{font-size:13px;color:#334155;white-space:pre-wrap;word-break:break-word}
         .confirmInlineActions{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}
         .confirmInlineStatus{font-size:12px;color:var(--muted)}
-        @media (max-width:640px){.header{flex-wrap:wrap;gap:10px}.status{width:100%;justify-content:flex-start}.progressGrid{grid-template-columns:1fr}.chatSplit{flex-direction:column;height:auto}.auxPane{display:none}.bubble{max-width:92vw}}
+        @media (max-width:640px){.progressGrid{grid-template-columns:1fr}.chatSplit{flex-direction:column;height:auto}.auxPane{display:none}.bubble{max-width:92vw}}
     </style>
 </head>
 <body>
     <div class="app">
-        <header class="header">
-            <div class="brand"><span>🍈</span><span>小冬瓜智能助手</span></div>
-            <div class="status"><span id="statusDot" class="dot"></span><span id="statusText">离线</span></div>
-        </header>
-        <nav class="nav">
-            <a href="/index.html" class="active">对话</a>
-            <a href="/logs.html">日志</a>
-            <a href="/config.html">配置</a>
-            <a href="/skills.html">技能</a>
-            <a href="/templates.html">模板</a>
-            <a href="/memories.html">记忆</a>
-            <a href="/cookies.html">Cookie</a>
-        </nav>
+        <div id="shell"></div>
         <section class="card" style="margin-bottom:12px;">
             <div class="panelHeader">
                 <div class="panelTitle">
@@ -162,6 +142,8 @@
         </section>
     </div>
 
+    <script src="/shell.js"></script>
+    <script>renderShell({title:'对话',showStatus:true})</script>
     <script>
         (function(){
             function el(id){return document.getElementById(id)}

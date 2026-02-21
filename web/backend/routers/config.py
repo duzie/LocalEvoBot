@@ -6,6 +6,7 @@ import socket
 import json
 import urllib.request
 import urllib.error
+import re
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
 from app.integrations import heartbeat
@@ -13,6 +14,255 @@ from app.integrations.mcp_client import get_mcp_manager
 from ..shared import shared
 
 router = APIRouter()
+
+_CONFIG_SCHEMA_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+
+_GROUP_ORDER = [
+    "Web 控制台",
+    "Agent",
+    "模型/LLM",
+    "DeepSeek",
+    "Qwen",
+    "OpenAI",
+    "火山方舟/豆包",
+    "NVIDIA NIM",
+    "本地模型",
+    "Playwright",
+    "WhatsApp",
+    "MCP",
+    "日志与调试",
+    "安全/密钥",
+    "其他",
+]
+
+_SCHEMA_OVERRIDES: Dict[str, Dict[str, Any]] = {
+    "WEB_HOST": {"label": "Web 监听地址", "desc": "Web 服务绑定的 host（通常 0.0.0.0 或 127.0.0.1）", "group": "Web 控制台", "common": True},
+    "WEB_PORT": {"label": "Web 端口", "desc": "Web 服务端口（默认 5010）", "group": "Web 控制台", "common": True},
+    "PUBLIC_URL": {"label": "访问地址", "desc": "用于生成二维码/分享的访问地址（可填局域网或公网地址）", "group": "Web 控制台", "common": True},
+    "LLM_PROVIDER": {"label": "模型提供方", "desc": "选择模型提供方（deepseek/qwen/openai/local/nim_* 等）", "group": "模型/LLM", "common": True},
+    "DEEPSEEK_API_KEY": {"label": "DeepSeek API Key", "desc": "DeepSeek 密钥", "group": "DeepSeek", "common": True, "secret": True},
+    "DEEPSEEK_BASE_URL": {"label": "DeepSeek Base URL", "desc": "DeepSeek API 地址", "group": "DeepSeek", "common": True},
+    "DEEPSEEK_MODEL_NAME": {"label": "DeepSeek 模型名", "desc": "对话模型名称", "group": "DeepSeek", "common": True},
+    "QWEN_API_KEY": {"label": "Qwen API Key", "desc": "Qwen/DashScope 密钥", "group": "Qwen", "common": True, "secret": True},
+    "DASHSCOPE_API_KEY": {"label": "DashScope API Key", "desc": "通义千问 DashScope 密钥（可替代 QWEN_API_KEY）", "group": "Qwen", "common": False, "secret": True},
+    "QWEN_BASE_URL": {"label": "Qwen Base URL", "desc": "Qwen API 地址", "group": "Qwen", "common": False},
+    "QWEN_MODEL_NAME": {"label": "Qwen 模型名", "desc": "对话模型名称", "group": "Qwen", "common": True},
+    "OPENAI_API_KEY": {"label": "OpenAI API Key", "desc": "OpenAI 密钥（也可能被部分集成作为兼容密钥使用）", "group": "OpenAI", "common": True, "secret": True},
+    "OPENAI_BASE_URL": {"label": "OpenAI Base URL", "desc": "OpenAI API 地址", "group": "OpenAI", "common": False},
+    "OPENAI_MODEL_NAME": {"label": "OpenAI 模型名", "desc": "对话模型名称", "group": "OpenAI", "common": True},
+    "DOUBAO_API_KEY": {"label": "豆包/方舟 API Key", "desc": "火山方舟/豆包密钥（部分能力可与 ARK_API_KEY 互换）", "group": "火山方舟/豆包", "common": True, "secret": True},
+    "ARK_API_KEY": {"label": "ARK API Key", "desc": "火山方舟密钥（兼容项）", "group": "火山方舟/豆包", "common": False, "secret": True},
+    "DOUBAO_BASE_URL": {"label": "豆包/方舟 Base URL", "desc": "火山方舟 API 地址", "group": "火山方舟/豆包", "common": False},
+    "ARK_BASE_URL": {"label": "ARK Base URL", "desc": "火山方舟 API 地址（兼容项）", "group": "火山方舟/豆包", "common": False},
+    "DOUBAO_VISION_MODEL_NAME": {"label": "视觉模型名", "desc": "视觉理解/图片相关能力使用的模型名称", "group": "火山方舟/豆包", "common": True},
+    "NIM_API_KEY": {"label": "NIM API Key", "desc": "NVIDIA NIM / API Catalog 密钥", "group": "NVIDIA NIM", "common": False, "secret": True},
+    "NIM_BASE_URL": {"label": "NIM Base URL", "desc": "NVIDIA NIM / API Catalog 地址", "group": "NVIDIA NIM", "common": False},
+    "NIM_MINIMAX_M2_MODEL_NAME": {"label": "NIM Minimax-M2 模型名", "desc": "minimaxai/minimax-m2", "group": "NVIDIA NIM", "common": False},
+    "NIM_GLM47_MODEL_NAME": {"label": "NIM GLM4.7 模型名", "desc": "z-ai/glm4.7", "group": "NVIDIA NIM", "common": False},
+    "LOCAL_MODEL_PATH": {"label": "本地模型路径", "desc": "本地模型文件路径", "group": "本地模型", "common": False},
+    "LOCAL_CTX_SIZE": {"label": "本地上下文长度", "desc": "ctx size", "group": "本地模型", "common": False},
+    "LOCAL_GPU_LAYERS": {"label": "本地 GPU Layers", "desc": "GPU 加速层数", "group": "本地模型", "common": False},
+    "LOCAL_THREADS": {"label": "本地线程数", "desc": "推理线程数", "group": "本地模型", "common": False},
+    "LOCAL_BATCH_SIZE": {"label": "本地 Batch Size", "desc": "批大小", "group": "本地模型", "common": False},
+    "LOCAL_TEMPERATURE": {"label": "本地 Temperature", "desc": "采样温度", "group": "本地模型", "common": False},
+    "PLAYWRIGHT_USER_DATA_DIR": {"label": "Playwright 用户数据目录", "desc": "浏览器用户数据目录", "group": "Playwright", "common": True},
+    "PLAYWRIGHT_EXTENSION_DIR": {"label": "Playwright 扩展目录", "desc": "用于 Cookie 同步等扩展", "group": "Playwright", "common": True},
+    "PLAYWRIGHT_AUTO_LOAD_COOKIES": {"label": "自动载入 Cookie", "desc": "启动浏览器时自动载入 Cookie（1/0）", "group": "Playwright", "common": True},
+    "WA_GATEWAY_HOST": {"label": "WA Gateway Host", "desc": "WhatsApp 网关地址", "group": "WhatsApp", "common": True},
+    "WA_GATEWAY_PORT": {"label": "WA Gateway 端口", "desc": "WhatsApp 网关端口", "group": "WhatsApp", "common": True},
+    "WA_GATEWAY_TOKEN": {"label": "WA Gateway Token", "desc": "WhatsApp 网关鉴权 Token", "group": "WhatsApp", "common": True, "secret": True},
+    "WA_GATEWAY_AUTOSTART": {"label": "自动启动 WA Gateway", "desc": "是否自动启动 WhatsApp 网关（1/0）", "group": "WhatsApp", "common": False},
+    "WA_NODE_BIN": {"label": "Node 可执行文件", "desc": "启动 WA Gateway 使用的 node 路径/命令", "group": "WhatsApp", "common": False},
+    "WA_AUTH_DIR": {"label": "WA 登录态目录", "desc": "WhatsApp 登录态（auth）保存目录", "group": "WhatsApp", "common": False},
+    "WA_DM_ENABLED": {"label": "允许私聊消息", "desc": "是否允许 WhatsApp 私聊消息进入（1/0）", "group": "WhatsApp", "common": True},
+    "WA_ALLOW_FROM": {"label": "允许的手机号白名单", "desc": "允许的 E164 号码（逗号分隔），或 * 放行全部", "group": "WhatsApp", "common": True},
+    "WA_WEBHOOK_URL": {"label": "WhatsApp Webhook 地址", "desc": "网关收到消息后的回调地址", "group": "WhatsApp", "common": True},
+    "WA_WEBHOOK_TOKEN": {"label": "WhatsApp Webhook Token", "desc": "回调鉴权 Token（Bearer）", "group": "WhatsApp", "common": False, "secret": True},
+    "WA_PROXY_ENABLED": {"label": "启用代理", "desc": "网关是否启用代理（1/0）", "group": "WhatsApp", "common": False},
+    "WA_PROXY_URL": {"label": "代理地址", "desc": "代理 URL（如 http://127.0.0.1:7890）", "group": "WhatsApp", "common": False},
+    "WA_TEXT_CHUNK_LIMIT": {"label": "消息分片长度", "desc": "发送长消息时的分片长度（默认 4000）", "group": "WhatsApp", "common": False},
+    "WA_PRINT_QR": {"label": "控制台打印二维码", "desc": "网关是否在控制台打印二维码（1/0）", "group": "WhatsApp", "common": False},
+    "MCP_SERVERS": {"label": "MCP Servers", "desc": "MCP 服务器列表（JSON）", "group": "MCP", "common": True},
+    "AGENT_MAX_ITERATIONS": {"label": "最大执行步数", "desc": "Agent 单次任务最多执行步数", "group": "Agent", "common": True},
+    "AGENT_MAX_EXECUTION_TIME": {"label": "最大执行时间（秒）", "desc": "Agent 单次任务最多执行时间", "group": "Agent", "common": True},
+    "AGENT_LIMITS_DISABLED": {"label": "解除执行限制", "desc": "是否解除步数/时间限制（1/0）", "group": "Agent", "common": True},
+    "DEVOPS_ENC_KEY": {"label": "变更日志加密密钥", "desc": "用于加密变更日志/快照", "group": "安全/密钥", "common": False, "secret": True},
+    "AUDIT_LOG_KEY": {"label": "审计日志加密密钥", "desc": "用于加密审计日志", "group": "安全/密钥", "common": False, "secret": True},
+}
+
+def _get_project_root() -> str:
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+def _is_secret_key(key: str) -> bool:
+    up = (key or "").upper()
+    if not up:
+        return False
+    if up in _SCHEMA_OVERRIDES and bool(_SCHEMA_OVERRIDES[up].get("secret")):
+        return True
+    for token in ("API_KEY", "TOKEN", "SECRET", "PASSWORD", "PASS", "COOKIE", "KEY"):
+        if token in up and up not in {"PUBLIC_KEY"}:
+            return True
+    return False
+
+def _guess_group(key: str) -> str:
+    up = (key or "").upper()
+    if up in _SCHEMA_OVERRIDES and _SCHEMA_OVERRIDES[up].get("group"):
+        return str(_SCHEMA_OVERRIDES[up]["group"])
+    if up.startswith(("WEB_", "PUBLIC_")):
+        return "Web 控制台"
+    if up.startswith("AGENT_"):
+        return "Agent"
+    if up.startswith(("DEEPSEEK_",)):
+        return "DeepSeek"
+    if up.startswith(("QWEN_", "DASHSCOPE_")):
+        return "Qwen"
+    if up.startswith(("OPENAI_",)):
+        return "OpenAI"
+    if up.startswith(("DOUBAO_", "ARK_")):
+        return "火山方舟/豆包"
+    if up.startswith(("NIM_",)):
+        return "NVIDIA NIM"
+    if up.startswith(("LOCAL_",)):
+        return "本地模型"
+    if up.startswith(("PLAYWRIGHT_", "TESSDATA_", "TESSERACT_")):
+        return "Playwright"
+    if up.startswith(("WA_", "WHATSAPP_")):
+        return "WhatsApp"
+    if up.startswith(("MCP_",)):
+        return "MCP"
+    if up.startswith(("LOG_", "DEBUG_", "TRACE_")):
+        return "日志与调试"
+    if any(t in up for t in ("ENC_KEY", "AUDIT", "KEY")):
+        return "安全/密钥"
+    if up in {"LLM_PROVIDER"}:
+        return "模型/LLM"
+    return "其他"
+
+def _extract_env_keys_from_source() -> List[str]:
+    root = _get_project_root()
+    targets = [os.path.join(root, "app"), os.path.join(root, "web", "backend"), os.path.join(root, "gateway")]
+    patterns = [
+        re.compile(r'os\.getenv\(\s*[\'"]([A-Z0-9_]+)[\'"]\s*\)'),
+        re.compile(r'env\.get\(\s*[\'"]([A-Z0-9_]+)[\'"]\s*\)'),
+        re.compile(r'_env_flag\(\s*[\'"]([A-Z0-9_]+)[\'"]\s*[,)]'),
+        re.compile(r'_read_(?:int|bool)_env\(\s*[\'"]([A-Z0-9_]+)[\'"]\s*,'),
+        re.compile(r'process\.env\[\s*[\'"]([A-Z0-9_]+)[\'"]\s*\]'),
+        re.compile(r'env(?:Str|Flag|Int)\(\s*[\'"]([A-Z0-9_]+)[\'"]'),
+    ]
+    found: set[str] = set()
+    for base in targets:
+        if not os.path.isdir(base):
+            continue
+        for dirpath, _, filenames in os.walk(base):
+            for name in filenames:
+                low = name.lower()
+                if not (low.endswith(".py") or low.endswith(".js") or low.endswith(".mjs")):
+                    continue
+                path = os.path.join(dirpath, name)
+                try:
+                    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                        text = f.read()
+                except Exception:
+                    continue
+                for pat in patterns:
+                    for m in pat.finditer(text):
+                        k = (m.group(1) or "").strip().upper()
+                        if k:
+                            found.add(k)
+    return sorted(found)
+
+def _read_env_file_map() -> Dict[str, str]:
+    env_path = _get_env_path()
+    if not os.path.exists(env_path):
+        return {}
+    raw = dotenv_values(env_path)
+    out: Dict[str, str] = {}
+    for k, v in (raw or {}).items():
+        key = str(k or "").strip()
+        if not key:
+            continue
+        out[key] = "" if v is None else str(v)
+    return out
+
+def _append_missing_env_keys(keys: List[str]) -> Dict[str, Any]:
+    env_path = _get_env_path()
+    if not os.path.exists(env_path):
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write("")
+
+    existing = _read_env_file_map()
+    existing_upper = {str(k).upper() for k in existing.keys()}
+    to_add = []
+    for k in keys:
+        key = str(k or "").strip().upper()
+        if not key:
+            continue
+        if key in existing_upper:
+            continue
+        to_add.append(key)
+
+    if not to_add:
+        return {"added": [], "skipped": []}
+
+    try:
+        with open(env_path, "r", encoding="utf-8", errors="ignore") as f:
+            tail = f.read()[-1:] if os.path.getsize(env_path) > 0 else ""
+    except Exception:
+        tail = ""
+
+    defaults: Dict[str, str] = {
+        "WEB_HOST": "0.0.0.0",
+        "WEB_PORT": "5010",
+        "WA_GATEWAY_HOST": "127.0.0.1",
+        "WA_GATEWAY_PORT": "8787",
+        "WA_AUTH_DIR": "./gateway/auth",
+        "WA_TEXT_CHUNK_LIMIT": "4000",
+        "WA_PRINT_QR": "1",
+        "WA_DM_ENABLED": "1",
+        "WA_PROXY_ENABLED": "0",
+        "WA_GATEWAY_AUTOSTART": "0",
+    }
+
+    with open(env_path, "a", encoding="utf-8") as f:
+        if tail and tail not in ("\n", "\r"):
+            f.write("\n")
+        f.write("\n")
+        for k in sorted(set(to_add)):
+            f.write(f"{k}={defaults.get(k, '')}\n")
+
+    return {"added": sorted(set(to_add)), "skipped": []}
+
+def _get_config_schema() -> Dict[str, Dict[str, Any]]:
+    global _CONFIG_SCHEMA_CACHE
+    if _CONFIG_SCHEMA_CACHE is not None:
+        return _CONFIG_SCHEMA_CACHE
+    schema: Dict[str, Dict[str, Any]] = {}
+    for key in _extract_env_keys_from_source():
+        schema[key] = {
+            "label": key,
+            "desc": "",
+            "group": _guess_group(key),
+            "common": False,
+            "secret": _is_secret_key(key),
+        }
+    for key, meta in _SCHEMA_OVERRIDES.items():
+        k = (key or "").upper()
+        existing = schema.get(k) or {
+            "label": k,
+            "desc": "",
+            "group": _guess_group(k),
+            "common": False,
+            "secret": _is_secret_key(k),
+        }
+        merged = {**existing, **meta}
+        merged["group"] = merged.get("group") or _guess_group(k)
+        merged["secret"] = bool(merged.get("secret")) or _is_secret_key(k)
+        merged["common"] = bool(merged.get("common"))
+        merged["label"] = str(merged.get("label") or k)
+        merged["desc"] = str(merged.get("desc") or "")
+        schema[k] = merged
+    _CONFIG_SCHEMA_CACHE = schema
+    return schema
 
 class ConfigUpdate(BaseModel):
     key: str
@@ -175,6 +425,60 @@ async def get_config():
     if not os.path.exists(env_path):
         return {}
     return dotenv_values(env_path)
+
+@router.get("/ui")
+async def get_config_ui():
+    env_path = _get_env_path()
+    env_raw = dotenv_values(env_path) if os.path.exists(env_path) else {}
+    schema = _get_config_schema()
+    keys = sorted(set([str(k).upper() for k in (env_raw or {}).keys()]) | set(schema.keys()))
+    env: Dict[str, Any] = {}
+    items: List[Dict[str, Any]] = []
+    for key in keys:
+        raw_value = env_raw.get(key)
+        value = "" if raw_value is None else str(raw_value)
+        has_value = bool(str(value).strip())
+        meta = schema.get(key) or {
+            "label": key,
+            "desc": "",
+            "group": _guess_group(key),
+            "common": False,
+            "secret": _is_secret_key(key),
+        }
+        secret = bool(meta.get("secret"))
+        env[key] = "" if secret else value
+        items.append(
+            {
+                "key": key,
+                "label": meta.get("label") or key,
+                "desc": meta.get("desc") or "",
+                "group": meta.get("group") or "其他",
+                "common": bool(meta.get("common")),
+                "secret": secret,
+                "hasValue": has_value,
+                "value": "" if secret else value,
+            }
+        )
+    return {"groups": _GROUP_ORDER, "items": items, "env": env}
+
+@router.get("/ui/diff")
+async def get_config_ui_diff():
+    env_map = _read_env_file_map()
+    env_keys_upper = {str(k).upper() for k in env_map.keys()}
+    schema = _get_config_schema()
+    schema_keys = set(schema.keys())
+    missing_in_env = sorted([k for k in schema_keys if k not in env_keys_upper])
+    extra_in_env = sorted([k for k in env_keys_upper if k not in schema_keys])
+    return {"missingInEnv": missing_in_env, "extraInEnv": extra_in_env, "schemaKeys": len(schema_keys), "envKeys": len(env_keys_upper)}
+
+@router.post("/ui/fill-missing")
+async def fill_missing_env_keys():
+    schema = _get_config_schema()
+    env_map = _read_env_file_map()
+    env_keys_upper = {str(k).upper() for k in env_map.keys()}
+    missing = [k for k in schema.keys() if k not in env_keys_upper]
+    result = _append_missing_env_keys(missing)
+    return {"ok": True, **result}
 
 @router.post("")
 async def update_config(config: ConfigUpdate):

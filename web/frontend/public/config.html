@@ -9,17 +9,14 @@
         *{box-sizing:border-box}
         body{margin:0;font-family:var(--sans);color:var(--text);background:var(--bg)}
         .app{max-width:1120px;margin:0 auto;padding:16px}
-        .header{margin-top:6px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);display:flex;align-items:center;justify-content:space-between;box-shadow:var(--shadow)}
-        .brand{font-weight:800;display:flex;align-items:center;gap:10px}
-        .nav{margin:12px 0;display:flex;gap:8px;flex-wrap:wrap}
-        .nav a{display:inline-block;padding:8px 12px;border-radius:999px;background:#fff;border:1px solid var(--border);text-decoration:none;color:#334155;font-weight:700}
-        .nav a.active{background:#eef2ff;border-color:#c7d2fe;color:#4338ca}
         .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:12px}
         .panelHeader{padding:10px 12px;border-bottom:1px solid var(--border);background:#f8fafc;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
         .panelTitle{font-weight:800}
         .cfg{padding:12px}
         .cfgRow{display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #f1f5f9;flex-wrap:wrap}
         .cfgKey{width:220px;font-weight:700;color:#334155}
+        .cfgMeta{font-size:12px;color:var(--muted);font-weight:500;line-height:1.25;margin-top:2px;word-break:break-word}
+        .cfgGroupTitle{padding:10px 0 6px;font-weight:900;color:#0f172a}
         .input, .select{height:36px;border-radius:10px;border:1px solid var(--border);background:#fff;padding:0 12px;outline:none;min-width:220px;flex:1 1 280px}
         .btn{height:36px;padding:0 14px;border-radius:10px;border:1px solid var(--border);background:#fff;color:var(--text);cursor:pointer}
         .btn.primary{border-color:#c7d2fe;background:linear-gradient(135deg,var(--primary) 0%,var(--primary2) 100%);color:#fff}
@@ -39,21 +36,23 @@
 </head>
 <body>
     <div class="app">
-        <header class="header">
-            <div class="brand"><span>🍈</span><span>配置管理</span></div>
-            <div class="pill">前端独立页面版</div>
-        </header>
-        <nav class="nav">
-            <a href="/index.html">对话</a>
-            <a href="/logs.html">日志</a>
-            <a href="/config.html" class="active">配置</a>
-            <a href="/skills.html">技能</a>
-            <a href="/templates.html">模板</a>
-            <a href="/memories.html">记忆</a>
-            <a href="/cookies.html">Cookie</a>
-        </nav>
+        <div id="shell"></div>
 
         <section class="card">
+            <div class="panelHeader">
+                <div class="panelTitle">快速入口</div>
+                <span class="pill">跳转到常用配置区块</span>
+            </div>
+            <div class="cfg" style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="btn" type="button" data-jump="#secAccess">访问与分享</button>
+                <button class="btn" type="button" data-jump="#secEnv">环境变量</button>
+                <button class="btn" type="button" data-jump="#secWhatsApp">WhatsApp 登录</button>
+                <button class="btn" type="button" data-jump="#secMcp">MCP 工具</button>
+                <button class="btn" type="button" data-jump="#secAgent">Agent 运行参数</button>
+            </div>
+        </section>
+
+        <section class="card" id="secAccess">
             <div class="panelHeader">
                 <div class="panelTitle">访问与分享</div>
                 <span class="pill">二维码与局域网地址</span>
@@ -80,10 +79,19 @@
             </div>
         </section>
 
-        <section class="card">
+        <section class="card" id="secEnv">
             <div class="panelHeader">
                 <div class="panelTitle">环境变量</div>
-                <button id="reloadConfigBtn" class="btn" type="button">刷新</button>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;flex:1;justify-content:flex-end">
+                    <input id="cfgSearch" class="input" type="text" placeholder="搜索（中文名/键/说明）" autocomplete="off" style="min-width:220px;flex:1 1 320px" />
+                    <select id="cfgView" class="select" style="min-width:160px;flex:0 0 auto">
+                        <option value="common">常用</option>
+                        <option value="all">全部</option>
+                        <option value="missing">仅缺失</option>
+                    </select>
+                    <button id="fillMissingBtn" class="btn" type="button">一键补全缺失</button>
+                    <button id="reloadConfigBtn" class="btn" type="button">刷新</button>
+                </div>
             </div>
             <div id="configBody" class="cfg"></div>
             <div class="cfgFooter">
@@ -93,7 +101,7 @@
             </div>
         </section>
 
-        <section class="card">
+        <section class="card" id="secWhatsApp">
             <div class="panelHeader">
                 <div class="panelTitle">WhatsApp 登录</div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -113,7 +121,7 @@
             </div>
         </section>
 
-        <section class="card">
+        <section class="card" id="secMcp">
             <div class="panelHeader">
                 <div class="panelTitle">MCP 工具</div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -130,7 +138,7 @@
             </div>
         </section>
 
-        <section class="card">
+        <section class="card" id="secAgent">
             <div class="panelHeader">
                 <div class="panelTitle">Agent 运行参数</div>
                 <span class="pill">执行步数与时间上限</span>
@@ -170,6 +178,23 @@
         </section>
     </div>
 
+    <script src="/shell.js"></script>
+    <script>renderShell({title:'配置',badge:'前端独立页面版'})</script>
+    <script>
+        (function(){
+            var nodes = document.querySelectorAll('[data-jump]')
+            for (var i=0;i<nodes.length;i++){
+                nodes[i].addEventListener('click', function(){
+                    var sel = this.getAttribute('data-jump') || ''
+                    if (!sel) return
+                    var target = document.querySelector(sel)
+                    if (target && target.scrollIntoView){
+                        target.scrollIntoView({behavior:'smooth', block:'start'})
+                    }
+                })
+            }
+        })()
+    </script>
     <script>
         (function(){
             function el(id){return document.getElementById(id)}
@@ -186,37 +211,117 @@
             function loadConfig(){
                 var body = el('configBody')
                 body.textContent = ''
-                fetch('/api/config').then(function(r){return r.json()}).then(function(data){
-                    var keys = Object.keys(data || {}).sort()
-                    if (!keys.length){
-                        var empty = document.createElement('div')
-                        empty.className = 'pill'
-                        empty.textContent = '暂无配置'
-                        body.appendChild(empty)
-                        return
+                fetch('/api/config/ui').then(function(r){return r.json()}).then(function(data){
+                    window.__cfgUi = data || null
+                    renderConfig()
+                    var env = (data && data.env) ? data.env : {}
+                    el('agentMaxIter').value = String(env['AGENT_MAX_ITERATIONS'] == null ? '' : env['AGENT_MAX_ITERATIONS'])
+                    el('agentMaxTime').value = String(env['AGENT_MAX_EXECUTION_TIME'] == null ? '' : env['AGENT_MAX_EXECUTION_TIME'])
+                    var limitFlag = String(env['AGENT_LIMITS_DISABLED'] == null ? '0' : env['AGENT_LIMITS_DISABLED']).trim().toLowerCase()
+                    el('agentLimitsDisabled').value = (limitFlag === '1' || limitFlag === 'true' || limitFlag === 'yes' || limitFlag === 'on') ? '1' : '0'
+                }).catch(function(e){
+                    var err = document.createElement('div')
+                    err.className = 'pill'
+                    err.textContent = '加载配置失败: ' + e
+                    body.appendChild(err)
+                })
+            }
+
+            function renderConfig(){
+                var body = el('configBody')
+                body.textContent = ''
+                var data = window.__cfgUi || {}
+                var items = data.items || []
+                var groups = data.groups || []
+                var q = String(el('cfgSearch') && el('cfgSearch').value ? el('cfgSearch').value : '').trim().toLowerCase()
+                var view = String(el('cfgView') && el('cfgView').value ? el('cfgView').value : 'common')
+
+                var filtered = []
+                for (var i=0;i<items.length;i++){
+                    var it = items[i] || {}
+                    if (view === 'common' && !it.common) continue
+                    if (view === 'missing' && it.hasValue) continue
+                    if (q){
+                        var hay = (String(it.key || '') + ' ' + String(it.label || '') + ' ' + String(it.desc || '')).toLowerCase()
+                        if (hay.indexOf(q) === -1) continue
                     }
-                    keys.forEach(function(key){
+                    filtered.push(it)
+                }
+
+                if (!filtered.length){
+                    var empty = document.createElement('div')
+                    empty.className = 'pill'
+                    empty.textContent = '无匹配配置'
+                    body.appendChild(empty)
+                    return
+                }
+
+                var byGroup = {}
+                for (var j=0;j<filtered.length;j++){
+                    var it2 = filtered[j]
+                    var g = String(it2.group || '其他')
+                    if (!byGroup[g]) byGroup[g] = []
+                    byGroup[g].push(it2)
+                }
+
+                function renderGroup(title, list){
+                    if (!list || !list.length) return
+                    var t = document.createElement('div')
+                    t.className = 'cfgGroupTitle'
+                    t.textContent = title + ' (' + list.length + ')'
+                    body.appendChild(t)
+                    list.sort(function(a,b){
+                        var ak = String(a.key || '')
+                        var bk = String(b.key || '')
+                        return ak < bk ? -1 : (ak > bk ? 1 : 0)
+                    })
+                    list.forEach(function(it){
+                        var key = String(it.key || '').trim()
+                        if (!key) return
                         var row = document.createElement('div')
                         row.className = 'cfgRow'
+
                         var label = document.createElement('div')
                         label.className = 'cfgKey'
                         label.title = key
-                        label.textContent = key
+                        var main = document.createElement('div')
+                        main.textContent = String(it.label || key)
+                        var meta = document.createElement('div')
+                        meta.className = 'cfgMeta'
+                        meta.textContent = key + (it.desc ? (' · ' + String(it.desc)) : '') + (it.hasValue ? '' : ' · 未设置')
+                        label.appendChild(main)
+                        label.appendChild(meta)
+
                         var input = document.createElement('input')
                         input.className = 'input'
-                        input.type = 'text'
-                        input.value = data[key] == null ? '' : String(data[key])
                         input.autocomplete = 'off'
+                        var isSecret = !!it.secret
+                        input.type = isSecret ? 'password' : 'text'
+                        if (isSecret){
+                            input.value = ''
+                            input.placeholder = it.hasValue ? '已设置（隐藏）' : '未设置'
+                        }else{
+                            input.value = it.value == null ? '' : String(it.value)
+                        }
+
                         var btn = document.createElement('button')
                         btn.className = 'btn'
                         btn.type = 'button'
                         btn.textContent = '保存'
                         btn.disabled = true
-                        var original = input.value
+
+                        var original = isSecret ? (it.hasValue ? '__MASKED__' : '') : input.value
+
                         input.addEventListener('input', function(){
-                            btn.disabled = input.value === original
+                            if (isSecret){
+                                btn.disabled = !(input.value && String(input.value).trim())
+                            }else{
+                                btn.disabled = input.value === original
+                            }
                         })
+
                         btn.addEventListener('click', function(){
+                            if (isSecret && !(input.value && String(input.value).trim())) return
                             btn.disabled = true
                             fetch('/api/config', {
                                 method: 'POST',
@@ -224,8 +329,14 @@
                                 body: JSON.stringify({ key: key, value: input.value })
                             }).then(function(res){
                                 if (res.ok){
-                                    original = input.value
-                                    btn.disabled = true
+                                    if (isSecret){
+                                        input.value = ''
+                                        input.placeholder = '已设置（隐藏）'
+                                        original = '__MASKED__'
+                                    }else{
+                                        original = input.value
+                                    }
+                                    loadConfig()
                                 }else{
                                     btn.disabled = false
                                     alert('更新失败 (' + res.status + ')')
@@ -235,20 +346,39 @@
                                 alert('更新出错 ' + e)
                             })
                         })
+
                         row.appendChild(label)
                         row.appendChild(input)
                         row.appendChild(btn)
                         body.appendChild(row)
                     })
-                    el('agentMaxIter').value = String(data['AGENT_MAX_ITERATIONS'] == null ? '' : data['AGENT_MAX_ITERATIONS'])
-                    el('agentMaxTime').value = String(data['AGENT_MAX_EXECUTION_TIME'] == null ? '' : data['AGENT_MAX_EXECUTION_TIME'])
-                    var limitFlag = String(data['AGENT_LIMITS_DISABLED'] == null ? '0' : data['AGENT_LIMITS_DISABLED']).trim().toLowerCase()
-                    el('agentLimitsDisabled').value = (limitFlag === '1' || limitFlag === 'true' || limitFlag === 'yes' || limitFlag === 'on') ? '1' : '0'
+                }
+
+                var rendered = {}
+                for (var k=0;k<groups.length;k++){
+                    var gname = String(groups[k] || '')
+                    if (!gname) continue
+                    rendered[gname] = true
+                    renderGroup(gname, byGroup[gname] || [])
+                }
+                Object.keys(byGroup).sort().forEach(function(g2){
+                    if (rendered[g2]) return
+                    renderGroup(g2, byGroup[g2])
+                })
+            }
+
+            function fillMissingEnv(){
+                var btn = el('fillMissingBtn')
+                if (btn) btn.disabled = true
+                fetch('/api/config/ui/fill-missing', { method: 'POST' }).then(function(r){ return r.json() }).then(function(data){
+                    var added = (data && data.added && data.added.length) ? data.added.length : 0
+                    alert('已补全 ' + added + ' 个缺失项（写入 .env 为空值）')
+                    el('cfgView').value = 'missing'
+                    loadConfig()
                 }).catch(function(e){
-                    var err = document.createElement('div')
-                    err.className = 'pill'
-                    err.textContent = '加载配置失败: ' + e
-                    body.appendChild(err)
+                    alert('补全失败: ' + e)
+                }).then(function(){
+                    if (btn) btn.disabled = false
                 })
             }
 
@@ -802,6 +932,18 @@
             }
 
             el('reloadConfigBtn').onclick = loadConfig
+            el('fillMissingBtn').onclick = fillMissingEnv
+            var searchTimer = null
+            el('cfgSearch').addEventListener('input', function(){
+                if (searchTimer) clearTimeout(searchTimer)
+                searchTimer = setTimeout(function(){
+                    searchTimer = null
+                    renderConfig()
+                }, 120)
+            })
+            el('cfgView').addEventListener('change', function(){
+                renderConfig()
+            })
             el('addConfigBtn').onclick = addConfig
             el('accessSaveBtn').onclick = saveAccessUrl
             el('accessCopyBtn').onclick = copyAccessUrl

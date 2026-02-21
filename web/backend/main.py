@@ -37,8 +37,17 @@ def start():
     if project_root not in sys.path:
         sys.path.append(project_root)
         
-    port = int(os.getenv("WEB_PORT", 5010))
-    host = os.getenv("WEB_HOST", "0.0.0.0")
+    port_raw = os.getenv("WEB_PORT")
+    if port_raw is None or str(port_raw).strip() == "":
+        port = 5010
+    else:
+        try:
+            port = int(str(port_raw).strip())
+        except Exception:
+            port = 5010
+
+    host_raw = os.getenv("WEB_HOST")
+    host = (str(host_raw).strip() if host_raw is not None else "") or "0.0.0.0"
     print(f"Starting Web Console at http://{host}:{port}")
     
     # Use Config and Server to control signal handlers
