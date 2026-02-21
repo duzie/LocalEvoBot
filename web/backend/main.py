@@ -1,8 +1,20 @@
 import os
 import sys
+import threading
+import time
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+if not (os.getenv("HF_ENDPOINT") or "").strip():
+    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+if not (os.getenv("HF_HUB_DISABLE_TELEMETRY") or "").strip():
+    os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+if not (os.getenv("HF_HUB_DISABLE_PROGRESS_BARS") or "").strip():
+    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+if not (os.getenv("HF_HOME") or "").strip():
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    os.environ["HF_HOME"] = os.path.join(project_root, "app", "data", "hf_cache")
+
 from web.backend.routers import config, logs, chat, skills
 
 app = FastAPI(title="LangChain Agent Web Console")
@@ -21,6 +33,32 @@ app.include_router(config.router, prefix="/api/config", tags=["config"])
 app.include_router(logs.router, prefix="/api/logs", tags=["logs"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(skills.router, prefix="/api/skills", tags=["skills"])
+
+def _truthy_env(name: str, default: str = "1") -> bool:
+    v = os.getenv(name)
+    if v is None:
+        v = default
+    s = str(v).strip().lower()
+    return s not in {"0", "false", "no", "off", ""}
+
+def _prewarm_experience_store():
+    try:
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        if project_root not in sys.path:
+            sys.path.append(project_root)
+        t0 = time.time()
+        from app.skills.system_skill.scripts import experience_tools
+        experience_tools._init_components()
+        dt_ms = int((time.time() - t0) * 1000)
+        print(f"RAG warmup done ({dt_ms}ms)")
+    except Exception as e:
+        print(f"RAG warmup skipped: {e}")
+
+@app.on_event("startup")
+async def _startup_prewarm():
+    if not _truthy_env("RAG_PREWARM_ON_STARTUP", "1"):
+        return
+    threading.Thread(target=_prewarm_experience_store, daemon=True).start()
 
 # Static files (Frontend)
 # Ensure the directory exists before mounting

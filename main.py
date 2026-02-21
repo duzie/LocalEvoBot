@@ -441,6 +441,18 @@ def parse_state(output: str):
     cleaned = "\n".join([line_text for line_text in kept if line_text]).strip()
     return state, cleaned
 
+def _last_nonempty_line(text: str) -> str:
+    if not text:
+        return ""
+    lines = [ln.strip() for ln in str(text).splitlines() if str(ln).strip()]
+    return lines[-1] if lines else ""
+
+def _should_pause_for_user(text: str) -> bool:
+    last = _last_nonempty_line(text)
+    if not last:
+        return False
+    return last.endswith("?") or last.endswith("？")
+
 def strip_reload_signal(output: str):
     if not output:
         return output, False
@@ -1287,6 +1299,9 @@ def main():
                 output = raw_output
                 output, reload_requested = strip_reload_signal(output)
                 state, cleaned_output = parse_state(output)
+                visible_output = cleaned_output or output
+                if state == "CONTINUE" and _should_pause_for_user(visible_output):
+                    state = None
                 _add_short_term_message("assistant", cleaned_output or output, project_id, user_id)
                 if wa_ctx and state != "CONTINUE":
                     reply_text = (cleaned_output or output or "").strip()

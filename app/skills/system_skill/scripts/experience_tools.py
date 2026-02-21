@@ -10,7 +10,7 @@ import uuid
 from difflib import SequenceMatcher
 
 # Ensure HF mirror is used before any HF imports
-if "HF_ENDPOINT" not in os.environ:
+if not (os.getenv("HF_ENDPOINT") or "").strip():
     os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
 # Lazy globals
