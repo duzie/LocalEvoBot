@@ -3,7 +3,7 @@ import sys
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from web.backend.routers import config, logs, chat
+from web.backend.routers import config, logs, chat, skills
 
 app = FastAPI(title="LangChain Agent Web Console")
 
@@ -20,6 +20,7 @@ app.add_middleware(
 app.include_router(config.router, prefix="/api/config", tags=["config"])
 app.include_router(logs.router, prefix="/api/logs", tags=["logs"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(skills.router, prefix="/api/skills", tags=["skills"])
 
 # Static files (Frontend)
 # Ensure the directory exists before mounting

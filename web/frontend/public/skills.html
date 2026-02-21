@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>技能管理 - 小冬瓜智能助手</title>
+    <style>
+        :root{--bg:#f5f7fb;--card:#ffffff;--border:#e5e7eb;--muted:#6b7280;--text:#0f172a;--primary:#6366f1;--primary2:#8b5cf6;--radius:14px;--radius2:10px;--shadow:0 8px 24px rgba(15,23,42,.08);--mono:ui-monospace,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;--sans:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+        *{box-sizing:border-box}
+        body{margin:0;font-family:var(--sans);color:var(--text);background:var(--bg)}
+        .app{max-width:1240px;margin:0 auto;padding:16px}
+        .header{margin-top:6px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);display:flex;align-items:center;justify-content:space-between;box-shadow:var(--shadow)}
+        .brand{font-weight:800;display:flex;align-items:center;gap:10px}
+        .nav{margin:12px 0;display:flex;gap:8px;flex-wrap:wrap}
+        .nav a{display:inline-block;padding:8px 12px;border-radius:999px;background:#fff;border:1px solid var(--border);text-decoration:none;color:#334155;font-weight:700}
+        .nav a.active{background:#eef2ff;border-color:#c7d2fe;color:#4338ca}
+        .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:12px}
+        .panelHeader{padding:10px 12px;border-bottom:1px solid var(--border);background:#f8fafc;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+        .panelTitle{font-weight:800}
+        .btn{height:36px;padding:0 14px;border-radius:10px;border:1px solid var(--border);background:#fff;color:var(--text);cursor:pointer}
+        .btn.primary{border-color:#c7d2fe;background:linear-gradient(135deg,var(--primary) 0%,var(--primary2) 100%);color:#fff}
+        .input,.select{height:36px;border-radius:10px;border:1px solid var(--border);background:#fff;padding:0 12px;outline:none;min-width:160px}
+        .filters{padding:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+        .skillsGrid{display:grid;grid-template-columns:320px 1fr;gap:12px;padding:12px}
+        .listPanel{border:1px solid var(--border);border-radius:12px;background:#f8fafc;overflow:hidden}
+        .listHead{padding:10px 12px;border-bottom:1px solid var(--border);font-weight:800;background:#eef2ff}
+        .skillList{max-height:70vh;overflow:auto;padding:6px}
+        .skillItem{padding:10px;border-radius:10px;border:1px solid transparent;cursor:pointer;display:flex;flex-direction:column;gap:6px;margin-bottom:6px;background:#fff}
+        .skillItem.active{border-color:#c7d2fe;background:#eef2ff}
+        .skillMeta{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+        .pill{font-size:12px;color:var(--muted);background:#f1f5f9;border:1px solid #e2e8f0;padding:4px 8px;border-radius:999px}
+        .detailPanel{border:1px solid var(--border);border-radius:12px;background:#fff;overflow:hidden}
+        .detailBody{padding:12px;display:flex;flex-direction:column;gap:12px}
+        .detailTitle{font-weight:800;font-size:16px}
+        .kv{display:grid;grid-template-columns:120px 1fr;gap:8px;font-size:12px}
+        .kv .key{color:var(--muted);font-weight:700}
+        .mono{font-family:var(--mono);font-size:12px;white-space:pre-wrap;word-break:break-word}
+        .toolList{display:flex;flex-direction:column;gap:6px}
+        .toolItem{padding:8px;border-radius:10px;border:1px solid #e2e8f0;background:#f8fafc;font-size:12px}
+        .empty{font-size:12px;color:var(--muted)}
+        .loadBox{border:1px dashed #cbd5f5;border-radius:12px;padding:10px;background:#eef2ff;font-size:12px}
+        @media (max-width:960px){.skillsGrid{grid-template-columns:1fr}}
+    </style>
+</head>
+<body>
+    <div class="app">
+        <header class="header">
+            <div class="brand"><span>🍈</span><span>技能管理</span></div>
+        </header>
+        <nav class="nav">
+            <a href="/index.html">对话</a>
+            <a href="/logs.html">日志</a>
+            <a href="/config.html">配置</a>
+            <a href="/skills.html" class="active">技能</a>
+            <a href="/templates.html">模板</a>
+            <a href="/memories.html">记忆</a>
+            <a href="/cookies.html">Cookie</a>
+        </nav>
+
+        <section class="card">
+            <div class="panelHeader">
+                <div class="panelTitle">技能列表</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                    <input id="searchInput" class="input" type="text" placeholder="搜索技能/工具" autocomplete="off" />
+                    <select id="scopeSelect" class="select">
+                        <option value="all">全部</option>
+                        <option value="skills">核心技能</option>
+                        <option value="auto_skills">自动技能</option>
+                    </select>
+                    <button id="refreshBtn" class="btn" type="button">刷新</button>
+                    <button id="reloadBtn" class="btn primary" type="button">重载技能</button>
+                </div>
+            </div>
+            <div class="skillsGrid">
+                <div class="listPanel">
+                    <div class="listHead">技能</div>
+                    <div id="skillList" class="skillList"></div>
+                </div>
+                <div class="detailPanel">
+                    <div class="listHead">详情</div>
+                    <div id="detailBody" class="detailBody"></div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        (function(){
+            function el(id){return document.getElementById(id)}
+            var state = {skills:[], filtered:[], selected:null, loadability:null}
+
+            function scopeLabel(scope){
+                return scope === 'skills' ? '核心' : '自动'
+            }
+
+            function buildSkillItem(skill){
+                var wrap = document.createElement('div')
+                wrap.className = 'skillItem' + (state.selected && state.selected.id === skill.id && state.selected.scope === skill.scope ? ' active' : '')
+                var title = document.createElement('div')
+                title.textContent = skill.name
+                var meta = document.createElement('div')
+                meta.className = 'skillMeta'
+                var pillScope = document.createElement('span')
+                pillScope.className = 'pill'
+                pillScope.textContent = scopeLabel(skill.scope)
+                var pillTools = document.createElement('span')
+                pillTools.className = 'pill'
+                pillTools.textContent = '工具 ' + (skill.tool_count || 0)
+                meta.appendChild(pillScope)
+                meta.appendChild(pillTools)
+                wrap.appendChild(title)
+                wrap.appendChild(meta)
+                wrap.onclick = function(){
+                    state.selected = skill
+                    state.loadability = null
+                    renderList()
+                    renderDetail()
+                }
+                return wrap
+            }
+
+            function renderList(){
+                var list = el('skillList')
+                list.textContent = ''
+                if (!state.filtered.length){
+                    var empty = document.createElement('div')
+                    empty.className = 'empty'
+                    empty.textContent = '暂无技能'
+                    list.appendChild(empty)
+                    return
+                }
+                state.filtered.forEach(function(skill){
+                    list.appendChild(buildSkillItem(skill))
+                })
+            }
+
+            function kvRow(key, value, mono){
+                var row = document.createElement('div')
+                row.className = 'kv'
+                var k = document.createElement('div')
+                k.className = 'key'
+                k.textContent = key
+                var v = document.createElement('div')
+                v.textContent = value || '-'
+                if (mono) v.className = 'mono'
+                row.appendChild(k)
+                row.appendChild(v)
+                return row
+            }
+
+            function renderToolList(tools){
+                var wrap = document.createElement('div')
+                wrap.className = 'toolList'
+                if (!tools || !tools.length){
+                    var empty = document.createElement('div')
+                    empty.className = 'empty'
+                    empty.textContent = '暂无工具'
+                    wrap.appendChild(empty)
+                    return wrap
+                }
+                tools.forEach(function(t){
+                    var item = document.createElement('div')
+                    item.className = 'toolItem'
+                    item.textContent = t.name + (t.description ? (' - ' + t.description) : '')
+                    wrap.appendChild(item)
+                })
+                return wrap
+            }
+
+            function renderLoadability(){
+                if (!state.loadability) return null
+                var box = document.createElement('div')
+                box.className = 'loadBox'
+                var status = state.loadability.ok ? '可加载' : '加载异常'
+                box.appendChild(kvRow('状态', status))
+                box.appendChild(kvRow('入口', state.loadability.entry, true))
+                var tools = (state.loadability.tools_found || []).join('\n')
+                box.appendChild(kvRow('发现工具', tools || '-', true))
+                var errors = (state.loadability.errors || []).join('\n')
+                if (errors) box.appendChild(kvRow('错误', errors, true))
+                return box
+            }
+
+            function renderDetail(){
+                var body = el('detailBody')
+                body.textContent = ''
+                if (!state.selected){
+                    var empty = document.createElement('div')
+                    empty.className = 'empty'
+                    empty.textContent = '请选择一个技能'
+                    body.appendChild(empty)
+                    return
+                }
+                var title = document.createElement('div')
+                title.className = 'detailTitle'
+                title.textContent = state.selected.name
+                body.appendChild(title)
+                body.appendChild(kvRow('范围', scopeLabel(state.selected.scope)))
+                body.appendChild(kvRow('版本', state.selected.version))
+                body.appendChild(kvRow('描述', state.selected.description))
+                body.appendChild(kvRow('入口', state.selected.entry, true))
+                body.appendChild(kvRow('平台', (state.selected.platforms || []).join(', ')))
+                body.appendChild(kvRow('依赖', (state.selected.dependencies || []).join(', ')))
+                var toolsTitle = document.createElement('div')
+                toolsTitle.className = 'panelTitle'
+                toolsTitle.textContent = '工具'
+                body.appendChild(toolsTitle)
+                body.appendChild(renderToolList(state.selected.tools || []))
+                var btnRow = document.createElement('div')
+                btnRow.style.display = 'flex'
+                btnRow.style.gap = '8px'
+                var testBtn = document.createElement('button')
+                testBtn.className = 'btn'
+                testBtn.textContent = '可加载性检测'
+                testBtn.onclick = function(){
+                    testLoadability(state.selected)
+                }
+                btnRow.appendChild(testBtn)
+                body.appendChild(btnRow)
+                var loadBox = renderLoadability()
+                if (loadBox) body.appendChild(loadBox)
+            }
+
+            function applyFilter(){
+                var keyword = el('searchInput').value.trim().toLowerCase()
+                var scope = el('scopeSelect').value
+                state.filtered = state.skills.filter(function(s){
+                    if (scope !== 'all' && s.scope !== scope) return false
+                    if (!keyword) return true
+                    var text = (s.name + ' ' + (s.description || '')).toLowerCase()
+                    if (text.indexOf(keyword) !== -1) return true
+                    var tools = s.tools || []
+                    return tools.some(function(t){
+                        return ((t.name || '') + ' ' + (t.description || '')).toLowerCase().indexOf(keyword) !== -1
+                    })
+                })
+                renderList()
+            }
+
+            function loadSkills(){
+                fetch('/api/skills').then(function(r){return r.json()}).then(function(data){
+                    state.skills = data.skills || []
+                    state.filtered = state.skills.slice()
+                    if (state.selected){
+                        var next = state.skills.find(function(s){return s.id === state.selected.id && s.scope === state.selected.scope})
+                        state.selected = next || null
+                    }
+                    applyFilter()
+                    renderDetail()
+                }).catch(function(e){
+                    alert('读取技能失败 ' + e)
+                })
+            }
+
+            function reloadSkills(){
+                fetch('/api/skills/reload', {method:'POST'}).then(function(r){return r.json()}).then(function(){
+                    loadSkills()
+                }).catch(function(e){
+                    alert('重载失败 ' + e)
+                })
+            }
+
+            function testLoadability(skill){
+                state.loadability = null
+                renderDetail()
+                var path = '/api/skills/' + skill.scope + '/' + skill.id + '/loadability'
+                fetch(path).then(function(r){return r.json()}).then(function(data){
+                    state.loadability = data
+                    renderDetail()
+                }).catch(function(e){
+                    state.loadability = {ok:false, entry: skill.entry, tools_found: [], errors: [String(e)]}
+                    renderDetail()
+                })
+            }
+
+            el('searchInput').oninput = applyFilter
+            el('scopeSelect').onchange = applyFilter
+            el('refreshBtn').onclick = loadSkills
+            el('reloadBtn').onclick = reloadSkills
+
+            loadSkills()
+        })()
+    </script>
+</body>
+</html>
