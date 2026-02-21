@@ -9,10 +9,17 @@ import io
 import re
 import zipfile
 import tempfile
+import json
+import time
+import hashlib
+import traceback
 from datetime import datetime
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
 from ..shared import shared
+from app.agent import create_llm
+from app.skills.skillgen_skill.scripts.skill_tools import scaffold_skill, write_tool_code
 
 router = APIRouter()
 
@@ -144,6 +151,242 @@ def _is_abs_path(path: str) -> bool:
         return bool(path) and os.path.isabs(path)
     except Exception:
         return False
+
+def _safe_json_loads(text: str) -> Optional[Any]:
+    s = str(text or "").strip()
+    if not s:
+        return None
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+    start = s.find("{")
+    end = s.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        frag = s[start : end + 1]
+        try:
+            return json.loads(frag)
+        except Exception:
+            return None
+    return None
+
+def _normalize_skill_name(name: str, fallback_text: str = "") -> str:
+    raw = str(name or "").strip()
+    if raw and re.match(r"^[a-zA-Z][a-zA-Z0-9_]*$", raw):
+        return raw
+    base = "gen"
+    m = re.findall(r"[a-zA-Z][a-zA-Z0-9_]{2,}", str(fallback_text or ""))
+    if m:
+        base = m[0][:24]
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    h = hashlib.sha256((fallback_text or ts).encode("utf-8", errors="ignore")).hexdigest()[:6]
+    out = f"{base}_{ts}_{h}"
+    out = re.sub(r"[^a-zA-Z0-9_]+", "_", out)
+    if not re.match(r"^[a-zA-Z]", out):
+        out = "gen_" + out
+    return out[:60]
+
+def _coerce_arg_default(arg_type: str):
+    t = (arg_type or "str").strip().lower()
+    if t == "int":
+        return 0
+    if t == "float":
+        return 0.0
+    if t == "bool":
+        return False
+    if t in {"list", "dict"}:
+        return None
+    return ""
+
+def _python_literal(v: Any) -> str:
+    if v is None:
+        return "None"
+    if isinstance(v, bool):
+        return "True" if v else "False"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, (list, dict)):
+        return "None"
+    return json.dumps(str(v), ensure_ascii=False)
+
+def _build_tool_module(tool: Dict[str, Any]) -> str:
+    tool_name = str(tool.get("name") or "").strip()
+    tool_desc = str(tool.get("description") or "工具").strip()
+    args = tool.get("args") or []
+    type_map = {"str": "str", "int": "int", "float": "float", "bool": "bool", "list": "list", "dict": "dict"}
+
+    sig_parts = []
+    doc_parts = []
+    in_payload_parts = []
+    for a in args:
+        if not isinstance(a, dict):
+            continue
+        an = str(a.get("name") or "").strip()
+        if not an or not re.match(r"^[a-zA-Z][a-zA-Z0-9_]*$", an):
+            continue
+        at = type_map.get(str(a.get("type") or "str").lower(), "str")
+        if "default" in a:
+            dv = a.get("default")
+        else:
+            dv = _coerce_arg_default(at)
+        sig_parts.append(f"{an}: {at} = {_python_literal(dv)}")
+        ad = str(a.get("description") or "").strip()
+        if ad:
+            doc_parts.append(f"    {an}: {ad}")
+        in_payload_parts.append(f"        \"{an}\": {an},")
+
+    sig = ", ".join(sig_parts)
+    if sig:
+        sig = " " + sig
+    doc = ""
+    if doc_parts:
+        doc = "\n\n    Args:\n" + "\n".join(doc_parts)
+
+    return "\n".join([
+        "from langchain_core.tools import tool",
+        "from typing import Dict, Any",
+        "",
+        "@tool",
+        f"def {tool_name}({sig.strip()}):",
+        '    """',
+        f"    {tool_desc}{doc}",
+        '    """',
+        "    payload: Dict[str, Any] = {\"ok\": True, \"message\": \"ok\"}",
+        "    payload[\"input\"] = {",
+        *in_payload_parts,
+        "    }",
+        "    return payload",
+        "",
+    ])
+
+def _validate_spec(spec: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+    errors: List[str] = []
+    if not isinstance(spec, dict):
+        return {}, ["spec 必须为对象"]
+    skill_name = str(spec.get("skill_name") or spec.get("name") or "").strip()
+    description = str(spec.get("description") or "").strip()
+    tools = spec.get("tools") or []
+    tests = spec.get("tests") or []
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_]*$", skill_name):
+        errors.append("skill_name 非法（仅字母/数字/下划线，且以字母开头）")
+    if not isinstance(tools, list) or not tools:
+        errors.append("tools 必须为非空数组")
+    clean_tools: List[Dict[str, Any]] = []
+    for t in tools if isinstance(tools, list) else []:
+        if not isinstance(t, dict):
+            continue
+        tn = str(t.get("name") or "").strip()
+        td = str(t.get("description") or "工具").strip()
+        if not tn or not re.match(r"^[a-zA-Z][a-zA-Z0-9_]*$", tn):
+            continue
+        args = t.get("args") or []
+        clean_args = []
+        if isinstance(args, list):
+            for a in args:
+                if not isinstance(a, dict):
+                    continue
+                an = str(a.get("name") or "").strip()
+                if not an or not re.match(r"^[a-zA-Z][a-zA-Z0-9_]*$", an):
+                    continue
+                clean_args.append({
+                    "name": an,
+                    "type": str(a.get("type") or "str"),
+                    "default": a.get("default") if "default" in a else None,
+                    "description": str(a.get("description") or "")
+                })
+        clean_tools.append({"name": tn, "description": td, "args": clean_args})
+    if tools and not clean_tools:
+        errors.append("tools 中没有可用的工具定义")
+
+    clean_tests = []
+    if isinstance(tests, list):
+        for it in tests:
+            if not isinstance(it, dict):
+                continue
+            tool = str(it.get("tool") or "").strip()
+            args = it.get("args") if isinstance(it.get("args"), dict) else {}
+            expect_ok = True if it.get("expect_ok") is None else bool(it.get("expect_ok"))
+            contains = it.get("contains")
+            clean_tests.append({"tool": tool, "args": args, "expect_ok": expect_ok, "contains": contains})
+
+    return {
+        "skill_name": skill_name,
+        "description": description,
+        "tools": clean_tools,
+        "tests": clean_tests
+    }, errors
+
+def _run_loadability(scope: str, skill_id: str) -> Dict[str, Any]:
+    entry = _build_entry(scope, skill_id)
+    tools, errors = _discover_tools(entry)
+    return {"ok": not errors, "entry": entry, "tools_found": tools, "errors": errors}
+
+def _run_tool_tests(skill_name: str, tests: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    import importlib as _importlib
+    _importlib.invalidate_caches()
+    results: List[Dict[str, Any]] = []
+    for t in (tests or []):
+        tool = str((t or {}).get("tool") or "").strip()
+        args = (t or {}).get("args") if isinstance((t or {}).get("args"), dict) else {}
+        expect_ok = True if (t or {}).get("expect_ok") is None else bool((t or {}).get("expect_ok"))
+        contains = (t or {}).get("contains")
+        if not tool:
+            continue
+        module_name = f"app.auto_skills.{skill_name}.scripts.{tool}"
+        try:
+            mod = _importlib.import_module(module_name)
+            obj = getattr(mod, tool, None)
+            if obj is None or not hasattr(obj, "invoke"):
+                results.append({"tool": tool, "ok": False, "error": f"未找到可调用工具: {tool}", "result": None})
+                continue
+            out = obj.invoke(args)
+            ok = True
+            if expect_ok:
+                ok = isinstance(out, dict) and out.get("ok") is True
+            if ok and contains is not None:
+                ok = str(contains) in json.dumps(out, ensure_ascii=False)
+            results.append({"tool": tool, "ok": ok, "error": "" if ok else "断言失败", "result": out})
+        except Exception as e:
+            results.append({"tool": tool, "ok": False, "error": str(e), "result": None})
+    return results
+
+class GenerateSkillPayload(BaseModel):
+    request: str = Field(default="")
+    skill_name: str = Field(default="")
+    overwrite: bool = Field(default=False)
+    dry_run: bool = Field(default=False)
+    spec: Dict[str, Any] = Field(default_factory=dict)
+
+def _llm_generate_spec(requirement: str, skill_name_hint: str = "") -> Dict[str, Any]:
+    llm = create_llm()
+    sys_text = "\n".join([
+        "你是资深 Python 工程师，请把用户需求转成一个“技能规格”JSON。",
+        "只输出 JSON，不要输出 markdown，不要解释。",
+        "JSON schema:",
+        "{",
+        "  \"skill_name\": \"snake_case, 以字母开头\",",
+        "  \"description\": \"一句话描述\",",
+        "  \"tools\": [",
+        "    {",
+        "      \"name\": \"tool_name\",",
+        "      \"description\": \"工具描述\",",
+        "      \"args\": [{\"name\":\"arg\",\"type\":\"str|int|float|bool|list|dict\",\"default\":null,\"description\":\"\"}]",
+        "    }",
+        "  ],",
+        "  \"tests\": [{\"tool\":\"tool_name\",\"args\":{},\"expect_ok\":true,\"contains\":\"可选子串\"}]",
+        "}",
+        "约束：工具数量 1-3 个；参数名必须是合法 Python 标识符；尽量给出 tests。",
+    ])
+    user_text = f"需求：{requirement.strip()}\nskill_name_hint：{skill_name_hint.strip()}"
+    resp = llm.invoke([
+        {"role": "system", "content": sys_text},
+        {"role": "user", "content": user_text},
+    ])
+    text = getattr(resp, "content", "") if resp is not None else ""
+    parsed = _safe_json_loads(text)
+    if isinstance(parsed, dict):
+        return parsed
+    raise ValueError("LLM 未返回可解析的 JSON 规格")
 
 def _safe_rmtree(path: str):
     if os.path.exists(path):
@@ -454,6 +697,98 @@ async def list_skills():
 async def reload_skills():
     shared.put_input("__RELOAD_SKILLS__")
     return {"ok": True}
+
+@router.post("/generate")
+async def generate_skill(payload: GenerateSkillPayload):
+    started_at = time.time()
+    try:
+        req_text = str(payload.request or "")
+        overwrite = bool(payload.overwrite)
+        dry_run = bool(payload.dry_run)
+
+        spec_raw: Optional[Dict[str, Any]] = None
+        if isinstance(payload.spec, dict) and payload.spec:
+            spec_raw = payload.spec
+        if spec_raw is None:
+            parsed = _safe_json_loads(req_text)
+            if isinstance(parsed, dict) and ("tools" in parsed or "skill_name" in parsed or "name" in parsed):
+                spec_raw = parsed
+        if spec_raw is None:
+            spec_raw = _llm_generate_spec(req_text, payload.skill_name)
+
+        if not isinstance(spec_raw, dict):
+            raise HTTPException(status_code=400, detail="无法生成规格")
+
+        if payload.skill_name.strip():
+            spec_raw["skill_name"] = payload.skill_name.strip()
+        if "skill_name" not in spec_raw and "name" in spec_raw:
+            spec_raw["skill_name"] = spec_raw.get("name")
+        spec_raw["skill_name"] = _normalize_skill_name(spec_raw.get("skill_name"), req_text)
+
+        spec, errors = _validate_spec(spec_raw)
+        if errors:
+            raise HTTPException(status_code=400, detail="; ".join(errors))
+
+        tools = spec.get("tools") or []
+        tests = spec.get("tests") or []
+        if not tests:
+            auto_tests = []
+            for t in tools:
+                args = {}
+                for a in (t.get("args") or []):
+                    at = str(a.get("type") or "str")
+                    an = str(a.get("name") or "")
+                    dv = a.get("default") if "default" in a and a.get("default") is not None else _coerce_arg_default(at)
+                    if an:
+                        args[an] = dv
+                auto_tests.append({"tool": t.get("name"), "args": args, "expect_ok": True})
+            tests = auto_tests
+
+        plan = {
+            "skill_name": spec.get("skill_name"),
+            "description": spec.get("description") or "",
+            "tools": [{"name": t.get("name"), "description": t.get("description"), "args": t.get("args") or []} for t in tools],
+            "tests": tests,
+        }
+        if dry_run:
+            return {"ok": True, "dry_run": True, "plan": plan, "elapsed_ms": int((time.time() - started_at) * 1000)}
+
+        scaffold_out = scaffold_skill(plan["skill_name"], plan["tools"], description=plan["description"], overwrite=overwrite)
+        scaffold_data = _safe_json_loads(scaffold_out)
+        if not isinstance(scaffold_data, dict):
+            raise HTTPException(status_code=500, detail=f"脚手架生成失败: {scaffold_out}")
+
+        write_results = []
+        for t in tools:
+            tool_name = str(t.get("name") or "").strip()
+            if not tool_name:
+                continue
+            code = _build_tool_module(t)
+            root = _get_project_root()
+            fp = os.path.join(root, "app", "auto_skills", plan["skill_name"], "scripts", f"{tool_name}.py")
+            r = write_tool_code(fp, code=code)
+            write_results.append({"tool": tool_name, "file": fp, "result": r})
+
+        loadability = _run_loadability("auto_skills", plan["skill_name"])
+        test_results = _run_tool_tests(plan["skill_name"], tests)
+
+        shared.put_input("__RELOAD_SKILLS__")
+
+        return {
+            "ok": True,
+            "dry_run": False,
+            "plan": plan,
+            "scaffold": scaffold_data,
+            "write_results": write_results,
+            "loadability": loadability,
+            "tests": test_results,
+            "elapsed_ms": int((time.time() - started_at) * 1000),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        tb = traceback.format_exc(limit=8)
+        raise HTTPException(status_code=500, detail=f"{e}\n{tb}")
 
 @router.get("/{scope}/{skill_id}/loadability")
 async def test_loadability(scope: str, skill_id: str):

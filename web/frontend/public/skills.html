@@ -64,6 +64,7 @@
                     </select>
                     <button id="selectAllBtn" class="btn" type="button">全选(过滤)</button>
                     <button id="clearSelectionBtn" class="btn" type="button">清空选择</button>
+                    <button id="createSkillBtn" class="btn primary" type="button">新增技能</button>
                     <button id="exportBtn" class="btn primary" type="button">导出Agent</button>
                     <button id="refreshBtn" class="btn" type="button">刷新</button>
                     <button id="reloadBtn" class="btn primary" type="button">重载技能</button>
@@ -96,6 +97,26 @@
                 </div>
                 <textarea id="promptEditor" class="textarea" placeholder="在这里编辑导出 Agent 的 system prompt"></textarea>
                 <div class="empty">skillgen_skill 不允许导出；system_skill 会自动精简为记忆/经验相关工具。</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="createMask" class="modalMask">
+        <div class="modal">
+            <div class="modalHeader">
+                <div class="panelTitle">新增技能</div>
+                <button id="createCloseBtn" class="btn" type="button">关闭</button>
+            </div>
+            <div class="modalBody">
+                <div class="row">
+                    <input id="createSkillName" class="input" type="text" placeholder="skill_name（可选）" autocomplete="off" />
+                    <label class="pill"><input id="createOverwrite" type="checkbox" /> 覆盖同名</label>
+                    <label class="pill"><input id="createDryRun" type="checkbox" checked /> 仅预览</label>
+                    <button id="createRunBtn" class="btn primary" type="button">生成</button>
+                </div>
+                <textarea id="createRequest" class="textarea" placeholder="输入自然语言需求（或直接粘贴 JSON 规格）"></textarea>
+                <textarea id="createOutput" class="textarea" style="min-height:220px" placeholder="输出" readonly></textarea>
+                <div class="empty">提示：未配置模型密钥时，可先粘贴 JSON 规格并取消“仅预览”生成文件。</div>
             </div>
         </div>
     </div>
@@ -174,6 +195,56 @@
 
             function closeExportModal(){
                 el('exportMask').style.display = 'none'
+            }
+
+            function openCreateModal(){
+                el('createMask').style.display = 'flex'
+                el('createRequest').value = ''
+                el('createOutput').value = ''
+                el('createSkillName').value = ''
+                el('createOverwrite').checked = false
+                el('createDryRun').checked = true
+            }
+
+            function closeCreateModal(){
+                el('createMask').style.display = 'none'
+            }
+
+            async function runCreate(){
+                var req = (el('createRequest').value || '').trim()
+                if (!req){
+                    alert('请输入需求或 JSON 规格')
+                    return
+                }
+                var payload = {
+                    request: req,
+                    skill_name: (el('createSkillName').value || '').trim(),
+                    overwrite: !!el('createOverwrite').checked,
+                    dry_run: !!el('createDryRun').checked
+                }
+                el('createRunBtn').disabled = true
+                el('createOutput').value = '处理中...'
+                try{
+                    var resp = await fetch('/api/skills/generate', {
+                        method:'POST',
+                        headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify(payload)
+                    })
+                    var data = await resp.json().catch(function(){ return null })
+                    if (!resp.ok){
+                        var msg = data && data.detail ? data.detail : ('HTTP ' + resp.status)
+                        el('createOutput').value = '失败：' + msg
+                        return
+                    }
+                    el('createOutput').value = JSON.stringify(data, null, 2)
+                    if (data && data.ok && !data.dry_run){
+                        loadSkills()
+                    }
+                }catch(e){
+                    el('createOutput').value = '失败：' + e
+                }finally{
+                    el('createRunBtn').disabled = false
+                }
             }
 
             function parseContentDispositionFilename(v){
@@ -422,11 +493,17 @@
                 state.selectedKeys = {}
                 renderList()
             }
+            el('createSkillBtn').onclick = openCreateModal
             el('exportBtn').onclick = openExportModal
             el('exportCloseBtn').onclick = closeExportModal
             el('exportMask').onclick = function(e){
                 if (e.target === el('exportMask')) closeExportModal()
             }
+            el('createCloseBtn').onclick = closeCreateModal
+            el('createMask').onclick = function(e){
+                if (e.target === el('createMask')) closeCreateModal()
+            }
+            el('createRunBtn').onclick = runCreate
             el('genPromptBtn').onclick = function(){
                 el('promptEditor').value = generateDefaultPrompt(getSelectedSkills())
             }
