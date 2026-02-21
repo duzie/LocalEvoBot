@@ -47,6 +47,10 @@
         .bubble.user{background:#fee2e2;color:#1f2937}
         .bubble.agent{background:#dbeafe;color:#1f2937}
         .bubble.system{background:#f1f5f9;color:#475569;font-size:12px;font-style:italic}
+        .bubbleDetails{margin-top:8px;border:1px dashed #cbd5f5;border-radius:10px;padding:6px;background:#eef2ff}
+        .bubbleDetails summary{cursor:pointer;font-weight:700;color:#334155;list-style:none}
+        .bubbleDetails summary::-webkit-details-marker{display:none}
+        .bubbleDetailsBody{margin:6px 0 0 0;white-space:pre-wrap;word-break:break-word;font-family:var(--mono);font-size:12px;color:#475569}
         .auxMsg{display:flex;margin:10px 0}
         .auxBubble{width:100%;padding:10px 12px;border-radius:14px;white-space:pre-wrap;word-break:break-word;box-shadow:0 6px 18px rgba(15,23,42,.06);background:#f8fafc;color:#475569;font-size:12px}
         .confirmInline{display:none;margin:12px;padding:12px;border-radius:12px;border:1px solid var(--border);background:#fff;box-shadow:var(--shadow);flex-direction:column;gap:10px}
@@ -160,7 +164,7 @@
     <script>
         (function(){
             function el(id){return document.getElementById(id)}
-            var state = {chatConnected:false,logConnected:false,chatWs:null,logWs:null,modelCurrent:'doubao',modelOptions:[],lastAgentBubble:null,auxCapture:false,isSending:false,isRunning:false,confirmTimer:null,confirmCountdown:null,roleLogs:[],roleLogSelected:''}
+            var state = {chatConnected:false,logConnected:false,chatWs:null,logWs:null,modelCurrent:'doubao',modelOptions:[],lastAgentBubble:null,lastAgentContent:'',auxCapture:false,isSending:false,isRunning:false,confirmTimer:null,confirmCountdown:null,roleLogs:[],roleLogSelected:''}
 
             function setOnline(online){
                 var dot = el('statusDot')
@@ -312,6 +316,61 @@
                 list.scrollTop = list.scrollHeight
             }
 
+
+            function isDetailLine(line){
+                var text = String(line || '').trim()
+                if (!text) return false
+                var lower = text.toLowerCase()
+                if (text.indexOf('Invoking:') === 0 || text.indexOf('responded:') === 0 || text.indexOf('Tool:') === 0 || text.indexOf('tool:') === 0) return true
+                if (lower.indexOf('thought:') === 0 || lower.indexOf('reasoning:') === 0) return true
+                if (text.indexOf('思考:') === 0 || text.indexOf('思考：') === 0 || text.indexOf('分析:') === 0 || text.indexOf('分析：') === 0 || text.indexOf('推理:') === 0 || text.indexOf('推理：') === 0) return true
+                if (text.indexOf('调用工具') !== -1 || text.indexOf('工具调用') !== -1) return true
+                return false
+            }
+
+            function renderAgentBubble(bubble, content){
+                bubble.textContent = ''
+                var lines = String(content || '').replace(/\r/g, '').split('\n')
+                var mainLines = []
+                var detailLines = []
+                var lastDetail = false
+                for (var i = 0; i < lines.length; i++){
+                    var line = lines[i]
+                    var trimmed = line.trim()
+                    var detail = isDetailLine(line)
+                    if (!detail && lastDetail){
+                        if (trimmed === '' || trimmed.indexOf('{') === 0 || trimmed.indexOf('[') === 0 || trimmed.indexOf('}') === 0 || trimmed.indexOf(']') === 0){
+                            detail = true
+                        }
+                    }
+                    if (detail){
+                        detailLines.push(line)
+                        lastDetail = true
+                    }else{
+                        mainLines.push(line)
+                        lastDetail = false
+                    }
+                }
+                if (mainLines.length){
+                    var main = document.createElement('div')
+                    main.className = 'bubbleMain'
+                    main.textContent = mainLines.join('\n')
+                    bubble.appendChild(main)
+                }
+                if (detailLines.length){
+                    var details = document.createElement('details')
+                    details.className = 'bubbleDetails'
+                    var summary = document.createElement('summary')
+                    summary.textContent = '工具/思考详情'
+                    var pre = document.createElement('pre')
+                    pre.className = 'bubbleDetailsBody'
+                    pre.textContent = detailLines.join('\n')
+                    details.appendChild(summary)
+                    details.appendChild(pre)
+                    bubble.appendChild(details)
+                }
+            }
+
             function appendChatMessage(raw, opts){
                 var msg = (raw == null ? '' : String(raw))
                 if (!msg) return
@@ -348,6 +407,7 @@
                     if (agentText.indexOf('已生成个人认知总结') !== -1 || agentText.indexOf('检索到可用模板') !== -1){
                         state.auxCapture = true
                         state.lastAgentBubble = null
+                        state.lastAgentContent = ''
                         appendAuxMessage(msg.replace(/\r/g, ''))
                         return
                     }
@@ -356,6 +416,8 @@
 
                 if (isUser){
                     state.auxCapture = false
+                    state.lastAgentBubble = null
+                    state.lastAgentContent = ''
                 }
 
                 if (!isUser && !isAgent && !isSystem && state.lastAgentBubble){
@@ -363,7 +425,8 @@
                         appendAuxMessage(msg.replace(/\r/g, ''))
                         return
                     }
-                    state.lastAgentBubble.textContent += msg
+                    state.lastAgentContent = (state.lastAgentContent || '') + msg
+                    renderAgentBubble(state.lastAgentBubble, state.lastAgentContent)
                     el('chatList').scrollTop = el('chatList').scrollHeight
                     return
                 }
@@ -380,11 +443,13 @@
                 if (isAgent){
                     var content = msg.slice('Agent:'.length)
                     if (content.startsWith(' ')) content = content.slice(1)
-                    bubble.textContent = content
+                    renderAgentBubble(bubble, content)
                     state.lastAgentBubble = bubble
+                    state.lastAgentContent = content
                 }else{
                     bubble.textContent = msg
                     state.lastAgentBubble = null
+                    state.lastAgentContent = ''
                 }
                 wrap.appendChild(bubble)
                 el('chatList').appendChild(wrap)
