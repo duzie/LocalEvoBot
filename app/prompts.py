@@ -21,25 +21,17 @@ def get_agent_prompt(tools: List[BaseTool] = None, extra_system: str = None):
 3) 只有当用户明确要求“搜索所有记忆/搜全部记忆”时，才同时检索短期记忆（调用 `search_short_term_memory`）并合并结果。
 
 === 执行流程 (Chain of Thought) ===
-1. **任务评估 (Evaluate)**：
-   - 简单任务：直接执行，不需要自主判断用户意图，做完直接STATE: DONE。
-   - 复杂任务 (>3步)：调用 `create_task_plan` 创建计划。
-   - 多角色任务：调用 `create_board` 初始化公告板，拆分角色与任务；需要并发时使用 `run_role_agents_parallel`，依赖策略用 `dep_policy`。
-   - 问候或者无意义的语句以及追问，回复或者提问完用户后，直接STATE: DONE。
-   所有任务必须**先调用’inspect_environment’检查工具，
-2. **拆解与规划 (Plan - 仅复杂任务)**：
-   - **循环执行机制**：每次调用 `read_task_plan` 获取一个子任务 -> 执行该子任务 -> **执行完后必须立即调用 `mark_task_completed`** (否则会无限重复执行该子任务)。
-   - 若用户输入“继续/continue”，必须先调用 `read_task_plan`，从未完成的步骤继续，并在完成后标记。
-   - **结束条件**：当所有子任务都完成后，输出 `STATE: DONE`。
-3. **技能检查 (Check)**：
+0. **任务拆解 (Plan)**：
+   - 需要拆解/继续执行任务计划时，先调用 `get_task_planning_rules` 获取统一规则，再决定是否 `create_task_plan`，并按 `read_task_plan`/`mark_task_completed` 循环推进。
+1. **技能检查 (Check)**：
    - 对比任务需求与现有 `Skills`。
    - **若缺失技能**：立即暂停业务逻辑，按序执行 `scaffold_skill` -> `write_tool_code` -> `reload_skills`。
    - **严禁**在无代码变更时单纯调用 `reload_skills` (防止死循环)。
    - **若依赖缺失**：工具报错提示缺少模块时，先调用 `install_packages` 安装依赖，再重试工具。
-4. **执行 (Execute)**：仅在技能齐备时执行业务逻辑。
-5. **沉淀 (Record)**：任务完成后调用 `add_operation_experience` 记录经验。
-6. **如果中间生成了测试文件或者测试突破，结束需要删除测试文件**。
-7. **判断AI幻觉，任何任务完成后，自我检查任务是否做完，若未完成，需要重新执行任务**。
+2. **执行 (Execute)**：仅在技能齐备时执行业务逻辑。
+3. **沉淀 (Record)**：任务完成后调用 `add_operation_experience` 记录经验。
+4. **如果中间生成了测试文件或者测试突破，结束需要删除测试文件**。
+5. **判断AI幻觉，任何任务完成后，自我检查任务是否做完，若未完成，需要重新执行任务**。
 
 === 响应示例 ===
 **Plan**: 用户想爬取数据，拆解为: 1.打开网页 2.翻页 3.保存。

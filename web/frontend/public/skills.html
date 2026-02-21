@@ -27,6 +27,9 @@
         .skillList{max-height:70vh;overflow:auto;padding:6px}
         .skillItem{padding:10px;border-radius:10px;border:1px solid transparent;cursor:pointer;display:flex;flex-direction:column;gap:6px;margin-bottom:6px;background:#fff}
         .skillItem.active{border-color:#c7d2fe;background:#eef2ff}
+        .skillRow{display:flex;align-items:center;gap:10px}
+        .skillName{font-weight:800;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .check{width:16px;height:16px}
         .skillMeta{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
         .pill{font-size:12px;color:var(--muted);background:#f1f5f9;border:1px solid #e2e8f0;padding:4px 8px;border-radius:999px}
         .detailPanel{border:1px solid var(--border);border-radius:12px;background:#fff;overflow:hidden}
@@ -39,6 +42,13 @@
         .toolItem{padding:8px;border-radius:10px;border:1px solid #e2e8f0;background:#f8fafc;font-size:12px}
         .empty{font-size:12px;color:var(--muted)}
         .loadBox{border:1px dashed #cbd5f5;border-radius:12px;padding:10px;background:#eef2ff;font-size:12px}
+        .modalMask{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;padding:16px}
+        .modal{width:min(920px,100%);background:#fff;border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+        .modalHeader{padding:12px 14px;border-bottom:1px solid var(--border);background:#f8fafc;display:flex;align-items:center;justify-content:space-between;gap:10px}
+        .modalBody{padding:12px;display:flex;flex-direction:column;gap:10px}
+        .textarea{width:100%;min-height:320px;border-radius:12px;border:1px solid var(--border);padding:10px;font-family:var(--mono);font-size:12px;outline:none;resize:vertical}
+        .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+        .row .input{min-width:240px}
         @media (max-width:960px){.skillsGrid{grid-template-columns:1fr}}
     </style>
 </head>
@@ -61,12 +71,16 @@
             <div class="panelHeader">
                 <div class="panelTitle">技能列表</div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                    <span class="pill">已选 <span id="selectedCount">0</span></span>
                     <input id="searchInput" class="input" type="text" placeholder="搜索技能/工具" autocomplete="off" />
                     <select id="scopeSelect" class="select">
                         <option value="all">全部</option>
                         <option value="skills">核心技能</option>
                         <option value="auto_skills">自动技能</option>
                     </select>
+                    <button id="selectAllBtn" class="btn" type="button">全选(过滤)</button>
+                    <button id="clearSelectionBtn" class="btn" type="button">清空选择</button>
+                    <button id="exportBtn" class="btn primary" type="button">导出Agent</button>
                     <button id="refreshBtn" class="btn" type="button">刷新</button>
                     <button id="reloadBtn" class="btn primary" type="button">重载技能</button>
                 </div>
@@ -84,10 +98,125 @@
         </section>
     </div>
 
+    <div id="exportMask" class="modalMask">
+        <div class="modal">
+            <div class="modalHeader">
+                <div class="panelTitle">导出 Agent</div>
+                <button id="exportCloseBtn" class="btn" type="button">关闭</button>
+            </div>
+            <div class="modalBody">
+                <div class="row">
+                    <input id="exportFilename" class="input" type="text" placeholder="文件名（不含 .zip）" autocomplete="off" />
+                    <button id="genPromptBtn" class="btn" type="button">自动生成提示词</button>
+                    <button id="saveZipBtn" class="btn primary" type="button">另存为 ZIP</button>
+                </div>
+                <textarea id="promptEditor" class="textarea" placeholder="在这里编辑导出 Agent 的 system prompt"></textarea>
+                <div class="empty">skillgen_skill 不允许导出；system_skill 会自动精简为记忆/经验相关工具。</div>
+            </div>
+        </div>
+    </div>
+
     <script>
         (function(){
             function el(id){return document.getElementById(id)}
-            var state = {skills:[], filtered:[], selected:null, loadability:null}
+            var state = {skills:[], filtered:[], selected:null, loadability:null, selectedKeys:{}}
+
+            function keyOf(skill){
+                return skill.scope + ':' + skill.id
+            }
+
+            function setSelected(skill, checked){
+                var k = keyOf(skill)
+                if (checked) state.selectedKeys[k] = true
+                else delete state.selectedKeys[k]
+                renderSelectedCount()
+            }
+
+            function renderSelectedCount(){
+                el('selectedCount').textContent = String(Object.keys(state.selectedKeys).length)
+            }
+
+            function getSelectedSkills(){
+                var keys = state.selectedKeys
+                return state.skills.filter(function(s){ return !!keys[keyOf(s)] })
+            }
+
+            function generateDefaultPrompt(skills){
+                var lines = []
+                lines.push('你是一个专用的自动化 Agent。')
+                lines.push('')
+                lines.push('=== 约束 ===')
+                lines.push('1. 仅使用“可用技能”里列出的工具完成任务。')
+                lines.push('2. 如果缺少工具或无权限，明确说明无法完成，并给出你需要的工具名称。')
+                lines.push('3. 每次回复最后一行必须输出 `STATE: DONE` 或 `STATE: CONTINUE`。')
+                lines.push('')
+                lines.push('=== 可用技能 ===')
+                if (!skills.length){
+                    lines.push('- (空)')
+                } else {
+                    skills.forEach(function(s){
+                        lines.push('- ' + s.name + ' (' + s.scope + '/' + s.id + ')')
+                        var toolNames = (s.tools || []).map(function(t){return t.name}).filter(Boolean)
+                        if (toolNames.length){
+                            lines.push('  工具: ' + toolNames.join(', '))
+                        }
+                    })
+                }
+                lines.push('')
+                if (skills.some(function(s){ return s.scope === 'skills' && s.id === 'system_skill' })){
+                    lines.push('=== 记忆与经验 ===')
+                    lines.push('1) 遇到不确定或缺少背景时，先调用 `get_operation_experience` 检索长期经验。')
+                    lines.push('2) 只有用户明确要求“搜索所有记忆/搜全部记忆”时，才调用 `search_short_term_memory`。')
+                    lines.push('3) 任务完成后可调用 `add_operation_experience` 记录新经验。')
+                    lines.push('')
+                }
+                return lines.join('\n')
+            }
+
+            function openExportModal(){
+                var skills = getSelectedSkills()
+                if (!skills.length){
+                    alert('请先勾选要导出的技能')
+                    return
+                }
+                el('exportMask').style.display = 'flex'
+                var name = 'agent'
+                if (skills.length === 1) name = skills[0].id
+                el('exportFilename').value = name
+                el('promptEditor').value = generateDefaultPrompt(skills)
+            }
+
+            function closeExportModal(){
+                el('exportMask').style.display = 'none'
+            }
+
+            function parseContentDispositionFilename(v){
+                if (!v) return ''
+                var m = /filename="([^"]+)"/.exec(v)
+                if (m && m[1]) return m[1]
+                return ''
+            }
+
+            async function saveZipWithDialog(blob, suggestedName){
+                if (window.showSaveFilePicker){
+                    var handle = await window.showSaveFilePicker({
+                        suggestedName: suggestedName || 'agent.zip',
+                        types: [{description:'ZIP', accept:{'application/zip':['.zip']}}]
+                    })
+                    var writable = await handle.createWritable()
+                    await writable.write(blob)
+                    await writable.close()
+                    return
+                }
+                var url = URL.createObjectURL(blob)
+                var a = document.createElement('a')
+                a.href = url
+                a.download = suggestedName || 'agent.zip'
+                document.body.appendChild(a)
+                a.click()
+                a.remove()
+                setTimeout(function(){ URL.revokeObjectURL(url) }, 30000)
+            }
 
             function scopeLabel(scope){
                 return scope === 'skills' ? '核心' : '自动'
@@ -96,8 +225,28 @@
             function buildSkillItem(skill){
                 var wrap = document.createElement('div')
                 wrap.className = 'skillItem' + (state.selected && state.selected.id === skill.id && state.selected.scope === skill.scope ? ' active' : '')
+                var row = document.createElement('div')
+                row.className = 'skillRow'
+                var cb = document.createElement('input')
+                cb.type = 'checkbox'
+                cb.className = 'check'
+                var exportBlocked = (skill.scope === 'skills' && skill.id === 'skillgen_skill')
+                if (exportBlocked) cb.disabled = true
+                cb.checked = !!state.selectedKeys[keyOf(skill)]
+                cb.onclick = function(e){
+                    e.stopPropagation()
+                    if (exportBlocked){
+                        alert('skillgen_skill 不允许导出')
+                        cb.checked = false
+                        return
+                    }
+                    setSelected(skill, cb.checked)
+                }
                 var title = document.createElement('div')
+                title.className = 'skillName'
                 title.textContent = skill.name
+                row.appendChild(cb)
+                row.appendChild(title)
                 var meta = document.createElement('div')
                 meta.className = 'skillMeta'
                 var pillScope = document.createElement('span')
@@ -108,7 +257,7 @@
                 pillTools.textContent = '工具 ' + (skill.tool_count || 0)
                 meta.appendChild(pillScope)
                 meta.appendChild(pillTools)
-                wrap.appendChild(title)
+                wrap.appendChild(row)
                 wrap.appendChild(meta)
                 wrap.onclick = function(){
                     state.selected = skill
@@ -132,6 +281,7 @@
                 state.filtered.forEach(function(skill){
                     list.appendChild(buildSkillItem(skill))
                 })
+                renderSelectedCount()
             }
 
             function kvRow(key, value, mono){
@@ -247,6 +397,7 @@
                     }
                     applyFilter()
                     renderDetail()
+                    renderSelectedCount()
                 }).catch(function(e){
                     alert('读取技能失败 ' + e)
                 })
@@ -277,6 +428,54 @@
             el('scopeSelect').onchange = applyFilter
             el('refreshBtn').onclick = loadSkills
             el('reloadBtn').onclick = reloadSkills
+            el('selectAllBtn').onclick = function(){
+                state.filtered.forEach(function(s){ setSelected(s, true) })
+                renderList()
+            }
+            el('clearSelectionBtn').onclick = function(){
+                state.selectedKeys = {}
+                renderList()
+            }
+            el('exportBtn').onclick = openExportModal
+            el('exportCloseBtn').onclick = closeExportModal
+            el('exportMask').onclick = function(e){
+                if (e.target === el('exportMask')) closeExportModal()
+            }
+            el('genPromptBtn').onclick = function(){
+                el('promptEditor').value = generateDefaultPrompt(getSelectedSkills())
+            }
+            el('saveZipBtn').onclick = async function(){
+                var skills = getSelectedSkills().map(function(s){ return {scope:s.scope, id:s.id} })
+                if (!skills.length){
+                    alert('请先勾选要导出的技能')
+                    return
+                }
+                var filename = (el('exportFilename').value || '').trim() || 'agent'
+                var agentPrompt = el('promptEditor').value || ''
+                el('saveZipBtn').disabled = true
+                try{
+                    var resp = await fetch('/api/skills/export_zip', {
+                        method:'POST',
+                        headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify({skills: skills, filename: filename, agent_prompt: agentPrompt})
+                    })
+                    if (!resp.ok){
+                        var err = await resp.json().catch(function(){ return null })
+                        var msg = err && err.detail ? err.detail : ('HTTP ' + resp.status)
+                        alert('导出失败：' + msg)
+                        return
+                    }
+                    var cd = resp.headers.get('Content-Disposition') || ''
+                    var suggested = parseContentDispositionFilename(cd) || (filename + '.zip')
+                    var blob = await resp.blob()
+                    await saveZipWithDialog(blob, suggested)
+                    closeExportModal()
+                }catch(e){
+                    alert('导出失败：' + e)
+                }finally{
+                    el('saveZipBtn').disabled = false
+                }
+            }
 
             loadSkills()
         })()
