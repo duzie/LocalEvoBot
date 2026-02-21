@@ -753,7 +753,12 @@ async def generate_skill(payload: GenerateSkillPayload):
         if dry_run:
             return {"ok": True, "dry_run": True, "plan": plan, "elapsed_ms": int((time.time() - started_at) * 1000)}
 
-        scaffold_out = scaffold_skill(plan["skill_name"], plan["tools"], description=plan["description"], overwrite=overwrite)
+        scaffold_out = scaffold_skill.invoke({
+            "skill_name": plan["skill_name"],
+            "tools": plan["tools"],
+            "description": plan["description"],
+            "overwrite": overwrite,
+        })
         scaffold_data = _safe_json_loads(scaffold_out)
         if not isinstance(scaffold_data, dict):
             raise HTTPException(status_code=500, detail=f"脚手架生成失败: {scaffold_out}")
@@ -766,7 +771,7 @@ async def generate_skill(payload: GenerateSkillPayload):
             code = _build_tool_module(t)
             root = _get_project_root()
             fp = os.path.join(root, "app", "auto_skills", plan["skill_name"], "scripts", f"{tool_name}.py")
-            r = write_tool_code(fp, code=code)
+            r = write_tool_code.invoke({"file_path": fp, "code": code})
             write_results.append({"tool": tool_name, "file": fp, "result": r})
 
         loadability = _run_loadability("auto_skills", plan["skill_name"])
