@@ -356,6 +356,10 @@ class GenerateSkillPayload(BaseModel):
     overwrite: bool = Field(default=False)
     dry_run: bool = Field(default=False)
     spec: Dict[str, Any] = Field(default_factory=dict)
+    generate_impl: bool = Field(default=False)
+    judge: bool = Field(default=False)
+    judge_threshold: int = Field(default=75)
+    allow_network: bool = Field(default=False)
 
 def _llm_generate_spec(requirement: str, skill_name_hint: str = "") -> Dict[str, Any]:
     llm = create_llm()
@@ -387,6 +391,91 @@ def _llm_generate_spec(requirement: str, skill_name_hint: str = "") -> Dict[str,
     if isinstance(parsed, dict):
         return parsed
     raise ValueError("LLM 未返回可解析的 JSON 规格")
+
+def _llm_generate_tool_impl(requirement: str, skill_name: str, skill_desc: str, tool_def: Dict[str, Any], allow_network: bool = False) -> str:
+    llm = create_llm()
+    tool_name = str(tool_def.get("name") or "").strip()
+    tool_desc = str(tool_def.get("description") or "").strip()
+    args = tool_def.get("args") if isinstance(tool_def.get("args"), list) else []
+    args_json = json.dumps(args, ensure_ascii=False)
+
+    sys_text = "\n".join([
+        "你是资深 Python 工程师。请为一个 LangChain @tool 生成完整可运行的单文件实现。",
+        "只输出 Python 代码，不要输出 markdown，不要解释。",
+        "约束：",
+        "1) 必须包含：from langchain_core.tools import tool",
+        "2) 必须包含：@tool 装饰器 + def 函数，函数名必须与 tool_name 一致",
+        "3) 返回值必须是 dict，且包含 ok(bool)、message(str)；失败时 ok=False",
+        "4) 尽量只用标准库；不要引入第三方依赖（除非绝对必要）",
+        "5) 默认禁止联网请求；若 allow_network=false，不要访问外网/HTTP",
+        "6) 不要读写磁盘，不要执行系统命令，不要启动浏览器",
+    ])
+    user_text = "\n".join([
+        f"skill_name: {skill_name}",
+        f"skill_description: {skill_desc}",
+        f"requirement: {requirement}",
+        f"tool_name: {tool_name}",
+        f"tool_description: {tool_desc}",
+        f"tool_args_json: {args_json}",
+        f"allow_network: {bool(allow_network)}",
+        "请直接输出该工具的 Python 文件内容。",
+    ])
+    resp = llm.invoke([
+        {"role": "system", "content": sys_text},
+        {"role": "user", "content": user_text},
+    ])
+    text = getattr(resp, "content", "") if resp is not None else ""
+    code = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not code:
+        raise ValueError(f"LLM 未返回工具实现: {tool_name}")
+    return code
+
+def _llm_judge_acceptance(requirement: str, plan: Dict[str, Any], loadability: Dict[str, Any], tests: List[Dict[str, Any]], code_map: Dict[str, str], threshold: int = 75) -> Dict[str, Any]:
+    llm = create_llm()
+    sys_text = "\n".join([
+        "你是技能验收评审员。请对技能实现进行验收打分，并输出 JSON。",
+        "只输出 JSON，不要输出 markdown，不要解释。",
+        "JSON schema:",
+        "{",
+        "  \"score\": 0,",
+        "  \"pass\": true,",
+        "  \"reasons\": [\"...\"],",
+        "  \"issues\": [\"...\"],",
+        "  \"suggestions\": [\"...\"]",
+        "}",
+        "评审规则：",
+        f"- 通过阈值：score >= {max(0, min(int(threshold or 75), 100))}",
+        "- 必须考虑：需求匹配、返回结构一致性、错误处理、安全性（不应写盘/执行命令/越权）",
+        "- loadability 或 tests 有失败时，原则上 pass=false（除非是可接受的已解释降级）",
+    ])
+    payload = {
+        "requirement": requirement,
+        "plan": plan,
+        "loadability": loadability,
+        "tests": tests,
+        "code": code_map,
+    }
+    user_text = json.dumps(payload, ensure_ascii=False)
+    resp = llm.invoke([
+        {"role": "system", "content": sys_text},
+        {"role": "user", "content": user_text},
+    ])
+    text = getattr(resp, "content", "") if resp is not None else ""
+    parsed = _safe_json_loads(text)
+    if isinstance(parsed, dict):
+        score = int(parsed.get("score") or 0)
+        parsed["score"] = max(0, min(score, 100))
+        parsed["pass"] = bool(parsed.get("pass"))
+        for k in ["reasons", "issues", "suggestions"]:
+            if not isinstance(parsed.get(k), list):
+                parsed[k] = []
+        return parsed
+    raise ValueError("LLM 未返回可解析的验收 JSON")
+
+def _copytree_safe(src: str, dst: str):
+    if os.path.exists(dst):
+        shutil.rmtree(dst, ignore_errors=True)
+    shutil.copytree(src, dst)
 
 def _safe_rmtree(path: str):
     if os.path.exists(path):
@@ -705,6 +794,10 @@ async def generate_skill(payload: GenerateSkillPayload):
         req_text = str(payload.request or "")
         overwrite = bool(payload.overwrite)
         dry_run = bool(payload.dry_run)
+        generate_impl = bool(payload.generate_impl)
+        judge = bool(payload.judge)
+        allow_network = bool(payload.allow_network)
+        threshold = max(0, min(int(payload.judge_threshold or 75), 100))
 
         spec_raw: Optional[Dict[str, Any]] = None
         if isinstance(payload.spec, dict) and payload.spec:
@@ -753,9 +846,33 @@ async def generate_skill(payload: GenerateSkillPayload):
         if dry_run:
             return {"ok": True, "dry_run": True, "plan": plan, "elapsed_ms": int((time.time() - started_at) * 1000)}
 
+        root = _get_project_root()
+        skill_dir = os.path.join(root, "app", "auto_skills", plan["skill_name"])
+        backup_dir = ""
+        if overwrite and os.path.isdir(skill_dir):
+            backup_dir = os.path.join(root, "app", "data", "devops", "tmp_skill_backups", f"{plan['skill_name']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+            os.makedirs(os.path.dirname(backup_dir), exist_ok=True)
+            _copytree_safe(skill_dir, backup_dir)
+
+        impl_map: Dict[str, str] = {}
+        tools_for_scaffold: List[Dict[str, Any]] = []
+        for t in tools:
+            item = {"name": t.get("name"), "description": t.get("description"), "args": t.get("args") or []}
+            if generate_impl:
+                tool_code = _llm_generate_tool_impl(
+                    requirement=req_text,
+                    skill_name=plan["skill_name"],
+                    skill_desc=plan["description"],
+                    tool_def=item,
+                    allow_network=allow_network,
+                )
+                item["impl"] = tool_code
+                impl_map[str(item.get("name") or "")] = tool_code
+            tools_for_scaffold.append(item)
+
         scaffold_out = scaffold_skill.invoke({
             "skill_name": plan["skill_name"],
-            "tools": plan["tools"],
+            "tools": tools_for_scaffold,
             "description": plan["description"],
             "overwrite": overwrite,
         })
@@ -764,20 +881,45 @@ async def generate_skill(payload: GenerateSkillPayload):
             raise HTTPException(status_code=500, detail=f"脚手架生成失败: {scaffold_out}")
 
         write_results = []
-        for t in tools:
-            tool_name = str(t.get("name") or "").strip()
-            if not tool_name:
-                continue
-            code = _build_tool_module(t)
-            root = _get_project_root()
-            fp = os.path.join(root, "app", "auto_skills", plan["skill_name"], "scripts", f"{tool_name}.py")
-            r = write_tool_code.invoke({"file_path": fp, "code": code})
-            write_results.append({"tool": tool_name, "file": fp, "result": r})
+        if not generate_impl:
+            for t in tools:
+                tool_name = str(t.get("name") or "").strip()
+                if not tool_name:
+                    continue
+                code = _build_tool_module(t)
+                fp = os.path.join(root, "app", "auto_skills", plan["skill_name"], "scripts", f"{tool_name}.py")
+                r = write_tool_code.invoke({"file_path": fp, "code": code})
+                write_results.append({"tool": tool_name, "file": fp, "result": r})
 
         loadability = _run_loadability("auto_skills", plan["skill_name"])
         test_results = _run_tool_tests(plan["skill_name"], tests)
 
-        shared.put_input("__RELOAD_SKILLS__")
+        tests_ok = bool(loadability.get("ok")) and all([(r or {}).get("ok") is True for r in (test_results or [])])
+
+        judge_result: Dict[str, Any] = {}
+        accepted = tests_ok
+        if judge:
+            judge_result = _llm_judge_acceptance(
+                requirement=req_text,
+                plan=plan,
+                loadability=loadability,
+                tests=test_results,
+                code_map=impl_map,
+                threshold=threshold,
+            )
+            accepted = bool(judge_result.get("pass")) and int(judge_result.get("score") or 0) >= threshold
+
+        rolled_back = False
+        if not accepted:
+            if os.path.isdir(skill_dir):
+                shutil.rmtree(skill_dir, ignore_errors=True)
+            if backup_dir and os.path.isdir(backup_dir):
+                _copytree_safe(backup_dir, skill_dir)
+            rolled_back = True
+        else:
+            shared.put_input("__RELOAD_SKILLS__")
+            if backup_dir and os.path.isdir(backup_dir):
+                shutil.rmtree(backup_dir, ignore_errors=True)
 
         return {
             "ok": True,
@@ -787,6 +929,10 @@ async def generate_skill(payload: GenerateSkillPayload):
             "write_results": write_results,
             "loadability": loadability,
             "tests": test_results,
+            "tests_ok": tests_ok,
+            "judge": judge_result,
+            "accepted": accepted,
+            "rolled_back": rolled_back,
             "elapsed_ms": int((time.time() - started_at) * 1000),
         }
     except HTTPException:

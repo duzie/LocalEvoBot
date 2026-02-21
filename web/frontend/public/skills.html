@@ -112,6 +112,10 @@
                     <input id="createSkillName" class="input" type="text" placeholder="skill_name（可选）" autocomplete="off" />
                     <label class="pill"><input id="createOverwrite" type="checkbox" /> 覆盖同名</label>
                     <label class="pill"><input id="createDryRun" type="checkbox" checked /> 仅预览</label>
+                        <label class="pill"><input id="createGenImpl" type="checkbox" /> 生成实现(LLM)</label>
+                        <label class="pill"><input id="createJudge" type="checkbox" /> 验收打分(LLM)</label>
+                        <input id="createJudgeThreshold" class="input" type="number" min="0" max="100" value="75" style="max-width:110px" />
+                        <label class="pill"><input id="createAllowNetwork" type="checkbox" /> 允许联网</label>
                     <button id="createRunBtn" class="btn primary" type="button">生成</button>
                 </div>
                 <textarea id="createRequest" class="textarea" placeholder="输入自然语言需求（或直接粘贴 JSON 规格）"></textarea>
@@ -204,6 +208,10 @@
                 el('createSkillName').value = ''
                 el('createOverwrite').checked = false
                 el('createDryRun').checked = true
+                el('createGenImpl').checked = false
+                el('createJudge').checked = false
+                el('createJudgeThreshold').value = '75'
+                el('createAllowNetwork').checked = false
             }
 
             function closeCreateModal(){
@@ -220,7 +228,11 @@
                     request: req,
                     skill_name: (el('createSkillName').value || '').trim(),
                     overwrite: !!el('createOverwrite').checked,
-                    dry_run: !!el('createDryRun').checked
+                    dry_run: !!el('createDryRun').checked,
+                    generate_impl: !!el('createGenImpl').checked,
+                    judge: !!el('createJudge').checked,
+                    judge_threshold: parseInt(el('createJudgeThreshold').value || '75', 10) || 75,
+                    allow_network: !!el('createAllowNetwork').checked
                 }
                 el('createRunBtn').disabled = true
                 el('createOutput').value = '处理中...'
