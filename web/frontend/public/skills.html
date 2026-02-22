@@ -96,7 +96,7 @@
                     <button id="saveZipBtn" class="btn primary" type="button">另存为 ZIP</button>
                 </div>
                 <textarea id="promptEditor" class="textarea" placeholder="在这里编辑导出 Agent 的 system prompt"></textarea>
-                <div class="empty">skillgen_skill 不允许导出；system_skill 会自动精简为记忆/经验相关工具。</div>
+                <div class="empty">system_skill 会自动精简为记忆/经验相关工具。</div>
             </div>
         </div>
     </div>
@@ -160,6 +160,12 @@
                 lines.push('1. 仅使用“可用技能”里列出的工具完成任务。')
                 lines.push('2. 如果缺少工具或无权限，明确说明无法完成，并给出你需要的工具名称。')
                 lines.push('3. 每次回复最后一行必须输出 `STATE: DONE` 或 `STATE: CONTINUE`。')
+                lines.push('')
+                lines.push('=== 循环控制（必须遵守）===')
+                lines.push('1) 只有当下一步会调用工具并产生新信息/新改动时，才输出 `STATE: CONTINUE`。')
+                lines.push('2) 同一工具同一参数禁止重复调用超过 2 次；仍失败则 `STATE: DONE` 并说明卡点。')
+                lines.push('3) 连续两轮没有新信息（无新工具输出/无新文件变更/无新结论），必须 `STATE: DONE`。')
+                lines.push('4) 大文件/长输出必须分块或分页读取，基于已读范围推进，禁止反复读取同一段。')
                 lines.push('')
                 lines.push('=== 可用技能 ===')
                 if (!skills.length){
@@ -299,16 +305,9 @@
                 var cb = document.createElement('input')
                 cb.type = 'checkbox'
                 cb.className = 'check'
-                var exportBlocked = (skill.scope === 'skills' && skill.id === 'skillgen_skill')
-                if (exportBlocked) cb.disabled = true
                 cb.checked = !!state.selectedKeys[keyOf(skill)]
                 cb.onclick = function(e){
                     e.stopPropagation()
-                    if (exportBlocked){
-                        alert('skillgen_skill 不允许导出')
-                        cb.checked = false
-                        return
-                    }
                     setSelected(skill, cb.checked)
                 }
                 var title = document.createElement('div')
@@ -505,21 +504,62 @@
                 state.selectedKeys = {}
                 renderList()
             }
-            el('createSkillBtn').onclick = openCreateModal
-            el('exportBtn').onclick = openExportModal
-            el('exportCloseBtn').onclick = closeExportModal
-            el('exportMask').onclick = function(e){
+            var createBtn = el('createSkillBtn')
+            if (createBtn) createBtn.onclick = openCreateModal
+            var exportBtn = el('exportBtn')
+            if (exportBtn) exportBtn.onclick = openExportModal
+            var exportCloseBtn = el('exportCloseBtn')
+            if (exportCloseBtn) exportCloseBtn.onclick = closeExportModal
+            var exportMask = el('exportMask')
+            if (exportMask) exportMask.onclick = function(e){
                 if (e.target === el('exportMask')) closeExportModal()
             }
-            el('createCloseBtn').onclick = closeCreateModal
-            el('createMask').onclick = function(e){
+            var createCloseBtn = el('createCloseBtn')
+            if (createCloseBtn) createCloseBtn.onclick = closeCreateModal
+            var createMask = el('createMask')
+            if (createMask) createMask.onclick = function(e){
                 if (e.target === el('createMask')) closeCreateModal()
             }
-            el('createRunBtn').onclick = runCreate
-            el('genPromptBtn').onclick = function(){
-                el('promptEditor').value = generateDefaultPrompt(getSelectedSkills())
+            var createRunBtn = el('createRunBtn')
+            if (createRunBtn) createRunBtn.onclick = runCreate
+            var genPromptBtn = el('genPromptBtn')
+            if (genPromptBtn) genPromptBtn.onclick = async function(){
+                var selected = getSelectedSkills()
+                var skills = selected.map(function(s){ return {scope:s.scope, id:s.id} })
+                if (!skills.length){
+                    alert('请先勾选要导出的技能')
+                    return
+                }
+                var oldText = el('genPromptBtn').textContent
+                el('genPromptBtn').disabled = true
+                el('genPromptBtn').textContent = '生成中...'
+                try{
+                    var resp = await fetch('/api/skills/prompt', {
+                        method:'POST',
+                        headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify({skills: skills, mode: 'auto', max_chars: 6000})
+                    })
+                    var data = await resp.json().catch(function(){ return null })
+                    if (!resp.ok || !data || !data.ok){
+                        var msg = data && data.detail ? data.detail : ('HTTP ' + resp.status)
+                        console.warn('生成提示词失败：' + msg)
+                        el('promptEditor').value = generateDefaultPrompt(selected)
+                        return
+                    }
+                    el('promptEditor').value = String(data.prompt || '')
+                    if (data.warnings && data.warnings.length){
+                        console.warn('生成提示词告警：', data.warnings)
+                    }
+                }catch(e){
+                    console.warn('生成提示词失败：' + e)
+                    el('promptEditor').value = generateDefaultPrompt(selected)
+                }finally{
+                    el('genPromptBtn').disabled = false
+                    el('genPromptBtn').textContent = oldText
+                }
             }
-            el('saveZipBtn').onclick = async function(){
+            var saveZipBtn = el('saveZipBtn')
+            if (saveZipBtn) saveZipBtn.onclick = async function(){
                 var skills = getSelectedSkills().map(function(s){ return {scope:s.scope, id:s.id} })
                 if (!skills.length){
                     alert('请先勾选要导出的技能')

@@ -19,9 +19,15 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 from ..shared import shared
 from app.agent import create_llm
-from app.skills.skillgen_skill.scripts.skill_tools import scaffold_skill, write_tool_code
 
 router = APIRouter()
+
+def _lazy_skillgen_tools():
+    try:
+        from app.skills.skillgen_skill.scripts.skill_tools import scaffold_skill, write_tool_code
+        return scaffold_skill, write_tool_code
+    except Exception:
+        raise HTTPException(status_code=400, detail="skillgen_skill 未包含在当前导出包中，无法使用技能生成功能")
 
 def _get_project_root():
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -361,6 +367,199 @@ class GenerateSkillPayload(BaseModel):
     judge_threshold: int = Field(default=75)
     allow_network: bool = Field(default=False)
 
+class GenerateAgentPromptPayload(BaseModel):
+    skills: List[Dict[str, str]] = Field(default_factory=list)
+    mode: str = Field(default="auto")
+    max_chars: int = Field(default=6000)
+
+def _discover_tool_objects(entry: str) -> Tuple[List[BaseTool], List[str]]:
+    errors: List[str] = []
+    tools: List[BaseTool] = []
+    try:
+        scripts_module = importlib.import_module(entry)
+    except Exception as e:
+        return [], [f"导入入口失败: {e}"]
+    def _collect(mod):
+        for _, obj in inspect.getmembers(mod):
+            if isinstance(obj, BaseTool):
+                tools.append(obj)
+            elif inspect.isclass(obj) and issubclass(obj, BaseTool) and obj is not BaseTool:
+                try:
+                    tools.append(obj())
+                except Exception:
+                    pass
+    if hasattr(scripts_module, "__path__"):
+        for _, module_name, _ in pkgutil.iter_modules(scripts_module.__path__):
+            full_module_name = f"{entry}.{module_name}"
+            try:
+                module = importlib.import_module(full_module_name)
+                _collect(module)
+            except Exception as e:
+                errors.append(f"模块加载失败: {full_module_name} ({e})")
+    else:
+        _collect(scripts_module)
+    dedup: Dict[str, BaseTool] = {}
+    for t in tools:
+        name = str(getattr(t, "name", "") or "").strip()
+        if name and name not in dedup:
+            dedup[name] = t
+    return list(dedup.values()), errors
+
+def _get_tool_args(tool: BaseTool) -> List[Dict[str, str]]:
+    schema = getattr(tool, "args_schema", None)
+    if schema is None:
+        return []
+    fields: List[Dict[str, str]] = []
+    try:
+        model = schema
+        if hasattr(model, "model_fields"):
+            for k, v in (model.model_fields or {}).items():
+                name = str(k or "").strip()
+                if not name:
+                    continue
+                desc = str(getattr(v, "description", "") or "").strip()
+                ann = getattr(v, "annotation", None)
+                typ = ""
+                try:
+                    typ = getattr(ann, "__name__", "") or str(ann or "")
+                except Exception:
+                    typ = ""
+                fields.append({"name": name, "type": typ, "description": desc})
+            return fields
+        if hasattr(model, "__fields__"):
+            for k, v in (getattr(model, "__fields__", {}) or {}).items():
+                name = str(k or "").strip()
+                if not name:
+                    continue
+                desc = str(getattr(getattr(v, "field_info", None), "description", "") or "").strip()
+                typ = ""
+                try:
+                    typ = getattr(getattr(v, "type_", None), "__name__", "") or str(getattr(v, "type_", "") or "")
+                except Exception:
+                    typ = ""
+                fields.append({"name": name, "type": typ, "description": desc})
+            return fields
+    except Exception:
+        return []
+    return []
+
+def _short_text(text: str, max_len: int) -> str:
+    s = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if max_len <= 0:
+        return ""
+    if len(s) <= max_len:
+        return s
+    return s[:max_len].rstrip() + "…"
+
+def _generate_prompt_deterministic(skills: List[Dict[str, Any]], max_chars: int) -> str:
+    lines: List[str] = []
+    lines.append("你是一个专用的自动化 Agent。")
+    lines.append("")
+    lines.append("=== 约束 ===")
+    lines.append("1. 仅使用“可用工具”里列出的工具完成任务。")
+    lines.append("2. 不要编造工具名称/参数；缺少能力时明确说明并提出需要的工具。")
+    lines.append("3. 读取文件/日志/网页时，优先小步读取；避免把大段原文完整贴入对话历史。")
+    lines.append("4. 每次回复最后一行必须输出 `STATE: DONE` 或 `STATE: CONTINUE`。")
+    lines.append("")
+    lines.append("=== 循环控制（必须遵守）===")
+    lines.append("1) 只有当下一步会调用工具并产生新信息/新改动时，才输出 `STATE: CONTINUE`。")
+    lines.append("2) 同一工具同一参数禁止重复调用超过 2 次；仍失败则 `STATE: DONE` 并说明卡点。")
+    lines.append("3) 连续两轮没有新信息（无新工具输出/无新文件变更/无新结论），必须 `STATE: DONE`。")
+    lines.append("4) 大文件/长输出必须分块或分页读取，基于已读范围推进，禁止反复读取同一段。")
+    lines.append("")
+    lines.append("=== 可用技能 ===")
+    for s in skills:
+        lines.append(f"- {s.get('name') or s.get('id')} ({s.get('scope')}/{s.get('id')})")
+    lines.append("")
+    lines.append("=== 可用工具 ===")
+    tool_names: List[str] = []
+    for s in skills:
+        for t in (s.get("tools_full") or []):
+            tn = str((t or {}).get("name") or "").strip()
+            if tn:
+                tool_names.append(tn)
+    if not tool_names:
+        lines.append("- (空)")
+    else:
+        for s in skills:
+            tools = s.get("tools_full") or []
+            if not tools:
+                continue
+            lines.append(f"[{s.get('id')}]")
+            for t in tools:
+                tn = str((t or {}).get("name") or "").strip()
+                td = _short_text((t or {}).get("description") or "", 220)
+                if td:
+                    lines.append(f"- {tn}: {td}")
+                else:
+                    lines.append(f"- {tn}")
+                args = (t or {}).get("args") or []
+                if isinstance(args, list) and args:
+                    arg_parts = []
+                    for a in args:
+                        an = str((a or {}).get("name") or "").strip()
+                        at = str((a or {}).get("type") or "").strip()
+                        if not an:
+                            continue
+                        arg_parts.append(f"{an}({at})" if at else an)
+                    if arg_parts:
+                        lines.append("  参数: " + ", ".join(arg_parts))
+            lines.append("")
+    if "read_large_file_chunks" in set(tool_names):
+        lines.append("=== 大文件读取 ===")
+        lines.append("1) 只读取必要分块：优先用 `start_chunk`/`max_chunks` 分页推进。")
+        lines.append("2) 继续读取时不要从头读，改用下一个 chunk。")
+        lines.append("")
+    if "read_document_part" in set(tool_names):
+        lines.append("=== 按行读取 ===")
+        lines.append("1) 优先定点读取（指定起止行/部分），避免整段复制。")
+        lines.append("2) 继续读取时用下一段行范围推进。")
+        lines.append("")
+    if any(s.get("scope") == "skills" and s.get("id") == "system_skill" for s in skills):
+        lines.append("=== 记忆与经验 ===")
+        lines.append("1) 遇到不确定或缺少背景时，先调用 `get_operation_experience` 检索长期经验。")
+        lines.append("2) 只有用户明确要求“搜索所有记忆/搜全部记忆”时，才调用 `search_short_term_memory`。")
+        lines.append("3) 任务完成后可调用 `add_operation_experience` 记录新经验。")
+        lines.append("")
+    out = "\n".join(lines).rstrip() + "\n"
+    max_chars = int(max_chars or 0)
+    if max_chars > 0 and len(out) > max_chars:
+        cut = max(0, max_chars - 40)
+        out = out[:cut].rstrip() + "\n(提示词已截断)\n"
+    return out
+
+def _llm_generate_agent_prompt(skill_ctx: Dict[str, Any], max_chars: int) -> str:
+    llm = create_llm()
+    sys_text = "\n".join([
+        "你是一个 system prompt 生成器。请根据给定“技能/工具清单”生成一个可直接用于导出 Agent 的 system prompt。",
+        "只输出 system prompt 正文，不要输出 markdown，不要解释。",
+        "要求：",
+        "- 必须包含“仅使用可用工具、不编造工具/参数、缺少能力时说明”的约束",
+        "- 必须包含“每次回复最后一行输出 STATE: DONE 或 STATE: CONTINUE”的约束",
+        "- 必须包含“循环控制”规则：只有下一步会调用工具才 CONTINUE；同一工具同参最多重试 2 次；连续两轮无新信息必须 DONE",
+        "- 工具说明要简洁：每个工具最多 1-2 行，包含用途与关键参数名",
+        "- 强调大文件/日志读取要分页推进，避免把大段原文塞进对话历史（如工具支持）",
+        "- 总长度尽量控制在 6000 字符以内",
+    ])
+    user_text = json.dumps(skill_ctx, ensure_ascii=False)
+    resp = llm.invoke([
+        {"role": "system", "content": sys_text},
+        {"role": "user", "content": user_text},
+    ])
+    text = getattr(resp, "content", "") if resp is not None else ""
+    out = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not out:
+        raise ValueError("LLM 未返回提示词")
+    if "STATE: DONE" not in out and "STATE: CONTINUE" not in out:
+        out = out.rstrip() + "\n\n每次回复最后一行必须输出 `STATE: DONE` 或 `STATE: CONTINUE`。\n"
+    max_chars = int(max_chars or 0)
+    if max_chars > 0 and len(out) > max_chars:
+        cut = max(0, max_chars - 40)
+        out = out[:cut].rstrip() + "\n(提示词已截断)\n"
+    if not out.endswith("\n"):
+        out += "\n"
+    return out
+
 def _llm_generate_spec(requirement: str, skill_name_hint: str = "") -> Dict[str, Any]:
     llm = create_llm()
     sys_text = "\n".join([
@@ -510,7 +709,7 @@ def _prune_exported_system_skill(dst_root: str):
     if not os.path.isdir(scripts_dir):
         return
 
-    keep_scripts = {"__init__.py", "experience_tools.py"}
+    keep_scripts = {"experience_tools.py"}
     for name in os.listdir(scripts_dir):
         p = os.path.join(scripts_dir, name)
         if os.path.isdir(p):
@@ -518,6 +717,45 @@ def _prune_exported_system_skill(dst_root: str):
         if name.endswith(".py") and name not in keep_scripts:
             try:
                 os.remove(p)
+            except Exception:
+                pass
+
+    init_path = os.path.join(scripts_dir, "__init__.py")
+    init_content = "from .experience_tools import add_operation_experience, get_operation_experience, compress_operation_experience, search_short_term_memory\n"
+    try:
+        with open(init_path, "w", encoding="utf-8") as f:
+            f.write(init_content)
+    except Exception:
+        pass
+
+    md_path = os.path.join(skill_dir, "skill.md")
+    if os.path.exists(md_path):
+        try:
+            with open(md_path, "r", encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        except Exception:
+            lines = []
+        if lines:
+            out = []
+            in_tools = False
+            for line in lines:
+                if line.strip().lower() == "## tools":
+                    in_tools = True
+                    out.append(line)
+                    out.append("- add_operation_experience: 记录操作经验")
+                    out.append("- get_operation_experience: 查询操作经验")
+                    out.append("- search_short_term_memory: 搜索短期记忆（本地对话消息）")
+                    out.append("- compress_operation_experience: 压缩操作经验")
+                    continue
+                if in_tools:
+                    if line.strip().startswith("## "):
+                        in_tools = False
+                        out.append(line)
+                    continue
+                out.append(line)
+            try:
+                with open(md_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(out) + "\n")
             except Exception:
                 pass
 
@@ -570,45 +808,6 @@ def _zip_directory(dir_path: str) -> bytes:
                 zf.write(full, rel)
     return buf.getvalue()
 
-    init_path = os.path.join(scripts_dir, "__init__.py")
-    init_content = "from .experience_tools import add_operation_experience, get_operation_experience, compress_operation_experience, search_short_term_memory\n"
-    try:
-        with open(init_path, "w", encoding="utf-8") as f:
-            f.write(init_content)
-    except Exception:
-        pass
-
-    md_path = os.path.join(skill_dir, "skill.md")
-    if os.path.exists(md_path):
-        try:
-            with open(md_path, "r", encoding="utf-8") as f:
-                lines = f.read().splitlines()
-        except Exception:
-            lines = []
-        if lines:
-            out = []
-            in_tools = False
-            for line in lines:
-                if line.strip().lower() == "## tools":
-                    in_tools = True
-                    out.append(line)
-                    out.append("- add_operation_experience: 记录操作经验")
-                    out.append("- get_operation_experience: 查询操作经验")
-                    out.append("- search_short_term_memory: 搜索短期记忆（本地对话消息）")
-                    out.append("- compress_operation_experience: 压缩操作经验")
-                    continue
-                if in_tools:
-                    if line.strip().startswith("## "):
-                        in_tools = False
-                        out.append(line)
-                    continue
-                out.append(line)
-            try:
-                with open(md_path, "w", encoding="utf-8") as f:
-                    f.write("\n".join(out) + "\n")
-            except Exception:
-                pass
-
 def _copy_project_filtered(src_root: str, dst_root: str, allowed_core: List[str], allowed_auto: List[str]):
     allowed_core_set = set(allowed_core or [])
     allowed_auto_set = set(allowed_auto or [])
@@ -621,6 +820,9 @@ def _copy_project_filtered(src_root: str, dst_root: str, allowed_core: List[str]
             for n in ["__pycache__", ".git", ".venv", ".idea", ".trae", "_exports", "exports"]:
                 if n in names:
                     ignored.add(n)
+            for n in [".env", ".env.local", ".env.production", ".env.development"]:
+                if n in names:
+                    ignored.add(n)
 
         if rel_norm == "app":
             if "data" in names:
@@ -629,6 +831,8 @@ def _copy_project_filtered(src_root: str, dst_root: str, allowed_core: List[str]
         if rel_norm == "gateway":
             if "node_modules" in names:
                 ignored.add("node_modules")
+            if "auth" in names:
+                ignored.add("auth")
 
         if rel_norm == "web/frontend":
             if "node_modules" in names:
@@ -653,6 +857,98 @@ def _copy_project_filtered(src_root: str, dst_root: str, allowed_core: List[str]
 
     shutil.copytree(src_root, dst_root, ignore=ignore)
 
+def _prune_exported_web_console(dst_root: str):
+    public_dir = os.path.join(dst_root, "web", "frontend", "public")
+    if not os.path.isdir(public_dir):
+        return
+    skills_html = os.path.join(public_dir, "skills.html")
+    if os.path.exists(skills_html):
+        try:
+            with open(skills_html, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+        except Exception:
+            content = ""
+        if content:
+            content2 = content
+            content2 = re.sub(r'\s*<button\s+id="exportBtn"[^>]*>[\s\S]*?</button>\s*', "\n", content2, count=1)
+            content2 = re.sub(r'\s*<button\s+id="createSkillBtn"[^>]*>[\s\S]*?</button>\s*', "\n", content2, count=1)
+            start_export = content2.find('<div id="exportMask"')
+            if start_export != -1:
+                end_export = content2.find('<div id="createMask"', start_export)
+                if end_export != -1:
+                    content2 = content2[:start_export] + content2[end_export:]
+            start = content2.find('<div id="createMask"')
+            if start != -1:
+                end = content2.find('<script src="/shell.js">', start)
+                if end != -1:
+                    content2 = content2[:start] + content2[end:]
+            if content2 != content:
+                try:
+                    with open(skills_html, "w", encoding="utf-8") as f:
+                        f.write(content2)
+                except Exception:
+                    pass
+    flag_path = os.path.join(dst_root, "web", "backend", "public_console.flag")
+    try:
+        os.makedirs(os.path.dirname(flag_path), exist_ok=True)
+        with open(flag_path, "w", encoding="utf-8") as f:
+            f.write("1\n")
+    except Exception:
+        pass
+
+def _ensure_env_example(src_root: str, dst_root: str):
+    src = os.path.join(src_root, ".env.example")
+    dst = os.path.join(dst_root, ".env.example")
+    if not os.path.exists(src) or os.path.exists(dst):
+        return
+    try:
+        shutil.copy2(src, dst)
+    except Exception:
+        return
+
+def _ensure_env(src_root: str, dst_root: str):
+    src = os.path.join(src_root, ".env")
+    dst = os.path.join(dst_root, ".env")
+    if not os.path.exists(src) or os.path.exists(dst):
+        return
+    try:
+        shutil.copy2(src, dst)
+    except Exception:
+        return
+
+def _append_env_kv_if_missing(env_path: str, key: str, value: str):
+    if not env_path or not os.path.exists(env_path):
+        return
+    try:
+        with open(env_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+    except Exception:
+        return
+    key_u = str(key or "").strip().upper()
+    if not key_u:
+        return
+    existing = set()
+    for line in (content or "").splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or "=" not in s:
+            continue
+        k = s.split("=", 1)[0].strip().upper()
+        if k:
+            existing.add(k)
+    if key_u in existing:
+        return
+    try:
+        tail = content[-1:] if content else ""
+    except Exception:
+        tail = ""
+    try:
+        with open(env_path, "a", encoding="utf-8") as f:
+            if tail and tail not in ("\n", "\r"):
+                f.write("\n")
+            f.write(f"{key_u}={value}\n")
+    except Exception:
+        return
+
 @router.post("/export")
 async def export_agent(payload: Dict[str, Any]):
     target_dir = str((payload or {}).get("target_dir") or "").strip()
@@ -660,13 +956,6 @@ async def export_agent(payload: Dict[str, Any]):
     requested = (payload or {}).get("skills") if isinstance(payload, dict) else None
     if not isinstance(requested, list):
         requested = []
-    for item in requested:
-        if not isinstance(item, dict):
-            continue
-        scope = _normalize_scope(item.get("scope"))
-        skill_id = str(item.get("id") or "").strip()
-        if scope == "skills" and skill_id == "skillgen_skill":
-            raise HTTPException(status_code=400, detail="skillgen_skill is not allowed to export")
     if not target_dir:
         raise HTTPException(status_code=400, detail="target_dir required")
     if not _is_abs_path(target_dir):
@@ -694,6 +983,11 @@ async def export_agent(payload: Dict[str, Any]):
     try:
         _copy_project_filtered(src_abs, dst_abs, allowed_core, allowed_auto)
         _prune_exported_system_skill(dst_abs)
+        _prune_exported_web_console(dst_abs)
+        _ensure_env_example(src_abs, dst_abs)
+        _ensure_env(src_abs, dst_abs)
+        if os.name == "nt":
+            _append_env_kv_if_missing(os.path.join(dst_abs, ".env"), "WA_NPM_BIN", "")
     except Exception as e:
         try:
             _safe_rmtree(dst_abs)
@@ -714,13 +1008,6 @@ async def export_agent_zip(payload: Dict[str, Any]):
     requested = (payload or {}).get("skills") if isinstance(payload, dict) else None
     if not isinstance(requested, list):
         requested = []
-    for item in requested:
-        if not isinstance(item, dict):
-            continue
-        scope = _normalize_scope(item.get("scope"))
-        skill_id = str(item.get("id") or "").strip()
-        if scope == "skills" and skill_id == "skillgen_skill":
-            raise HTTPException(status_code=400, detail="skillgen_skill is not allowed to export")
 
     agent_prompt = str((payload or {}).get("agent_prompt") or "")
     filename = _sanitize_filename(str((payload or {}).get("filename") or ""))
@@ -734,6 +1021,11 @@ async def export_agent_zip(payload: Dict[str, Any]):
     try:
         _copy_project_filtered(src_abs, tmp_root, allowed_core, allowed_auto)
         _prune_exported_system_skill(tmp_root)
+        _prune_exported_web_console(tmp_root)
+        _ensure_env_example(src_abs, tmp_root)
+        _ensure_env(src_abs, tmp_root)
+        if os.name == "nt":
+            _append_env_kv_if_missing(os.path.join(tmp_root, ".env"), "WA_NPM_BIN", "")
         if agent_prompt.strip():
             _write_exported_agent_prompt(tmp_root, agent_prompt)
         data = _zip_directory(tmp_root)
@@ -752,6 +1044,92 @@ async def export_agent_zip(payload: Dict[str, Any]):
         "X-Export-Added-Necessary": ",".join(added_necessary),
     }
     return StreamingResponse(io.BytesIO(data), media_type="application/zip", headers=headers)
+
+@router.post("/prompt")
+async def generate_agent_prompt(payload: GenerateAgentPromptPayload):
+    requested = payload.skills if isinstance(payload, GenerateAgentPromptPayload) else []
+    if not isinstance(requested, list) or not requested:
+        raise HTTPException(status_code=400, detail="skills required")
+    max_chars = max(800, min(int(payload.max_chars or 6000), 20000))
+    mode = str(payload.mode or "auto").strip().lower()
+
+    root = _get_project_root()
+    skills_root = os.path.join(root, "app", "skills")
+    auto_root = os.path.join(root, "app", "auto_skills")
+
+    warnings: List[str] = []
+    skills: List[Dict[str, Any]] = []
+    for item in requested:
+        if not isinstance(item, dict):
+            continue
+        scope = _normalize_scope(str(item.get("scope") or ""))
+        skill_id = str(item.get("id") or "").strip()
+        if scope not in {"skills", "auto_skills"} or not skill_id:
+            continue
+        base = skills_root if scope == "skills" else auto_root
+        md_path = os.path.join(base, skill_id, "skill.md")
+        info = _parse_skill_md(md_path)
+        entry = info.get("entry") or _build_entry(scope, skill_id)
+
+        tools_full: List[Dict[str, Any]] = []
+        tool_objs, errs = _discover_tool_objects(entry)
+        if errs:
+            warnings.extend(errs)
+        if tool_objs:
+            for t in tool_objs:
+                tn = str(getattr(t, "name", "") or "").strip()
+                if not tn:
+                    continue
+                td = str(getattr(t, "description", "") or "").strip()
+                if not td:
+                    try:
+                        td = str(inspect.getdoc(t) or "").strip()
+                    except Exception:
+                        td = ""
+                tools_full.append({
+                    "name": tn,
+                    "description": _short_text(td, 600),
+                    "args": _get_tool_args(t),
+                })
+        else:
+            for t in (info.get("tools") or []):
+                tn = str((t or {}).get("name") or "").strip()
+                if not tn:
+                    continue
+                tools_full.append({
+                    "name": tn,
+                    "description": _short_text((t or {}).get("description") or "", 600),
+                    "args": [],
+                })
+
+        skills.append({
+            "id": skill_id,
+            "scope": scope,
+            "name": info.get("name") or skill_id,
+            "description": info.get("description") or "",
+            "entry": entry,
+            "tools_full": tools_full,
+        })
+
+    if not skills:
+        raise HTTPException(status_code=400, detail="no valid skills selected")
+
+    if mode in {"deterministic", "simple"}:
+        prompt = _generate_prompt_deterministic(skills, max_chars=max_chars)
+        return {"ok": True, "prompt": prompt, "used_llm": False, "warnings": warnings}
+
+    ctx = {"skills": skills}
+    if mode == "llm":
+        prompt = _llm_generate_agent_prompt(ctx, max_chars=max_chars)
+        return {"ok": True, "prompt": prompt, "used_llm": True, "warnings": warnings}
+
+    try:
+        prompt = _llm_generate_agent_prompt(ctx, max_chars=max_chars)
+        return {"ok": True, "prompt": prompt, "used_llm": True, "warnings": warnings}
+    except Exception as e:
+        warnings.append(f"LLM 生成提示词失败，已回退：{e}")
+        prompt = _generate_prompt_deterministic(skills, max_chars=max_chars)
+        return {"ok": True, "prompt": prompt, "used_llm": False, "warnings": warnings}
 
 @router.get("")
 async def list_skills():
@@ -870,6 +1248,7 @@ async def generate_skill(payload: GenerateSkillPayload):
                 impl_map[str(item.get("name") or "")] = tool_code
             tools_for_scaffold.append(item)
 
+        scaffold_skill, write_tool_code = _lazy_skillgen_tools()
         scaffold_out = scaffold_skill.invoke({
             "skill_name": plan["skill_name"],
             "tools": tools_for_scaffold,

@@ -78,7 +78,29 @@ def _collect_tools_for_skills(skill_names: List[str]) -> Set[str]:
     return collected
 
 def create_llm():
-    provider = (os.getenv("LLM_PROVIDER") or "doubao").strip().strip("'\"").lower()
+    provider_raw = (os.getenv("LLM_PROVIDER") or "").strip().strip("'\"").lower()
+    if provider_raw:
+        provider = provider_raw
+    else:
+        if (os.getenv("DOUBAO_MODEL_NAME") or os.getenv("ARK_MODEL_NAME") or os.getenv("ARK_ENDPOINT_ID") or "").strip():
+            provider = "doubao"
+        elif (os.getenv("DEEPSEEK_API_KEY") or "").strip():
+            provider = "deepseek"
+        elif (os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY") or "").strip():
+            provider = "qwen"
+        elif (os.getenv("OPENAI_API_KEY") or "").strip():
+            provider = "openai"
+        elif (os.getenv("LOCAL_MODEL_PATH") or "").strip():
+            provider = "local"
+        elif (os.getenv("NIM_API_KEY") or os.getenv("NVIDIA_NIM_API_KEY") or os.getenv("NVIDIA_API_KEY") or "").strip():
+            if (os.getenv("NIM_MINIMAX_M2_MODEL_NAME") or "").strip():
+                provider = "nim_minimax_m2"
+            elif (os.getenv("NIM_GLM47_MODEL_NAME") or "").strip():
+                provider = "nim_glm47"
+            else:
+                provider = "nim_glm47"
+        else:
+            raise ValueError("未检测到可用的模型配置。请复制 .env.example 为 .env 并填写 LLM_PROVIDER 与相应 API_KEY。")
 
     if provider == "doubao":
         api_key = os.getenv("DOUBAO_API_KEY") or os.getenv("ARK_API_KEY") or os.getenv("OPENAI_API_KEY")

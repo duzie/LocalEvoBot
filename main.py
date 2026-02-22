@@ -10,6 +10,7 @@ import sqlite3
 import urllib.request
 import urllib.error
 import subprocess
+import shutil
 import atexit
 import time
 from datetime import datetime, timezone
@@ -36,6 +37,16 @@ def _env_flag(name: str, default: bool = False) -> bool:
     if not raw:
         return default
     return raw in {"1", "true", "yes", "on"}
+
+def _is_public_console() -> bool:
+    if _env_flag("WEB_PUBLIC_CONSOLE", False):
+        return True
+    try:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        flag_path = os.path.join(base_dir, "web", "backend", "public_console.flag")
+        return os.path.exists(flag_path)
+    except Exception:
+        return False
 
 def _select_skill_allowlist(user_input: str) -> List[str]:
     text = str(user_input or "").lower()
@@ -79,11 +90,25 @@ def _wa_gateway_is_running() -> bool:
     except Exception:
         return False
 
+def _resolve_executable(env_name: str, candidates: List[str]) -> str:
+    raw = (os.getenv(env_name) or "").strip()
+    if raw:
+        if os.path.isabs(raw) or os.path.dirname(raw):
+            return raw
+        found = shutil.which(raw)
+        return found or raw
+    for c in candidates or []:
+        found = shutil.which(c)
+        if found:
+            return found
+    return ""
+
 def _start_wa_gateway_subprocess():
     global _gateway_process
     if _gateway_process is not None:
         return
-    if _env_flag("WA_GATEWAY_AUTOSTART", True) is False:
+    default_autostart = True if _is_public_console() else False
+    if _env_flag("WA_GATEWAY_AUTOSTART", default_autostart) is False:
         return
     if _wa_gateway_is_running():
         return
@@ -91,7 +116,33 @@ def _start_wa_gateway_subprocess():
     gateway_dir = os.path.join(base_dir, "gateway")
     if not os.path.isdir(gateway_dir):
         return
-    node_bin = (os.getenv("WA_NODE_BIN") or "node").strip()
+    node_modules_dir = os.path.join(gateway_dir, "node_modules")
+    if not os.path.isdir(node_modules_dir):
+        if _is_public_console() and _env_flag("WA_GATEWAY_AUTO_INSTALL", True):
+            npm_candidates = ["npm.cmd", "npm"] if os.name == "nt" else ["npm"]
+            npm_bin = _resolve_executable("WA_NPM_BIN", npm_candidates)
+            if not npm_bin:
+                print(">>> 系统: 未找到 npm（Windows 通常为 npm.cmd）。请安装 Node.js，或设置 WA_NPM_BIN 为 npm 的完整路径。")
+                return
+            print(">>> 系统: 未检测到 gateway/node_modules，正在尝试安装 WA Gateway 依赖...")
+            try:
+                subprocess.run(
+                    [npm_bin, "install", "--omit=dev", "--silent"],
+                    cwd=gateway_dir,
+                    env=os.environ.copy(),
+                    check=True,
+                )
+            except Exception as e:
+                print(f">>> 系统: 安装 WA Gateway 依赖失败: {e}")
+                return
+        else:
+            print(">>> 系统: 未检测到 gateway/node_modules，已跳过自动启动 WA Gateway（请在 gateway 目录安装依赖或手动启动）。")
+            return
+    node_candidates = ["node.exe", "node"] if os.name == "nt" else ["node"]
+    node_bin = _resolve_executable("WA_NODE_BIN", node_candidates)
+    if not node_bin:
+        print(">>> 系统: 未找到 node。请安装 Node.js，或设置 WA_NODE_BIN 为 node 的完整路径。")
+        return
     try:
         _gateway_process = subprocess.Popen(
             [node_bin, "index.js"],

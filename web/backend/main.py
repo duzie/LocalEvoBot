@@ -15,7 +15,7 @@ if not (os.getenv("HF_HOME") or "").strip():
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     os.environ["HF_HOME"] = os.path.join(project_root, "app", "data", "hf_cache")
 
-from web.backend.routers import config, logs, chat, skills
+from web.backend.routers import logs, chat, config, skills
 
 app = FastAPI(title="LangChain Agent Web Console")
 
@@ -28,18 +28,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Routers
-app.include_router(config.router, prefix="/api/config", tags=["config"])
-app.include_router(logs.router, prefix="/api/logs", tags=["logs"])
-app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
-app.include_router(skills.router, prefix="/api/skills", tags=["skills"])
-
 def _truthy_env(name: str, default: str = "1") -> bool:
     v = os.getenv(name)
     if v is None:
         v = default
     s = str(v).strip().lower()
     return s not in {"0", "false", "no", "off", ""}
+
+def _is_public_console() -> bool:
+    if _truthy_env("WEB_PUBLIC_CONSOLE", "0"):
+        return True
+    try:
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        flag_path = os.path.join(project_root, "web", "backend", "public_console.flag")
+        return os.path.exists(flag_path)
+    except Exception:
+        return False
+
+# Routers
+app.include_router(logs.router, prefix="/api/logs", tags=["logs"])
+app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(config.router, prefix="/api/config", tags=["config"])
+app.include_router(skills.router, prefix="/api/skills", tags=["skills"])
 
 def _prewarm_experience_store():
     try:
