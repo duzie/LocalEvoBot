@@ -13,7 +13,7 @@ from app.integrations.mcp_client import load_mcp_tools
 from app.prompts import get_agent_prompt
 from web.backend.shared import shared
 
-_PATH_KEYS = {"file_path", "path", "dir", "directory", "folder", "target_dir", "output_dir", "root", "base_dir", "file"}
+_PATH_KEYS = {"file_path", "path", "dir", "directory", "folder", "target_dir", "output_dir", "root", "base_dir", "file", "cwd"}
 _LIST_PATH_KEYS = {"file_paths", "paths", "files", "dirs", "directories"}
 
 class WorkdirTool(BaseTool):
@@ -29,9 +29,13 @@ class WorkdirTool(BaseTool):
         wd = self.workdir
         if kwargs:
             data = _rewrite_paths(kwargs, wd)
+            if getattr(tool, "name", "") == "run_shell_command" and isinstance(data, dict) and not data.get("cwd"):
+                data["cwd"] = wd
             return tool.invoke(data)
         if args:
             data = _rewrite_paths(args[0], wd)
+            if getattr(tool, "name", "") == "run_shell_command" and isinstance(data, dict) and not data.get("cwd"):
+                data["cwd"] = wd
             return tool.invoke(data)
         return tool.invoke({})
 
@@ -40,9 +44,13 @@ class WorkdirTool(BaseTool):
         wd = self.workdir
         if kwargs:
             data = _rewrite_paths(kwargs, wd)
+            if getattr(tool, "name", "") == "run_shell_command" and isinstance(data, dict) and not data.get("cwd"):
+                data["cwd"] = wd
             return await tool.ainvoke(data)
         if args:
             data = _rewrite_paths(args[0], wd)
+            if getattr(tool, "name", "") == "run_shell_command" and isinstance(data, dict) and not data.get("cwd"):
+                data["cwd"] = wd
             return await tool.ainvoke(data)
         return await tool.ainvoke({})
 
@@ -605,7 +613,12 @@ def run_role_agent(role_name: str, task_input: str, role_prompt: str = "", tools
     """
     board_snapshot = _load_board_locked()
     task = _get_task_by_id(board_snapshot, int(task_id)) if board_snapshot and task_id else None
-    effective_workdir = (workdir or output_dir or "").strip() or _get_board_output_dir()
+    env_workdir = (os.getenv("AGENT_WORKDIR") or "").strip()
+    if env_workdir and not os.path.isabs(env_workdir):
+        env_workdir = os.path.abspath(env_workdir)
+    if env_workdir:
+        os.makedirs(env_workdir, exist_ok=True)
+    effective_workdir = (workdir or output_dir or "").strip() or env_workdir or _get_board_output_dir()
     payload = {"context": context, "summary": summary, "output_dir": output_dir, "workdir": workdir}
     if not output_dir and not workdir:
         payload["output_dir"] = effective_workdir
@@ -735,7 +748,12 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
                 working_payload = payload
                 selected_workdir = payload.get("workdir") or payload.get("output_dir") or payload.get("target_dir") or payload.get("directory") or ""
                 if not selected_workdir:
-                    selected_workdir = _get_board_output_dir()
+                    env_workdir = (os.getenv("AGENT_WORKDIR") or "").strip()
+                    if env_workdir and not os.path.isabs(env_workdir):
+                        env_workdir = os.path.abspath(env_workdir)
+                    if env_workdir:
+                        os.makedirs(env_workdir, exist_ok=True)
+                    selected_workdir = env_workdir or _get_board_output_dir()
                     working_payload = dict(payload)
                     if not working_payload.get("workdir") and not working_payload.get("output_dir"):
                         working_payload["output_dir"] = selected_workdir

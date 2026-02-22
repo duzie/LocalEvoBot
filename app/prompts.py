@@ -63,6 +63,13 @@ STATE: CONTINUE
 1) UIA/OCR：窗口级查找优先 uia_*，图像定位优先 ocr_*；输入用 pyautogui_skill 或 playwright_type_current。
 2) 安全与可重复：坐标点击需先校验窗口激活与分辨率；尽量使用控件属性定位。
 """
+    board = """
+=== 多 Agent 协作（公告板）===
+1) 只要调用 run_role_agent / run_role_agents_parallel，必须显式给出 workdir 或 output_dir，并与用户指定的“工作目录/目标目录”一致；禁止让子 Agent 默认落到当前项目目录。
+2) 子 Agent 运行终端命令（run_shell_command）时，除非明确需要其他目录，否则一律传 cwd=workdir（或 cwd=output_dir），保证相对路径稳定。
+3) 文件产物（代码/脚本/数据/截图）统一写到 workdir（或 output_dir）下，避免散落到项目目录。
+4) 若用户未指定工作目录：优先使用环境变量 AGENT_WORKDIR（若存在）；否则使用公告板默认输出目录。
+"""
     dyn = ""
     names = [t.name if hasattr(t, "name") else "" for t in (tools or [])]
     if any(n.startswith("playwright_") or n in ("extract_easyui_datagrid",) for n in names):
@@ -73,6 +80,8 @@ STATE: CONTINUE
         dyn += file_safety
     if any(n.startswith("uia_") or n.startswith("ocr_") or n.startswith("gui_") for n in names):
         dyn += desktop
+    if any(n in ("run_role_agent", "run_role_agents_parallel") for n in names):
+        dyn += board
     system_message = base + dyn
     if extra_system:
         system_message = system_message + "\n" + str(extra_system)
