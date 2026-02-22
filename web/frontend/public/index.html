@@ -328,8 +328,15 @@
                 return false
             }
 
+            function isNearBottom(node){
+                if (!node) return true
+                var remain = node.scrollHeight - node.scrollTop - node.clientHeight
+                return remain < 40
+            }
+
             function renderAgentBubble(bubble, content){
                 bubble.textContent = ''
+                var shouldOpenDetails = (bubble.dataset && bubble.dataset.detailsOpen === '1')
                 var lines = String(content || '').replace(/\r/g, '').split('\n')
                 var mainLines = []
                 var detailLines = []
@@ -360,6 +367,7 @@
                 if (detailLines.length){
                     var details = document.createElement('details')
                     details.className = 'bubbleDetails'
+                    if (shouldOpenDetails) details.open = true
                     var summary = document.createElement('summary')
                     summary.textContent = '工具/思考详情'
                     var pre = document.createElement('pre')
@@ -368,6 +376,9 @@
                     details.appendChild(summary)
                     details.appendChild(pre)
                     bubble.appendChild(details)
+                    details.addEventListener('toggle', function(){
+                        bubble.dataset.detailsOpen = details.open ? '1' : '0'
+                    })
                 }
             }
 
@@ -425,9 +436,10 @@
                         appendAuxMessage(msg.replace(/\r/g, ''))
                         return
                     }
+                    var near = isNearBottom(el('chatList'))
                     state.lastAgentContent = (state.lastAgentContent || '') + msg
                     renderAgentBubble(state.lastAgentBubble, state.lastAgentContent)
-                    el('chatList').scrollTop = el('chatList').scrollHeight
+                    if (near) el('chatList').scrollTop = el('chatList').scrollHeight
                     return
                 }
 
@@ -440,6 +452,7 @@
                 wrap.className = 'msg' + (type === 'user' ? ' user' : '')
                 var bubble = document.createElement('div')
                 bubble.className = 'bubble ' + type
+                var near = isNearBottom(el('chatList'))
                 if (isAgent){
                     var content = msg.slice('Agent:'.length)
                     if (content.startsWith(' ')) content = content.slice(1)
@@ -453,7 +466,7 @@
                 }
                 wrap.appendChild(bubble)
                 el('chatList').appendChild(wrap)
-                el('chatList').scrollTop = el('chatList').scrollHeight
+                if (near) el('chatList').scrollTop = el('chatList').scrollHeight
             }
 
             function wsUrl(path){
