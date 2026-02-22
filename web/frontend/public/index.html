@@ -147,7 +147,7 @@
     <script>
         (function(){
             function el(id){return document.getElementById(id)}
-            var state = {chatConnected:false,logConnected:false,chatWs:null,logWs:null,modelCurrent:'doubao',modelOptions:[],lastAgentBubble:null,lastAgentContent:'',auxCapture:false,isSending:false,isRunning:false,confirmTimer:null,confirmCountdown:null,roleLogs:[],roleLogSelected:''}
+            var state = {chatConnected:false,logConnected:false,chatWs:null,logWs:null,modelCurrent:'doubao',modelOptions:[],lastAgentBubble:null,lastAgentContent:'',auxCapture:false,isSending:false,isRunning:false,stopPending:false,confirmTimer:null,confirmCountdown:null,roleLogs:[],roleLogSelected:''}
 
             function setOnline(online){
                 var dot = el('statusDot')
@@ -182,12 +182,22 @@
                 updateSendButton()
             }
 
+            function setStopPending(pending){
+                state.stopPending = !!pending
+                updateSendButton()
+            }
+
             function updateSendButton(){
                 var btn = el('sendBtn')
                 var connected = state.chatConnected
                 if (!connected){
                     btn.disabled = true
                     btn.textContent = '发送'
+                    return
+                }
+                if (state.stopPending){
+                    btn.disabled = true
+                    btn.textContent = '停止中'
                     return
                 }
                 if (state.isRunning){
@@ -236,6 +246,13 @@
                         return o.owner + ': ' + o.done + '/' + o.total + ' 已完成, ' + o.doing + ' 进行中, ' + o.pending + ' 待处理, ' + o.review + ' 待验收, ' + o.rework + ' 返工'
                     })
                     setProgressList('progressOwnersList', lines)
+                }
+
+                var st = String(data.execution_status || '').toLowerCase()
+                var running = (st === 'running' || st === 'stopping')
+                setRunning(running)
+                if (!running){
+                    setStopPending(false)
                 }
             }
 
@@ -357,7 +374,7 @@
             function appendChatMessage(raw, opts){
                 var msg = (raw == null ? '' : String(raw))
                 if (!msg) return
-                if (msg.indexOf('发生错误') !== -1 || msg.indexOf('❌') !== -1 || msg.indexOf('Finished chain') !== -1 || msg.indexOf('STATE: DONE') !== -1){
+                if (msg.indexOf('发生错误') !== -1 || msg.indexOf('❌') !== -1){
                     setRunning(false)
                     setSending(false)
                 }
@@ -456,8 +473,9 @@
                     var data = ev.data || ''
                     if (typeof data === 'string' && data.indexOf('>>> 系统: 状态=') === 0){
                         if (data.indexOf('执行中') !== -1) setRunning(true)
-                        if (data.indexOf('空闲') !== -1) setRunning(false)
-                        if (data.indexOf('已停止') !== -1) setRunning(false)
+                        if (data.indexOf('空闲') !== -1) { setRunning(false); setStopPending(false) }
+                        if (data.indexOf('已停止') !== -1) { setRunning(false); setStopPending(false) }
+                        if (data.indexOf('停止中') !== -1) setStopPending(true)
                     }
                     appendChatMessage(data)
                 }
@@ -628,10 +646,24 @@
 
             function stopAgent(){
                 if (!state.chatConnected) return
-                fetch('/api/chat/stop', { method: 'POST' }).catch(function(){})
+                setStopPending(true)
+                fetch('/api/chat/stop', { method: 'POST' }).then(function(res){
+                    if (!res.ok){
+                        setStopPending(false)
+                        appendChatMessage('>>> 系统: 停止失败')
+                        return
+                    }
+                    appendChatMessage('>>> 系统: 已请求停止')
+                }).catch(function(){
+                    setStopPending(false)
+                    appendChatMessage('>>> 系统: 停止失败')
+                })
             }
 
             function sendOrStop(){
+                if (state.stopPending){
+                    return
+                }
                 if (state.isRunning){
                     stopAgent()
                     return

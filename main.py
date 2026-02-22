@@ -304,6 +304,22 @@ class ShortTermToolTraceHandler(BaseCallbackHandler):
                 summary["lines"] = f"{int(start_line)}-{int(end_line)}"
             else:
                 summary["lines"] = str(int(start_line))
+        if isinstance(stats, dict):
+            max_chars = stats.get("max_chars")
+            char_count = stats.get("char_count")
+            if max_chars is not None:
+                summary["max_chars"] = max_chars
+            if char_count is not None:
+                summary["char_count"] = char_count
+            msg_text = message or ""
+            if (isinstance(max_chars, int) or str(max_chars).isdigit()) and (isinstance(char_count, int) or str(char_count).isdigit()):
+                try:
+                    if int(char_count) > int(max_chars):
+                        summary["truncated"] = True
+                except Exception:
+                    pass
+            if ("截断" in msg_text) or ("超过最大字符限制" in msg_text):
+                summary["truncated"] = True
         return summary
 
     def _compact_payload(self, payload: dict):
@@ -403,6 +419,67 @@ def _requests_all_memory_search(text: str):
         return False
     keywords = ["搜索所有记忆", "搜所有记忆", "搜索全部记忆", "搜全部记忆", "全量搜索记忆", "搜索全量记忆"]
     return any(k in t for k in keywords)
+
+def _load_recent_tool_traces(project_id: str, user_id: str, since_iso: str, limit: int = 12) -> str:
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(base_dir, "app", "data")
+    if not os.path.isdir(data_dir):
+        return ""
+    date_key = None
+    try:
+        if since_iso and len(since_iso) >= 10:
+            date_key = since_iso[:10].replace("-", "")
+    except Exception:
+        date_key = None
+    if not date_key:
+        date_key = datetime.now(timezone.utc).strftime("%Y%m%d")
+    path = os.path.join(data_dir, f"short_term_memory_{date_key}.sqlite3")
+    if not os.path.exists(path):
+        return ""
+    safe_limit = max(1, min(int(limit or 12), 50))
+    conn = sqlite3.connect(path)
+    try:
+        cur = conn.cursor()
+        rows = cur.execute(
+            "SELECT content FROM short_term_messages WHERE role = ? AND project_id = ? AND user_id = ? AND created_at >= ? ORDER BY id DESC LIMIT ?",
+            ("tool", project_id or "", user_id or "", since_iso or "", safe_limit),
+        ).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    if not rows:
+        return ""
+    items = []
+    for (content,) in reversed(rows):
+        text = str(content or "").strip()
+        if not text:
+            continue
+        try:
+            payload = json.loads(text)
+        except Exception:
+            items.append(text)
+            continue
+        event = payload.get("event") or ""
+        tool = payload.get("tool") or payload.get("tool_name") or ""
+        hint = ""
+        if event in {"tool_start", "tool_end"}:
+            detail = payload.get("input") if event == "tool_start" else payload.get("output")
+            if isinstance(detail, dict):
+                f = detail.get("file") or ""
+                lines = detail.get("lines") or ""
+                truncated = detail.get("truncated")
+                if f:
+                    hint = f"{os.path.basename(str(f))}"
+                    if lines:
+                        hint += f":{lines}"
+                    if truncated:
+                        hint += " (truncated)"
+        if hint:
+            items.append(f"- {event} {tool}: {hint}")
+        else:
+            items.append(f"- {event} {tool}".strip())
+    return "\n".join(items).strip()
 
 def parse_state(output: str):
     def normalize_state(value: str):
@@ -1252,6 +1329,7 @@ def main():
                 raw_output = ""
                 print("Agent: ", end="", flush=True)
                 buffer = ""
+                step_started_at = datetime.now(timezone.utc).isoformat()
                 shared.set_status("running", "执行中", auto_input)
                 print(">>> 系统: 状态=执行中")
                 for chunk in agent_executor.stream({
@@ -1319,11 +1397,14 @@ def main():
                             agent_executor = create_agent_executor()
                         summary_llm = create_llm()
                         print("Agent: 已重载技能\n")
-                        chat_history.append(("system", "系统消息：技能热加载已完成，请继续上一轮任务，避免重复生成技能。"))
+                        chat_history.append(("system", "系统消息：技能热加载已完成。"))
+                        trace = _load_recent_tool_traces(project_id, user_id, step_started_at, limit=14)
+                        trace_block = f"\n\n已发生的工具轨迹（不要重复）：\n{trace}" if trace else ""
                         auto_input = (
                             "系统消息：技能热加载已完成。请继续执行上一轮未完成的任务，不要重复创建已存在的技能/目录/文件。"
                             "如果你不确定新技能是否已创建成功，优先通过 inspect_environment 或检查目录确认；"
-                            "确认存在后，直接调用新工具完成任务。\n\n"
+                            "确认存在后，直接调用新工具完成任务。"
+                            f"{trace_block}\n\n"
                             f"上一轮任务输入：{auto_input}"
                         )
                         continue # 跳过后续的状态检查，直接进入下一轮循环（使用新的 auto_input）
@@ -1336,9 +1417,12 @@ def main():
                             agent_executor = create_agent_executor()
                             summary_llm = create_llm()
                             chat_history.append(("system", f"系统消息：热加载失败已自动回滚。{msg}"))
+                            trace = _load_recent_tool_traces(project_id, user_id, step_started_at, limit=14)
+                            trace_block = f"\n\n已发生的工具轨迹（不要重复）：\n{trace}" if trace else ""
                             auto_input = (
                                 "系统消息：热加载失败，已自动回滚到最近稳定版本。"
-                                "请继续上一轮未完成的任务，不要重复创建技能/目录/文件。\n\n"
+                                "请继续上一轮未完成的任务，不要重复创建技能/目录/文件。"
+                                f"{trace_block}\n\n"
                                 f"上一轮任务输入：{auto_input}"
                             )
                             continue

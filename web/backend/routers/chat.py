@@ -381,7 +381,22 @@ async def delete_cookies(domain: str):
 @router.post("/stop")
 async def stop_current():
     """Request to stop current agent answer/task without affecting main dialog"""
+    current_status = str(shared.execution_status or "").lower()
+    if current_status in {"idle", "stopped"}:
+        shared.clear_stop()
+        shared.set_status("idle", "空闲", "")
+        try:
+            await manager.broadcast(">>> 系统: 状态=空闲")
+        except Exception:
+            pass
+        return {"status": "idle"}
+
     shared.request_stop()
+    shared.set_status("stopping", "停止中", shared.current_task)
+    try:
+        await manager.broadcast(">>> 系统: 状态=停止中")
+    except Exception:
+        pass
     return {"status": "stop_requested"}
 
 @router.get("/history")
