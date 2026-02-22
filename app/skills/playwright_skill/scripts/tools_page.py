@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 from datetime import datetime
 from typing import Any, Dict
@@ -809,7 +810,7 @@ def playwright_modal_snapshot(root_selector: str = "#updateModal"):
                     if (!best) return { el: null, used: sel || "" };
                     let used = best.id ? `#${best.id}` : best.tagName.toLowerCase();
                     if (best.className) {
-                        const first = best.className.toString().trim().split(/\s+/)[0];
+                        const first = best.className.toString().trim().split(/\\s+/)[0];
                         if (first) used += "." + first;
                     }
                     return { el: best, used };
@@ -994,3 +995,361 @@ def playwright_run_steps(steps: list, screenshot_dir: str = "reports/screenshots
 
     _emit_event(tool_name, "done", steps=len(results))
     return _ok_payload("批量步骤执行完成", results=results)
+
+
+def _safe_filename(name: str) -> str:
+    n = str(name or "").strip()
+    if not n:
+        return ""
+    n = n.replace("\\", "_").replace("/", "_").replace(":", "_")
+    n = re.sub(r'[\r\n\t]+', " ", n).strip()
+    n = re.sub(r"[^\w\.\-\(\) \u4e00-\u9fff]", "_", n).strip()
+    n = re.sub(r"\s+", " ", n).strip()
+    if len(n) > 120:
+        n = n[:120].rstrip()
+    return n
+
+
+def _get_project_root() -> str:
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+
+@tool
+def playwright_wait_for_selector(selector: str, timeout_ms: int = 10000, state: str = "visible"):
+    """
+    等待指定元素出现/消失/可见/隐藏。
+
+    Args:
+        selector: CSS 选择器或 Playwright 选择器（如 text=xxx）
+        timeout_ms: 超时时间毫秒
+        state: attached/detached/visible/hidden
+    """
+    tool_name = "playwright_wait_for_selector"
+    if not str(selector or "").strip():
+        return _error_payload("invalid_args", "selector 不能为空", tool=tool_name)
+    page, err = _require_page(tool_name)
+    if err:
+        return err
+    try:
+        to = max(0, int(timeout_ms or 0))
+    except Exception:
+        to = 10000
+    st = (str(state or "").strip().lower() or "visible")
+    if st not in {"attached", "detached", "visible", "hidden"}:
+        st = "visible"
+    try:
+        page.wait_for_selector(selector, timeout=to, state=st)
+        _emit_event(tool_name, "wait", selector=selector, state=st)
+        return _ok_payload("等待完成", selector=selector, state=st, url=page.url, title=page.title())
+    except Exception as e:
+        _emit_event(tool_name, "error", error=str(e), selector=selector, state=st)
+        return _error_payload("wait_for_selector_failed", str(e), tool=tool_name, selector=selector, state=st)
+
+
+@tool
+def playwright_wait_for_url(url_substring: str = "", url_regex: str = "", timeout_ms: int = 10000):
+    """
+    等待 URL 变化到目标（包含指定子串或匹配正则）。
+
+    Args:
+        url_substring: URL 必须包含的子串
+        url_regex: URL 匹配的正则表达式
+        timeout_ms: 超时时间毫秒
+    """
+    tool_name = "playwright_wait_for_url"
+    page, err = _require_page(tool_name)
+    if err:
+        return err
+    sub = str(url_substring or "").strip()
+    reg = str(url_regex or "").strip()
+    if not sub and not reg:
+        return _error_payload("invalid_args", "url_substring 或 url_regex 至少提供一个", tool=tool_name)
+    try:
+        to = max(0, int(timeout_ms or 0))
+    except Exception:
+        to = 10000
+    try:
+        if reg:
+            page.wait_for_url(re.compile(reg), timeout=to)
+        else:
+            sel = json.dumps(sub)
+            page.wait_for_function(f"() => String(location.href||'').includes({sel})", timeout=to)
+        _emit_event(tool_name, "wait", url=page.url)
+        return _ok_payload("等待完成", url=page.url, title=page.title())
+    except Exception as e:
+        _emit_event(tool_name, "error", error=str(e), url=page.url)
+        return _error_payload("wait_for_url_failed", str(e), tool=tool_name, url=page.url, url_substring=sub, url_regex=reg)
+
+
+@tool
+def playwright_wait_for_response(url_substring: str, timeout_ms: int = 10000, status_min: int = 200, status_max: int = 299):
+    """
+    等待网络响应出现（常用于等待接口返回后再继续 UI 操作）。
+
+    Args:
+        url_substring: 目标响应 URL 需要包含的子串
+        timeout_ms: 超时时间毫秒
+        status_min: 最小 HTTP 状态码（包含）
+        status_max: 最大 HTTP 状态码（包含）
+    """
+    tool_name = "playwright_wait_for_response"
+    page, err = _require_page(tool_name)
+    if err:
+        return err
+    sub = str(url_substring or "").strip()
+    if not sub:
+        return _error_payload("invalid_args", "url_substring 不能为空", tool=tool_name)
+    try:
+        to = max(0, int(timeout_ms or 0))
+    except Exception:
+        to = 10000
+    try:
+        smin = int(status_min or 0)
+        smax = int(status_max or 0)
+    except Exception:
+        smin, smax = 200, 299
+    if smin > smax:
+        smin, smax = smax, smin
+    try:
+        resp = page.wait_for_response(lambda r: (sub in (r.url or "")) and (smin <= int(getattr(r, "status", 0) or 0) <= smax), timeout=to)
+        payload = {"url": getattr(resp, "url", ""), "status": int(getattr(resp, "status", 0) or 0)}
+        _emit_event(tool_name, "wait", url=payload.get("url"), status=payload.get("status"))
+        return _ok_payload("等待完成", response=payload, page_url=page.url, title=page.title())
+    except Exception as e:
+        _emit_event(tool_name, "error", error=str(e), page_url=page.url)
+        return _error_payload("wait_for_response_failed", str(e), tool=tool_name, url_substring=sub, page_url=page.url)
+
+
+@tool
+def playwright_list_pages():
+    """
+    列出当前浏览器上下文中的所有标签页。
+    """
+    tool_name = "playwright_list_pages"
+    core._sync_latest_page()
+    if not core._context:
+        return _error_payload("browser_not_ready", "浏览器未启动，请先调用 playwright_open", tool=tool_name)
+    try:
+        pages = list(getattr(core._context, "pages", []) or [])
+    except Exception:
+        pages = []
+    out = []
+    for idx, p in enumerate(pages):
+        try:
+            item = {"index": idx, "url": p.url, "title": p.title(), "is_current": (p == core._page)}
+        except Exception:
+            item = {"index": idx, "url": "", "title": "", "is_current": (p == core._page)}
+        out.append(item)
+    return _ok_payload("ok", pages=out, count=len(out))
+
+
+@tool
+def playwright_switch_page(index: int = -1, url_substring: str = "", title_substring: str = "", bring_to_front: bool = True):
+    """
+    切换到指定标签页（按索引或 URL/标题匹配）。
+
+    Args:
+        index: 页签索引（默认 -1 表示最后一个）
+        url_substring: URL 包含子串匹配
+        title_substring: 标题包含子串匹配
+        bring_to_front: 是否把目标页签置前
+    """
+    tool_name = "playwright_switch_page"
+    core._sync_latest_page()
+    if not core._context:
+        return _error_payload("browser_not_ready", "浏览器未启动，请先调用 playwright_open", tool=tool_name)
+    try:
+        pages = list(getattr(core._context, "pages", []) or [])
+    except Exception:
+        pages = []
+    if not pages:
+        return _error_payload("no_pages", "未找到任何标签页", tool=tool_name)
+    sub_url = str(url_substring or "").strip()
+    sub_title = str(title_substring or "").strip()
+    target = None
+    if sub_url or sub_title:
+        for p in pages:
+            try:
+                u = str(getattr(p, "url", "") or "")
+                t = str(p.title() or "")
+            except Exception:
+                u, t = "", ""
+            if sub_url and sub_url not in u:
+                continue
+            if sub_title and sub_title not in t:
+                continue
+            target = p
+            break
+        if target is None:
+            return _error_payload("page_not_found", "未找到匹配的标签页", tool=tool_name, url_substring=sub_url, title_substring=sub_title)
+    else:
+        try:
+            idx = int(index)
+        except Exception:
+            idx = -1
+        try:
+            target = pages[idx]
+        except Exception:
+            target = pages[-1]
+    try:
+        core._page = target
+        if bool(bring_to_front):
+            try:
+                target.bring_to_front()
+            except Exception:
+                pass
+        try:
+            target.wait_for_load_state("domcontentloaded", timeout=5000)
+        except Exception:
+            pass
+        _emit_event(tool_name, "switch", url=target.url)
+        return _ok_payload("已切换标签页", url=target.url, title=target.title())
+    except Exception as e:
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("switch_page_failed", str(e), tool=tool_name)
+
+
+@tool
+def playwright_scroll(delta_y: int = 800, delta_x: int = 0):
+    """
+    滚动页面。
+
+    Args:
+        delta_y: 垂直滚动像素（正向下、负向上）
+        delta_x: 水平滚动像素（正向右、负向左）
+    """
+    tool_name = "playwright_scroll"
+    page, err = _require_page(tool_name)
+    if err:
+        return err
+    try:
+        dy = int(delta_y or 0)
+    except Exception:
+        dy = 0
+    try:
+        dx = int(delta_x or 0)
+    except Exception:
+        dx = 0
+    try:
+        page.evaluate("([x,y]) => window.scrollBy(x, y)", [dx, dy])
+        _emit_event(tool_name, "scroll", dx=dx, dy=dy)
+        return _ok_payload("已滚动", delta_x=dx, delta_y=dy, url=page.url, title=page.title())
+    except Exception as e:
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("scroll_failed", str(e), tool=tool_name, delta_x=dx, delta_y=dy)
+
+
+@tool
+def playwright_press(key: str):
+    """
+    在当前页面发送键盘按键（例如 Enter、Escape、Control+L）。
+
+    Args:
+        key: Playwright 键名
+    """
+    tool_name = "playwright_press"
+    if not str(key or "").strip():
+        return _error_payload("invalid_args", "key 不能为空", tool=tool_name)
+    page, err = _require_page(tool_name)
+    if err:
+        return err
+    k = str(key).strip()
+    try:
+        page.keyboard.press(k)
+        _emit_event(tool_name, "press", key=k)
+        return _ok_payload("已发送按键", key=k, url=page.url, title=page.title())
+    except Exception as e:
+        _emit_event(tool_name, "error", error=str(e), key=k)
+        return _error_payload("press_failed", str(e), tool=tool_name, key=k)
+
+
+@tool
+def playwright_click_and_wait_download(selector: str, timeout_ms: int = 20000, save_dir: str = None, filename: str = None):
+    """
+    点击触发下载并保存文件到本地。
+
+    Args:
+        selector: 触发下载的按钮/链接选择器
+        timeout_ms: 超时时间毫秒
+        save_dir: 保存目录（默认 app/data/downloads 或环境变量 PLAYWRIGHT_DOWNLOAD_DIR）
+        filename: 保存文件名（可选，默认使用 suggested_filename）
+    """
+    tool_name = "playwright_click_and_wait_download"
+    if not str(selector or "").strip():
+        return _error_payload("invalid_args", "selector 不能为空", tool=tool_name)
+    page, err = _require_page(tool_name)
+    if err:
+        return err
+    try:
+        to = max(0, int(timeout_ms or 0))
+    except Exception:
+        to = 20000
+    root = _get_project_root()
+    base_dir = (os.getenv("PLAYWRIGHT_DOWNLOAD_DIR") or "").strip()
+    if not save_dir:
+        save_dir = base_dir or os.path.join(root, "app", "data", "downloads")
+    save_dir = os.path.abspath(str(save_dir))
+    os.makedirs(save_dir, exist_ok=True)
+    try:
+        with page.expect_download(timeout=to) as dlinfo:
+            page.click(selector, timeout=10000)
+        dl = dlinfo.value
+        suggested = ""
+        try:
+            suggested = str(getattr(dl, "suggested_filename", "") or "").strip()
+        except Exception:
+            suggested = ""
+        out_name = _safe_filename(filename) if str(filename or "").strip() else _safe_filename(suggested) or "download.bin"
+        out_path = os.path.abspath(os.path.join(save_dir, out_name))
+        dl.save_as(out_path)
+        core._maybe_wait_new_page(800)
+        _emit_event(tool_name, "download", path=out_path, name=out_name)
+        return _ok_payload("下载完成", path=out_path, filename=out_name, url=page.url, title=page.title())
+    except Exception as e:
+        _emit_event(tool_name, "error", error=str(e), selector=selector)
+        return _error_payload("download_failed", str(e), tool=tool_name, selector=selector)
+
+
+@tool
+def playwright_detect_blockers():
+    """
+    检测页面是否出现登录/验证码/安全验证等阻塞因素。
+    """
+    tool_name = "playwright_detect_blockers"
+    page, err = _require_page(tool_name)
+    if err:
+        return err
+    script = """
+    () => {
+      const text = String((document.body && document.body.innerText) || '').slice(0, 4000);
+      const lower = text.toLowerCase();
+      const hasPwd = !!document.querySelector('input[type="password"]');
+      const hasCaptchaWord = /验证码|安全验证|人机验证|滑块|拖动滑块|请完成验证|验证一下/.test(text);
+      const hasCaptchaIframe = Array.from(document.querySelectorAll('iframe')).some(f => /captcha|geetest|hcaptcha|recaptcha|sec|verify/i.test(String(f.src||'')));
+      const hasCanvas = !!document.querySelector('canvas');
+      const hasSms = /短信|验证码已发送|获取验证码|发送验证码/.test(text) || !!document.querySelector('input[name*="sms"], input[name*="code"], input[autocomplete="one-time-code"]');
+      const hasLoginWord = /登录|账号|密码|商家中心|手机号/.test(text) || !!document.querySelector('button[type="submit"]');
+      const blocked = !!(hasCaptchaWord || hasCaptchaIframe);
+      const needLogin = !!(hasPwd || (hasLoginWord && !/退出登录|logout/i.test(lower)));
+      return {
+        blocked,
+        need_login: needLogin,
+        has_captcha: !!(hasCaptchaWord || hasCaptchaIframe),
+        has_sms_verify: !!hasSms,
+        hints: {
+          has_password_input: hasPwd,
+          has_canvas: hasCanvas,
+          text_head: text.slice(0, 300)
+        }
+      };
+    }
+    """
+    try:
+        data = page.evaluate(script)
+        if not isinstance(data, dict):
+            data = {"blocked": False, "need_login": False, "has_captcha": False, "has_sms_verify": False, "hints": {"text_head": ""}}
+        _emit_event(tool_name, "detect", blocked=bool(data.get("blocked")), need_login=bool(data.get("need_login")))
+        return _ok_payload("ok", result=data, url=page.url, title=page.title())
+    except Exception as e:
+        _emit_event(tool_name, "error", error=str(e))
+        return _error_payload("detect_failed", str(e), tool=tool_name)

@@ -496,6 +496,10 @@ def _apply_cookies_for_domain(domain: str, base_url: str = None):
             cookies, err = _load_cookies_from_file(parent, base_url=base_url)
             if err:
                 return err
+        else:
+            return err
+    if not isinstance(cookies, list) or not cookies:
+        return "没有可用的 Cookie"
     _context.add_cookies(cookies)
     return f"已加载 Cookie: {domain} (数量: {len(cookies)})"
 
