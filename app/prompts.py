@@ -51,6 +51,13 @@ STATE: CONTINUE
 2) 代码规范：每个 @tool 函数必须包含 docstring 或 description；避免未使用导出。
 3) 变更验证：写入后运行语法与 lint 检查；失败则回滚或修复。
 """
+    file_safety = """
+=== 文件安全 ===
+1) 永远不要用 `save_document` 修改已存在文件；它只用于创建新文件。
+2) 修改文件前必须先备份：优先 `safe_file_backup`，必要时可 `restore_from_backup` 回滚。
+3) 大文件分块读取：超过上下文/字符限制时，必须用分块工具继续读取完整内容，再做合并/增量编辑，禁止“读到截断内容就直接覆盖写回”。
+4) 写入优先安全合并/增量编辑：优先 `safe_file_merge` 或 `incremental_file_edit`，再做完整性校验。
+"""
     desktop = """
 === 桌面自动化提示 ===
 1) UIA/OCR：窗口级查找优先 uia_*，图像定位优先 ocr_*；输入用 pyautogui_skill 或 playwright_type_current。
@@ -62,6 +69,8 @@ STATE: CONTINUE
         dyn += browser
     if any(n in ("inspect_environment", "install_packages", "scaffold_skill", "write_tool_code", "reload_skills", "promote_skill") for n in names):
         dyn += skillgen
+    if any(n in ("save_document", "read_document_part", "read_large_file_chunks", "safe_file_backup", "safe_file_merge", "incremental_file_edit", "validate_file_integrity", "restore_from_backup", "extract_code_class", "merge_classes_into_file", "insert_text_at_line") for n in names):
+        dyn += file_safety
     if any(n.startswith("uia_") or n.startswith("ocr_") or n.startswith("gui_") for n in names):
         dyn += desktop
     system_message = base + dyn

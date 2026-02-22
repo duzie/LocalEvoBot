@@ -228,6 +228,9 @@ def _add_short_term_message(role: str, content: str, project_id: str, user_id: s
     text = str(content or "").strip()
     if not text:
         return
+    r = str(role or "").strip()
+    if r in {"user", "assistant", "system"} and len(text) > 20000:
+        text = text[:20000] + "\n...(truncated for storage)..."
     created_at = datetime.now(timezone.utc).isoformat()
     date_key = created_at[:10].replace("-", "")
     _init_short_term_db(date_key)
@@ -237,11 +240,11 @@ def _add_short_term_message(role: str, content: str, project_id: str, user_id: s
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO short_term_messages(role, content, created_at, project_id, user_id) VALUES (?, ?, ?, ?, ?)",
-            (str(role or "").strip(), text, created_at, project_id or "", user_id or ""),
+            (r, text, created_at, project_id or "", user_id or ""),
         )
         cur.execute(
             "INSERT INTO short_term_messages_fts(content, role, created_at, project_id, user_id) VALUES (?, ?, ?, ?, ?)",
-            (text, str(role or "").strip(), created_at, project_id or "", user_id or ""),
+            (text, r, created_at, project_id or "", user_id or ""),
         )
         conn.commit()
     finally:
@@ -1120,10 +1123,30 @@ def _summarize_text(llm, transcript_text, existing_summary=None, summary_kind="�
     new_summary = getattr(resp, "content", "") or str(resp)
     return new_summary.strip()
 
-def maybe_summarize_history(chat_history, llm, max_recent_turns=8, max_stage_chars=1200):
+def maybe_summarize_history(chat_history, llm, max_recent_turns=8, max_stage_chars=1200, max_total_chars=70000, max_message_chars=12000):
     summaries, non_summary = _extract_summaries(chat_history)
     long_summary = summaries.get("long")
     stage_summary = summaries.get("stage")
+
+    def _clip_history(messages):
+        clipped = []
+        total = 0
+        for role, content in messages:
+            text = "" if content is None else str(content)
+            if max_message_chars and len(text) > max_message_chars:
+                text = text[:max_message_chars] + "\n...(truncated)..."
+            clipped.append((role, text))
+            total += len(text)
+        if max_total_chars and total > max_total_chars:
+            keep = []
+            running = 0
+            for role, content in reversed(clipped):
+                if running + len(content) > max_total_chars:
+                    break
+                keep.append((role, content))
+                running += len(content)
+            clipped = list(reversed(keep))
+        return clipped
 
     chunk_size = max_recent_turns * 2
     if len(non_summary) <= chunk_size:
@@ -1132,7 +1155,7 @@ def maybe_summarize_history(chat_history, llm, max_recent_turns=8, max_stage_cha
             history.append(("system", f"对话摘要（长期）：\n{long_summary}"))
         if stage_summary:
             history.append(("system", f"对话摘要（阶段）：\n{stage_summary}"))
-        return history + non_summary
+        return _clip_history(history + non_summary)
 
     older = non_summary[:-chunk_size]
     recent = non_summary[-chunk_size:]
@@ -1154,7 +1177,7 @@ def maybe_summarize_history(chat_history, llm, max_recent_turns=8, max_stage_cha
         history.append(("system", f"对话摘要（长期）：\n{long_summary}"))
     if stage_summary:
         history.append(("system", f"对话摘要（阶段）：\n{stage_summary}"))
-    return history + recent
+    return _clip_history(history + recent)
 
 def enable_dpi_awareness():
     if platform.system() != "Windows":
@@ -1380,14 +1403,20 @@ def main():
                 visible_output = cleaned_output or output
                 if state == "CONTINUE" and _should_pause_for_user(visible_output):
                     state = None
-                _add_short_term_message("assistant", cleaned_output or output, project_id, user_id)
+                stored_input = auto_input
+                if stored_input and len(stored_input) > 12000:
+                    stored_input = stored_input[:12000] + "\n...(truncated)..."
+                stored_output = visible_output
+                if stored_output and len(stored_output) > 12000:
+                    stored_output = stored_output[:12000] + "\n...(truncated)..."
+                _add_short_term_message("assistant", stored_output, project_id, user_id)
                 if wa_ctx and state != "CONTINUE":
                     reply_text = (cleaned_output or output or "").strip()
                     if reply_text:
                         _send_whatsapp_reply(wa_ctx.get("chatJid"), reply_text)
                 chat_history.extend([
-                    ("user", auto_input),
-                    ("assistant", output)
+                    ("user", stored_input),
+                    ("assistant", stored_output)
                 ])
                 if reload_requested:
                     try:
@@ -1463,7 +1492,13 @@ def main():
                     shared.set_status("idle", "空闲")
                     print(">>> 系统: 状态=空闲")
                     break
-                auto_input = "继续执行，基于当前屏幕状态完成任务。"
+                trace = _load_recent_tool_traces(project_id, user_id, step_started_at, limit=12)
+                trace_block = f"\n\n本轮已发生的工具轨迹（不要重复）：\n{trace}" if trace else ""
+                auto_input = (
+                    "继续执行，基于当前屏幕状态完成任务。"
+                    "如果需要继续处理大文件/长文件，优先基于上面的工具轨迹决定下一步（例如从下一段/下一块继续读取），不要从头重复读取。\n"
+                    f"{trace_block}"
+                )
                 if step == max_auto_steps - 1:
                     print("Agent: 已达到自动执行步数上限。输入“继续”将从任务计划的当前步骤继续。\n")
                     shared.set_status("idle", "空闲")
