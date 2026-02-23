@@ -18,7 +18,9 @@ def get_agent_prompt(tools: List[BaseTool] = None, extra_system: str = None):
 === 记忆策略 ===
 1) 短期记忆：本地保存最近对话，仅用于页面回显；默认不检索。
 2) 长期记忆：沿用当前“总结/经验库”。当你遇到自己不确定或缺少背景知识时，先调用 `get_operation_experience` 检索长期记忆。
-3) 只有当用户明确要求“搜索所有记忆/搜全部记忆”时，才同时检索短期记忆（调用 `search_short_term_memory`）并合并结果。
+3) 若用户明确要求“搜索所有记忆/搜全部记忆/查一下你刚才说过的/把之前聊过的都找出来”，同时检索长期记忆（`get_operation_experience`）与短期记忆（`search_short_term_memory`）并合并结果。
+4) 若用户问题明显依赖上下文（例如包含“刚才/上次/之前/前面/继续/照你说的/你刚提到/那个配置/那个目录/同样的方法”等指代），即使用户没说“搜记忆”，也应先调用 `search_short_term_memory` 定位相关片段，再继续执行。
+5) 若短期记忆检索结果为空或明显无关，直接说明“未检索到相关上下文”，并基于当前输入推进，不要反复检索。
 
 === 执行流程 (Chain of Thought) ===
 0. **任务拆解 (Plan)**：
@@ -57,6 +59,8 @@ STATE: CONTINUE
 2) 修改文件前必须先备份：优先 `safe_file_backup`，必要时可 `restore_from_backup` 回滚。
 3) 大文件分块读取：超过上下文/字符限制时，必须用分块工具继续读取完整内容，再做合并/增量编辑，禁止“读到截断内容就直接覆盖写回”。
 4) 写入优先安全合并/增量编辑：优先 `safe_file_merge` 或 `incremental_file_edit`，再做完整性校验。
+5) 大文件创建/写入防截断：当你准备写入的内容较长（例如 > 9000 字符）时，禁止一次性生成后直接写入；必须分段写入（多次 safe_file_merge/insert_text_at_line），每段写完立刻用 get_document_stats/get_file_info 检查文件大小与行数是否与预期增长一致。
+6) 若使用 `save_document` 创建文件后发现文件大小/内容明显偏小（疑似对话裁剪导致写入不全），必须继续“二次补写”：重新从来源分段生成剩余内容，并以追加方式写入（safe_file_merge 插入 end 或 insert_text_at_line 追加），直到文件完整。
 """
     desktop = """
 === 桌面自动化提示 ===
