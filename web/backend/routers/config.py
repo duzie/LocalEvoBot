@@ -71,6 +71,7 @@ _SCHEMA_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "WA_GATEWAY_HOST": {"label": "WA Gateway Host", "desc": "WhatsApp 网关地址", "group": "WhatsApp", "common": True},
     "WA_GATEWAY_PORT": {"label": "WA Gateway 端口", "desc": "WhatsApp 网关端口", "group": "WhatsApp", "common": True},
     "WA_GATEWAY_TOKEN": {"label": "WA Gateway Token", "desc": "WhatsApp 网关鉴权 Token", "group": "WhatsApp", "common": True, "secret": True},
+    "WA_PROVIDER": {"label": "WhatsApp Provider", "desc": "接入方式：baileys 或 cloud（官方）", "group": "WhatsApp", "common": True},
     "WA_GATEWAY_AUTOSTART": {"label": "自动启动 WA Gateway", "desc": "是否自动启动 WhatsApp 网关（1/0）", "group": "WhatsApp", "common": False},
     "WA_NODE_BIN": {"label": "Node 可执行文件", "desc": "启动 WA Gateway 使用的 node 路径/命令", "group": "WhatsApp", "common": False},
     "WA_AUTH_DIR": {"label": "WA 登录态目录", "desc": "WhatsApp 登录态（auth）保存目录", "group": "WhatsApp", "common": False},
@@ -78,6 +79,11 @@ _SCHEMA_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "WA_ALLOW_FROM": {"label": "允许的手机号白名单", "desc": "允许的 E164 号码（逗号分隔），或 * 放行全部", "group": "WhatsApp", "common": True},
     "WA_WEBHOOK_URL": {"label": "WhatsApp Webhook 地址", "desc": "网关收到消息后的回调地址", "group": "WhatsApp", "common": True},
     "WA_WEBHOOK_TOKEN": {"label": "WhatsApp Webhook Token", "desc": "回调鉴权 Token（Bearer）", "group": "WhatsApp", "common": False, "secret": True},
+    "WA_CLOUD_VERIFY_TOKEN": {"label": "WA Cloud Verify Token", "desc": "Cloud API webhook 校验 token", "group": "WhatsApp", "common": False, "secret": True},
+    "WA_CLOUD_ACCESS_TOKEN": {"label": "WA Cloud Access Token", "desc": "Cloud API Graph 访问令牌", "group": "WhatsApp", "common": False, "secret": True},
+    "WA_CLOUD_PHONE_NUMBER_ID": {"label": "WA Cloud Phone Number ID", "desc": "Cloud API phone_number_id", "group": "WhatsApp", "common": False},
+    "WA_CLOUD_API_VERSION": {"label": "WA Cloud API Version", "desc": "Graph API 版本（如 v19.0）", "group": "WhatsApp", "common": False},
+    "WA_CLOUD_APP_SECRET": {"label": "WA Cloud App Secret", "desc": "用于校验 X-Hub-Signature-256", "group": "WhatsApp", "common": False, "secret": True},
     "WA_PROXY_ENABLED": {"label": "启用代理", "desc": "网关是否启用代理（1/0）", "group": "WhatsApp", "common": False},
     "WA_PROXY_URL": {"label": "代理地址", "desc": "代理 URL（如 http://127.0.0.1:7890）", "group": "WhatsApp", "common": False},
     "WA_TEXT_CHUNK_LIMIT": {"label": "消息分片长度", "desc": "发送长消息时的分片长度（默认 4000）", "group": "WhatsApp", "common": False},
@@ -213,6 +219,7 @@ def _append_missing_env_keys(keys: List[str]) -> Dict[str, Any]:
     defaults: Dict[str, str] = {
         "WEB_HOST": "0.0.0.0",
         "WEB_PORT": "5010",
+        "WA_PROVIDER": "baileys",
         "WA_GATEWAY_HOST": "127.0.0.1",
         "WA_GATEWAY_PORT": "8787",
         "WA_AUTH_DIR": "./gateway/auth",
@@ -221,6 +228,7 @@ def _append_missing_env_keys(keys: List[str]) -> Dict[str, Any]:
         "WA_DM_ENABLED": "1",
         "WA_PROXY_ENABLED": "0",
         "WA_GATEWAY_AUTOSTART": "0",
+        "WA_CLOUD_API_VERSION": "v19.0",
     }
 
     with open(env_path, "a", encoding="utf-8") as f:
@@ -549,18 +557,47 @@ async def get_hosts():
 
 @router.get("/whatsapp/status")
 async def whatsapp_status():
+    env_path = _get_env_path()
+    env = dotenv_values(env_path) if os.path.exists(env_path) else {}
+    provider = (os.getenv("WA_PROVIDER") or env.get("WA_PROVIDER") or "baileys").strip().lower()
+    if provider in {"cloud", "official", "business"}:
+        return {
+            "ok": True,
+            "provider": "cloud",
+            "webhookPath": "/api/chat/whatsapp/cloud/webhook",
+            "configured": {
+                "verifyToken": bool((os.getenv("WA_CLOUD_VERIFY_TOKEN") or env.get("WA_CLOUD_VERIFY_TOKEN") or "").strip()),
+                "accessToken": bool((os.getenv("WA_CLOUD_ACCESS_TOKEN") or env.get("WA_CLOUD_ACCESS_TOKEN") or "").strip()),
+                "phoneNumberId": bool((os.getenv("WA_CLOUD_PHONE_NUMBER_ID") or env.get("WA_CLOUD_PHONE_NUMBER_ID") or "").strip()),
+            },
+        }
     return _wa_gateway_request_json("/health", method="GET", require_auth=False)
 
 @router.get("/whatsapp/qr")
 async def whatsapp_qr():
+    env_path = _get_env_path()
+    env = dotenv_values(env_path) if os.path.exists(env_path) else {}
+    provider = (os.getenv("WA_PROVIDER") or env.get("WA_PROVIDER") or "baileys").strip().lower()
+    if provider in {"cloud", "official", "business"}:
+        raise HTTPException(status_code=400, detail="Cloud API 不需要二维码")
     return _wa_gateway_request_json("/qr", method="GET", require_auth=True)
 
 @router.get("/whatsapp/qr-ascii")
 async def whatsapp_qr_ascii():
+    env_path = _get_env_path()
+    env = dotenv_values(env_path) if os.path.exists(env_path) else {}
+    provider = (os.getenv("WA_PROVIDER") or env.get("WA_PROVIDER") or "baileys").strip().lower()
+    if provider in {"cloud", "official", "business"}:
+        raise HTTPException(status_code=400, detail="Cloud API 不需要二维码")
     return _wa_gateway_request_json("/qr-ascii", method="GET", require_auth=True)
 
 @router.post("/whatsapp/reset")
 async def whatsapp_reset():
+    env_path = _get_env_path()
+    env = dotenv_values(env_path) if os.path.exists(env_path) else {}
+    provider = (os.getenv("WA_PROVIDER") or env.get("WA_PROVIDER") or "baileys").strip().lower()
+    if provider in {"cloud", "official", "business"}:
+        raise HTTPException(status_code=400, detail="Cloud API 无需 reset")
     return _wa_gateway_request_json("/reset", method="POST", body={}, require_auth=True)
 
 @router.get("/mcp/servers")

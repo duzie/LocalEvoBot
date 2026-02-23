@@ -18,6 +18,7 @@ from dotenv import dotenv_values, set_key
 from typing import List
 from fastapi import Body
 from fastapi import Request
+from fastapi.responses import PlainTextResponse
 
 router = APIRouter()
 
@@ -138,6 +139,127 @@ async def whatsapp_webhook(request: Request, payload: dict = Body(...)):
         )
     )
     return {"ok": True}
+
+def _read_bool_env_value(key: str, default: bool = False) -> bool:
+    env_path = _get_env_path()
+    env = dotenv_values(env_path) if os.path.exists(env_path) else {}
+    raw = (os.getenv(key) or env.get(key) or "").strip().lower()
+    if raw in {"1", "true", "yes", "y", "on"}:
+        return True
+    if raw in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+def _read_env_value(key: str) -> str:
+    env_path = _get_env_path()
+    env = dotenv_values(env_path) if os.path.exists(env_path) else {}
+    return (os.getenv(key) or env.get(key) or "").strip()
+
+def _wa_allow_from_set() -> set[str]:
+    raw = _read_env_value("WA_ALLOW_FROM")
+    items = [s.strip() for s in raw.split(",")] if raw else []
+    allow: set[str] = set()
+    for it in items:
+        if not it:
+            continue
+        allow.add(it)
+        digits = "".join(ch for ch in it if ch.isdigit())
+        if digits:
+            allow.add(digits)
+            allow.add("+" + digits)
+    return allow
+
+def _wa_is_allowed_dm(sender: str) -> bool:
+    if not _read_bool_env_value("WA_DM_ENABLED", True):
+        return False
+    allow = _wa_allow_from_set()
+    if len(allow) == 0:
+        return True
+    if "*" in allow:
+        return True
+    s = (sender or "").strip()
+    if not s:
+        return False
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if digits and (digits in allow or ("+" + digits) in allow):
+        return True
+    return s in allow
+
+@router.get("/whatsapp/cloud/webhook")
+async def whatsapp_cloud_verify(request: Request):
+    expected = _read_env_value("WA_CLOUD_VERIFY_TOKEN")
+    mode = str(request.query_params.get("hub.mode") or "")
+    token = str(request.query_params.get("hub.verify_token") or "")
+    challenge = str(request.query_params.get("hub.challenge") or "")
+    if mode == "subscribe" and expected and token == expected and challenge:
+        return PlainTextResponse(challenge)
+    raise HTTPException(status_code=403, detail="Forbidden")
+
+@router.post("/whatsapp/cloud/webhook")
+async def whatsapp_cloud_webhook(request: Request, payload: dict = Body(...)):
+    app_secret = _read_env_value("WA_CLOUD_APP_SECRET")
+    if app_secret:
+        sig = str(request.headers.get("x-hub-signature-256") or "")
+        raw_body = await request.body()
+        expected = "sha256=" + hmac.new(app_secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+    received = 0
+    entries = payload.get("entry") or []
+    if not isinstance(entries, list):
+        entries = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        changes = entry.get("changes") or []
+        if not isinstance(changes, list):
+            continue
+        for change in changes:
+            if not isinstance(change, dict):
+                continue
+            value = change.get("value") or {}
+            if not isinstance(value, dict):
+                continue
+            messages = value.get("messages") or []
+            if not isinstance(messages, list):
+                continue
+            for msg in messages:
+                if not isinstance(msg, dict):
+                    continue
+                sender = str(msg.get("from") or "").strip()
+                mtype = str(msg.get("type") or "").strip()
+                text = ""
+                if mtype == "text":
+                    body = msg.get("text") or {}
+                    if isinstance(body, dict):
+                        text = str(body.get("body") or "").strip()
+                elif mtype == "button":
+                    body = msg.get("button") or {}
+                    if isinstance(body, dict):
+                        text = str(body.get("text") or "").strip()
+                elif mtype == "interactive":
+                    inter = msg.get("interactive") or {}
+                    if isinstance(inter, dict):
+                        button_reply = inter.get("button_reply") or {}
+                        list_reply = inter.get("list_reply") or {}
+                        if isinstance(button_reply, dict):
+                            text = str(button_reply.get("title") or button_reply.get("id") or "").strip()
+                        elif isinstance(list_reply, dict):
+                            text = str(list_reply.get("title") or list_reply.get("id") or "").strip()
+                if not sender or not text:
+                    continue
+                if not _wa_is_allowed_dm(sender):
+                    continue
+                sender_e164 = ("+" + sender) if sender.isdigit() else sender
+                shared.put_input(
+                    "__WA_IN__:" + json.dumps(
+                        {"chatJid": sender, "senderE164": sender_e164, "text": text, "provider": "cloud"},
+                        ensure_ascii=False,
+                    )
+                )
+                received += 1
+    return {"ok": True, "received": received}
 
 @router.get("/status")
 async def get_status():

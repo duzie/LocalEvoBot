@@ -83,6 +83,9 @@ def _wa_gateway_base_url():
         port = 8787
     return f"http://{host}:{port}"
 
+def _wa_provider() -> str:
+    return (os.getenv("WA_PROVIDER") or "baileys").strip().lower()
+
 def _wa_gateway_is_running() -> bool:
     try:
         with urllib.request.urlopen(_wa_gateway_base_url() + "/health", timeout=1.5) as resp:
@@ -105,6 +108,8 @@ def _resolve_executable(env_name: str, candidates: List[str]) -> str:
 
 def _start_wa_gateway_subprocess():
     global _gateway_process
+    if _wa_provider() in {"cloud", "official", "business"}:
+        return
     if _gateway_process is not None:
         return
     default_autostart = True if _is_public_console() else False
@@ -185,7 +190,44 @@ def _extract_whatsapp_input(raw: str):
         return None, ""
     return {"chatJid": chat_jid, "senderE164": sender_e164}, msg_text
 
+def _wa_cloud_send_text(to_wa_id: str, text: str) -> bool:
+    access_token = (os.getenv("WA_CLOUD_ACCESS_TOKEN") or "").strip()
+    phone_number_id = (os.getenv("WA_CLOUD_PHONE_NUMBER_ID") or "").strip()
+    api_version = (os.getenv("WA_CLOUD_API_VERSION") or "").strip() or "v19.0"
+    if not access_token or not phone_number_id or not to_wa_id:
+        return False
+    url = f"https://graph.facebook.com/{api_version}/{phone_number_id}/messages"
+    body = {
+        "messaging_product": "whatsapp",
+        "to": to_wa_id,
+        "type": "text",
+        "text": {"body": text or "", "preview_url": False},
+    }
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return 200 <= int(getattr(resp, "status", 0) or 0) < 300
+    except Exception:
+        return False
+
 def _send_whatsapp_reply(chat_jid: str, text: str):
+    if _wa_provider() in {"cloud", "official", "business"}:
+        to = str(chat_jid or "").strip()
+        if to.startswith("cloud:"):
+            to = to[len("cloud:"):].strip()
+        if "@" in to:
+            to = to.split("@", 1)[0].strip()
+        to = "".join(ch for ch in to if ch.isdigit())
+        return _wa_cloud_send_text(to, text)
     token = (os.getenv("WA_GATEWAY_TOKEN") or "").strip()
     if not token:
         return False
