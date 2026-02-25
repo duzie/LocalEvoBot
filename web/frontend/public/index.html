@@ -321,6 +321,7 @@
                 var text = String(line || '').trim()
                 if (!text) return false
                 var lower = text.toLowerCase()
+                if (text.indexOf('STATE:') === 0) return true
                 if (text.indexOf('Invoking:') === 0 || text.indexOf('responded:') === 0 || text.indexOf('Tool:') === 0 || text.indexOf('tool:') === 0) return true
                 if (lower.indexOf('thought:') === 0 || lower.indexOf('reasoning:') === 0) return true
                 if (text.indexOf('思考:') === 0 || text.indexOf('思考：') === 0 || text.indexOf('分析:') === 0 || text.indexOf('分析：') === 0 || text.indexOf('推理:') === 0 || text.indexOf('推理：') === 0) return true
@@ -338,6 +339,13 @@
                 bubble.textContent = ''
                 var shouldOpenDetails = (bubble.dataset && bubble.dataset.detailsOpen === '1')
                 var lines = String(content || '').replace(/\r/g, '').split('\n')
+                var stateIndex = -1
+                for (var i = 0; i < lines.length; i++){
+                    if (String(lines[i] || '').trim().indexOf('STATE:') === 0){
+                        stateIndex = i
+                        break
+                    }
+                }
                 var mainLines = []
                 var detailLines = []
                 var lastDetail = false
@@ -345,6 +353,9 @@
                     var line = lines[i]
                     var trimmed = line.trim()
                     var detail = isDetailLine(line)
+                    if (stateIndex >= 0 && i <= stateIndex){
+                        detail = true
+                    }
                     if (!detail && lastDetail){
                         if (trimmed === '' || trimmed.indexOf('{') === 0 || trimmed.indexOf('[') === 0 || trimmed.indexOf('}') === 0 || trimmed.indexOf(']') === 0){
                             detail = true
