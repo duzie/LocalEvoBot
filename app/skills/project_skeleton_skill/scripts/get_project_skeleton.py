@@ -58,6 +58,33 @@ def _load_legacy_cache_for_root(root_path: str) -> Dict[str, Any]:
     except Exception:
         return {}
 
+def _migrate_legacy_cache():
+    path = _get_legacy_cache_path()
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = f.read()
+        if not raw.strip():
+            return
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return
+        projects = data.get("projects")
+        if not isinstance(projects, dict) or not projects:
+            return
+        for root_path, payload in projects.items():
+            if not isinstance(payload, dict):
+                continue
+            if not root_path:
+                continue
+            if _load_project_cache(str(root_path)):
+                continue
+            _save_project_cache(str(root_path), payload)
+        os.replace(path, path + ".migrated")
+    except Exception:
+        return
+
 def _save_project_cache(root_path: str, payload: Dict[str, Any]):
     path = _get_project_cache_path(root_path)
     try:
@@ -152,6 +179,7 @@ def get_project_skeleton(
         return _error_payload("not_found", f"路径不存在: {root_path}", root=root_path)
     if not os.path.isdir(root_path):
         return _error_payload("not_directory", f"路径不是目录: {root_path}", root=root_path)
+    _migrate_legacy_cache()
     if not force_rebuild:
         item = _load_project_cache(root_path)
         if not item:
@@ -160,19 +188,19 @@ def get_project_skeleton(
                 _save_project_cache(root_path, legacy_item)
                 item = legacy_item
         if item:
-        return _ok_payload(
-            "已命中项目骨架缓存",
-            cache_hit=True,
-            cache_path=_get_project_cache_path(root_path),
-            root=root_path,
-            updated_at=item.get("updated_at"),
-            entries=item.get("entries") or [],
-            entrypoints=item.get("entrypoints") or [],
-            top_level_dirs=item.get("top_level_dirs") or [],
-            total_entries=item.get("total_entries") or 0,
-            max_depth=item.get("max_depth"),
-            include_hidden=item.get("include_hidden"),
-        )
+            return _ok_payload(
+                "已命中项目骨架缓存",
+                cache_hit=True,
+                cache_path=_get_project_cache_path(root_path),
+                root=root_path,
+                updated_at=item.get("updated_at"),
+                entries=item.get("entries") or [],
+                entrypoints=item.get("entrypoints") or [],
+                top_level_dirs=item.get("top_level_dirs") or [],
+                total_entries=item.get("total_entries") or 0,
+                max_depth=item.get("max_depth"),
+                include_hidden=item.get("include_hidden"),
+            )
     entries, top_dirs, entrypoints = _build_skeleton(
         root_path=root_path,
         max_depth=max(0, int(max_depth or 0)),
