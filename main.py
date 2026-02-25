@@ -1072,6 +1072,7 @@ def _contains_task_intent(text):
     }
     return any(k in text for k in keywords)
 
+
 def _looks_like_small_talk(text):
     if not text:
         return True

@@ -67,6 +67,17 @@ STATE: CONTINUE
 1) UIA/OCR：窗口级查找优先 uia_*，图像定位优先 ocr_*；输入用 pyautogui_skill 或 playwright_type_current。
 2) 安全与可重复：坐标点击需先校验窗口激活与分辨率；尽量使用控件属性定位。
 """
+    analysis = """
+=== 代码分析流程 ===
+1) 只要进入代码/项目分析，必须先调用 get_project_skeleton 获取/生成骨架缓存。
+2) 再根据用户输入做精确匹配（关键词+语义），锁定候选文件。
+3) 只深读最核心的 1~3 处代码，形成调用链与行为理解。
+4) 在核心阅读基础上给结论/风险/建议，避免泛泛总结。
+5) 目录模块地图需要本地缓存：
+   - 缓存路径：app/data/project_skeleton/<hash>.json
+   - 读缓存优先；缺失或用户要求重建时再更新
+6) 若加载了 project_skeleton_skill，优先使用 get_project_skeleton 的缓存流程与输出格式。
+"""
     board = """
 === 多 Agent 协作（公告板）===
 1) 只要调用 run_role_agent / run_role_agents_parallel，必须显式给出 workdir 或 output_dir，并与用户指定的“工作目录/目标目录”一致；禁止让子 Agent 默认落到当前项目目录。
@@ -84,6 +95,8 @@ STATE: CONTINUE
         dyn += file_safety
     if any(n.startswith("uia_") or n.startswith("ocr_") or n.startswith("gui_") for n in names):
         dyn += desktop
+    if any(n in ("list_directory", "search_files", "get_document_stats", "read_document_part", "read_large_file_chunks", "search_document", "extract_document_section", "analyze_code_file", "analyze_directory_code", "extract_api_endpoints") for n in names):
+        dyn += analysis
     if any(n in ("run_role_agent", "run_role_agents_parallel") for n in names):
         dyn += board
     system_message = base + dyn

@@ -3,6 +3,7 @@ import subprocess
 import platform
 import os
 import json
+import hashlib
 from datetime import datetime
 from typing import Any, Dict
 from web.backend.shared import shared
@@ -78,7 +79,7 @@ def _decode_bytes(data: bytes):
     return data.decode("utf-8", errors="replace")
 
 @tool
-def run_shell_command(command: str, cwd: str = None, timeout: int = 60, as_json: bool = False):
+def run_shell_command(command: str, cwd: str = None, timeout: int = 60, as_json: bool = False, max_output_chars: int = 12000, save_full_output: bool = True):
     """
     直接执行终端命令并返回输出。
     """
@@ -104,10 +105,40 @@ def run_shell_command(command: str, cwd: str = None, timeout: int = 60, as_json:
         combined = output
         if stderr:
             combined = (combined + "\n" if combined else "") + stderr
-        payload = _ok_payload("命令执行完成", returncode=result.returncode, output=combined, ok=(result.returncode == 0))
+        max_chars = max(1000, int(max_output_chars or 12000))
+        output_truncated = False
+        output_path = None
+        output_size = len(combined)
+        preview = combined
+        if combined and output_size > max_chars:
+            output_truncated = True
+            head_len = max_chars // 2
+            tail_len = max_chars - head_len
+            preview = combined[:head_len] + "\n...<truncated>...\n" + combined[-tail_len:]
+            if save_full_output:
+                try:
+                    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
+                    data_dir = os.path.join(base_dir, "app", "data", "command_outputs")
+                    os.makedirs(data_dir, exist_ok=True)
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    digest = hashlib.sha1(combined.encode("utf-8", errors="ignore")).hexdigest()[:10]
+                    output_path = os.path.join(data_dir, f"cmd_output_{ts}_{digest}.txt")
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        f.write(combined)
+                except Exception:
+                    output_path = None
+        payload = _ok_payload(
+            "命令执行完成",
+            returncode=result.returncode,
+            output=preview,
+            ok=(result.returncode == 0),
+            output_truncated=output_truncated,
+            output_size=output_size,
+            output_path=output_path,
+        )
         if result.returncode != 0:
             payload["ok"] = False
-            payload["error"] = combined or "命令执行失败"
+            payload["error"] = preview or "命令执行失败"
             payload["error_info"] = {"code": "command_failed", "message": payload["error"]}
         _emit_event(tool_name, "done", returncode=result.returncode)
         return json.dumps(payload, ensure_ascii=False) if as_json else payload
