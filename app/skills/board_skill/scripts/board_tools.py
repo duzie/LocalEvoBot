@@ -162,6 +162,70 @@ def _get_board_output_dir():
     os.makedirs(base, exist_ok=True)
     return base
 
+def _get_spec_dir():
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+    base = os.path.join(root, ".specify", "specs")
+    os.makedirs(base, exist_ok=True)
+    return base
+
+def _save_spec_file(spec_id: str, content: str) -> str:
+    spec_dir = _get_spec_dir()
+    safe_id = re.sub(r"[^a-zA-Z0-9_\-]", "_", str(spec_id or "spec"))
+    path = os.path.join(spec_dir, f"{safe_id}.md")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content or "")
+    return path
+
+def _render_simple_spec(spec_id: str, summary: str, goal: str, user_scenario: str, steps: List[str], success_outcome: str, p0_features: List[Dict[str, Any]], constraints: List[str], owner: str) -> str:
+    now = datetime.now().isoformat()
+    lines = [
+        "# 项目规范模板 (精简版)",
+        "",
+        "## 规范元数据",
+        f"- **规范ID**: `{spec_id}`",
+        f"- **创建时间**: `{now}`",
+        f"- **最后更新**: `{now}`",
+        "- **状态**: draft",
+        "- **版本**: 1.0",
+        f"- **负责人**: {owner}",
+        "",
+        "## 1. 目标与成功标准",
+        goal or summary,
+    ]
+    for item in (constraints or [])[:0]:
+        lines.append(item)
+    lines.append("- [ ] 成功标准：任务按 Spec 生成并执行")
+    lines.append("")
+    lines.append("## 2. 核心用户旅程")
+    lines.append(f"**场景**: {user_scenario or summary}")
+    for idx, step in enumerate(steps or [], 1):
+        lines.append(f"{idx}. {step}")
+    lines.append(f"**成功结果**: {success_outcome or '完成目标并通过验收'}")
+    lines.append("")
+    lines.append("## 3. P0 功能与验收")
+    for feat in p0_features or []:
+        title = str((feat or {}).get("title") or (feat or {}).get("name") or "").strip()
+        acceptance = str((feat or {}).get("acceptance") or "").strip()
+        if not title:
+            continue
+        lines.append(f"- [ ] {title}")
+        if acceptance:
+            lines.append(f"  - 验收：{acceptance}")
+    lines.append("")
+    lines.append("## 4. 关键约束")
+    if constraints:
+        for c in constraints:
+            if str(c or "").strip():
+                lines.append(f"- {str(c).strip()}")
+    else:
+        lines.append("- 无")
+    lines.append("")
+    lines.append("## 变更记录")
+    lines.append("| 版本 | 日期 | 修改内容 | 修改人 |")
+    lines.append("|------|------|---------|--------|")
+    lines.append(f"| 1.0 | {now.split('T')[0]} | 初始版本 | {owner} |")
+    return "\n".join(lines)
+
 def _board_exists() -> bool:
     try:
         return os.path.exists(_get_board_path())
@@ -659,7 +723,8 @@ def create_board(goal: str, phase: str = "", milestone: str = "", roles: List[Di
             "next_message_id": 1,
             "dead_messages": [],
             "workflows": [],
-            "next_workflow_id": 1
+            "next_workflow_id": 1,
+            "specs": []
         }
         for task in tasks or []:
             title = str(task.get("title") or "").strip()
@@ -672,6 +737,8 @@ def create_board(goal: str, phase: str = "", milestone: str = "", roles: List[Di
                 "status": _normalize_status(task.get("status") or "待处理"),
                 "deps": task.get("deps") or [],
                 "acceptance": str(task.get("acceptance") or "").strip(),
+                "spec_id": str(task.get("spec_id") or "").strip(),
+                "spec_summary": str(task.get("spec_summary") or "").strip(),
                 "outputs": [],
                 "created_at": now,
                 "updated_at": now
@@ -712,7 +779,7 @@ def add_board_role(role_name: str, description: str = "", skills: List[str] = No
     return _update_board_locked(_update)
 
 @tool
-def add_board_task(title: str, owner: str = "", status: str = "待处理", deps: List[Any] = None, acceptance: str = "") -> Dict[str, Any]:
+def add_board_task(title: str, owner: str = "", status: str = "待处理", deps: List[Any] = None, acceptance: str = "", spec_id: str = "", spec_summary: str = "") -> Dict[str, Any]:
     """
     添加任务到公告板。
     """
@@ -724,6 +791,8 @@ def add_board_task(title: str, owner: str = "", status: str = "待处理", deps:
             "status": _normalize_status(status),
             "deps": deps or [],
             "acceptance": acceptance or "",
+            "spec_id": str(spec_id or "").strip(),
+            "spec_summary": str(spec_summary or "").strip(),
             "outputs": [],
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat()
@@ -735,7 +804,7 @@ def add_board_task(title: str, owner: str = "", status: str = "待处理", deps:
     return _update_board_locked(_update)
 
 @tool
-def update_board_task(task_id: int, status: str = "", owner: str = "", title: str = "", acceptance: str = "") -> Dict[str, Any]:
+def update_board_task(task_id: int, status: str = "", owner: str = "", title: str = "", acceptance: str = "", spec_id: str = "", spec_summary: str = "") -> Dict[str, Any]:
     """
     更新任务字段或状态。
     """
@@ -751,6 +820,10 @@ def update_board_task(task_id: int, status: str = "", owner: str = "", title: st
                     task["title"] = title
                 if acceptance:
                     task["acceptance"] = acceptance
+                if spec_id:
+                    task["spec_id"] = str(spec_id)
+                if spec_summary:
+                    task["spec_summary"] = str(spec_summary)
                 task["updated_at"] = datetime.now().isoformat()
                 return {"ok": True, "task": task}
         return _error_payload("task_not_found", "未找到任务")
@@ -792,6 +865,159 @@ def list_board_tasks(status: str = "", owner: str = "") -> Dict[str, Any]:
     if owner:
         tasks = [t for t in tasks if t.get("owner") == owner]
     return {"ok": True, "tasks": tasks}
+
+@tool
+def create_board_tasks_from_spec(spec_id: str, spec_summary: str, p0_features: List[Dict[str, Any]], owner: str = "") -> Dict[str, Any]:
+    """
+    从精简 Spec 生成任务。
+    """
+    def _update(board):
+        if not str(spec_id or "").strip():
+            return _error_payload("spec_id_empty", "spec_id 不能为空")
+        if not isinstance(p0_features, list) or not p0_features:
+            return _error_payload("p0_features_empty", "p0_features 不能为空")
+        created = []
+        for item in p0_features:
+            data = item or {}
+            title = str(data.get("title") or data.get("name") or "").strip()
+            if not title:
+                continue
+            acceptance = str(data.get("acceptance") or "").strip()
+            task = {
+                "id": board.get("next_task_id", 1),
+                "title": title,
+                "owner": str(data.get("owner") or owner or "").strip(),
+                "status": _normalize_status("待处理"),
+                "deps": data.get("deps") or [],
+                "acceptance": acceptance,
+                "spec_id": str(spec_id),
+                "spec_summary": str(spec_summary or "").strip(),
+                "outputs": [],
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat()
+            }
+            board["tasks"] = board.get("tasks") or []
+            board["tasks"].append(task)
+            board["next_task_id"] = task["id"] + 1
+            created.append(task)
+        if not created:
+            return _error_payload("p0_features_invalid", "未生成任何任务")
+        return {"ok": True, "tasks": created}
+    return _update_board_locked(_update)
+
+@tool
+def create_spec_and_tasks(summary: str, p0_features: List[Dict[str, Any]], owner: str = "spec_agent", goal: str = "", user_scenario: str = "", steps: List[str] = None, success_outcome: str = "", constraints: List[str] = None, auto_start: bool = False, max_workers: int = 3) -> Dict[str, Any]:
+    """
+    自动生成精简 Spec 并创建任务，可选自动执行。
+    """
+    if not str(summary or "").strip():
+        return _error_payload("summary_empty", "summary 不能为空")
+    spec_id = f"SPEC-{int(time.time())}"
+    content = _render_simple_spec(
+        spec_id=spec_id,
+        summary=str(summary),
+        goal=str(goal or summary),
+        user_scenario=str(user_scenario or summary),
+        steps=steps or [],
+        success_outcome=str(success_outcome or ""),
+        p0_features=p0_features or [],
+        constraints=constraints or [],
+        owner=str(owner or "spec_agent")
+    )
+    spec_path = _save_spec_file(spec_id, content)
+    board_snapshot = _load_board_locked()
+    if board_snapshot:
+        def _update_board_spec(b):
+            b["specs"] = b.get("specs") or []
+            b["specs"].append({
+                "id": spec_id,
+                "summary": summary,
+                "path": spec_path,
+                "status": "draft",
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat(),
+                "approved_at": ""
+            })
+            b["updated_at"] = datetime.now().isoformat()
+            return {"ok": True}
+        _update_board_locked(_update_board_spec)
+    result = create_board_tasks_from_spec.invoke({
+        "spec_id": spec_id,
+        "spec_summary": str(summary),
+        "p0_features": p0_features,
+        "owner": owner
+    })
+    if not result.get("ok"):
+        return result
+    if auto_start:
+        tasks = result.get("tasks") or []
+        run_payloads = []
+        for t in tasks:
+            run_payloads.append({
+                "task_id": t.get("id"),
+                "role_name": t.get("owner") or owner or "",
+                "task_input": t.get("title") or "",
+                "status_after": "待验收"
+            })
+        if run_payloads:
+            run_role_agents_parallel.invoke({
+                "tasks": run_payloads,
+                "max_workers": max_workers,
+                "allowed_statuses": ["待处理", "需返工"]
+            })
+    return {
+        "ok": True,
+        "spec_id": spec_id,
+        "spec_path": spec_path,
+        "spec_content": content,
+        "tasks": result.get("tasks") or [],
+        "auto_start": bool(auto_start),
+        "awaiting_approval": not bool(auto_start)
+    }
+
+@tool
+def approve_spec(spec_id: str, auto_start: bool = False, max_workers: int = 3) -> Dict[str, Any]:
+    """
+    审批 Spec 并可选开始执行已生成的任务。
+    """
+    def _update(board):
+        specs = board.get("specs") or []
+        found = None
+        for s in specs:
+            if str(s.get("id")) == str(spec_id):
+                found = s
+                break
+        if not found:
+            return _error_payload("spec_not_found", "未找到 Spec")
+        found["status"] = "approved"
+        found["approved_at"] = datetime.now().isoformat()
+        found["updated_at"] = datetime.now().isoformat()
+        board["specs"] = specs
+        board["updated_at"] = datetime.now().isoformat()
+        return {"ok": True, "spec": found}
+    approve_result = _update_board_locked(_update)
+    if not approve_result.get("ok"):
+        return approve_result
+    if auto_start:
+        board = _load_board_locked()
+        if not board:
+            return approve_result
+        tasks = [t for t in (board.get("tasks") or []) if str(t.get("spec_id") or "") == str(spec_id)]
+        run_payloads = []
+        for t in tasks:
+            run_payloads.append({
+                "task_id": t.get("id"),
+                "role_name": t.get("owner") or "",
+                "task_input": t.get("title") or "",
+                "status_after": "待验收"
+            })
+        if run_payloads:
+            run_role_agents_parallel.invoke({
+                "tasks": run_payloads,
+                "max_workers": max_workers,
+                "allowed_statuses": ["待处理", "需返工"]
+            })
+    return approve_result
 
 @tool
 def add_board_workflow(name: str, steps: List[Dict[str, Any]]) -> Dict[str, Any]:

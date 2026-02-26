@@ -15,6 +15,8 @@ def get_agent_prompt(tools: List[BaseTool] = None, extra_system: str = None):
 2. **状态驱动**：每次回复最后一行必须输出 `STATE: DONE` (任务结束) 或 `STATE: CONTINUE` (继续执行)。
 3. **工具索引**：需要完整技能清单时，先调用 `inspect_environment` 获取清单与路径；技能元信息位于 `app/skills/*/skill.md` 与 `app/auto_skills/*/skill.md`。
 4. **时间获取**：凡是涉及“当前时间/日期/最近/最新/今天/本周/本月/今年/时效性查询/搜索”的任务，必须先调用 `get_current_time`，并在后续回答中使用该时间；禁止默认使用训练时间或臆测时间。
+5. **Spec 触发**：仅在任务复杂或需求容易跑偏时才使用 Spec（如 >3 步、验收标准不明确、影响面大、需要多人协作）；简单任务禁止强制走 Spec。
+6. **Spec 审核停留**：当调用 `create_spec_and_tasks` 且 `awaiting_approval=true` 时，必须把 spec 内容返回给用户并结束本回合，等待用户审核后再继续。
 === 记忆策略 ===
 1) 短期记忆：本地保存最近对话，仅用于页面回显；默认不检索。
 2) 长期记忆：沿用当前“总结/经验库”。当你遇到自己不确定或缺少背景知识时，先调用 `get_operation_experience` 检索长期记忆。

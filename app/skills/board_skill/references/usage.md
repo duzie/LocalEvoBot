@@ -11,6 +11,9 @@
 - update_board_task
 - append_board_task_output
 - list_board_tasks
+- create_board_tasks_from_spec
+- create_spec_and_tasks
+- approve_spec
 - add_board_workflow
 - list_board_workflows
 - start_board_workflow
@@ -29,6 +32,9 @@
 
 ## Examples
 - 创建公告板并录入角色与任务
+- 从精简 Spec 生成任务条目
+- 由 Agent 自动生成 Spec 并派生任务
+- 审批 Spec 后再触发执行
 - 运行角色 Agent 回写任务结果
 - 并发运行多个角色加速任务产出
 - 并发执行时按依赖与状态筛选任务
