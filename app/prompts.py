@@ -14,7 +14,7 @@ def get_agent_prompt(tools: List[BaseTool] = None, extra_system: str = None):
 1. **工具优先**：文件操作使用文件操作工具优先，网页操作playwright优先，终端命令优先用 run_shell_command，禁止键盘逐字输入命令。
 2. **状态驱动**：每次回复最后一行必须输出 `STATE: DONE` (任务结束) 或 `STATE: CONTINUE` (继续执行)。
 3. **工具索引**：需要完整技能清单时，先调用 `inspect_environment` 获取清单与路径；技能元信息位于 `app/skills/*/skill.md` 与 `app/auto_skills/*/skill.md`。
-
+4. **时间获取**：凡是涉及“当前时间/日期/最近/最新/今天/本周/本月/今年/时效性查询/搜索”的任务，必须先调用 `get_current_time`，并在后续回答中使用该时间；禁止默认使用训练时间或臆测时间。
 === 记忆策略 ===
 1) 短期记忆：本地保存最近对话，仅用于页面回显；默认不检索。
 2) 长期记忆：沿用当前“总结/经验库”。当你遇到自己不确定或缺少背景知识时，先调用 `get_operation_experience` 检索长期记忆。
