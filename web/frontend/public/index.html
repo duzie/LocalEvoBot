@@ -42,7 +42,7 @@
         .bubbleDetails{margin-top:8px;border:1px dashed #cbd5f5;border-radius:10px;padding:6px;background:#eef2ff}
         .bubbleDetails summary{cursor:pointer;font-weight:700;color:#334155;list-style:none}
         .bubbleDetails summary::-webkit-details-marker{display:none}
-        .bubbleDetailsBody{margin:6px 0 0 0;white-space:pre-wrap;word-break:break-word;font-family:var(--mono);font-size:12px;color:#475569}
+        .bubbleDetailsBody{margin:6px 0 0 0;white-space:pre-wrap;word-break:break-word;font-family:var(--mono);font-size:12px;color:#475569;max-height:260px;overflow:auto;border-radius:8px}
         .auxMsg{display:flex;margin:10px 0}
         .auxBubble{width:100%;padding:10px 12px;border-radius:14px;white-space:pre-wrap;word-break:break-word;box-shadow:0 6px 18px rgba(15,23,42,.06);background:#f8fafc;color:#475569;font-size:12px}
         .confirmInline{display:none;margin:12px;padding:12px;border-radius:12px;border:1px solid var(--border);background:#fff;box-shadow:var(--shadow);flex-direction:column;gap:10px}
@@ -380,6 +380,7 @@
                     bubble.appendChild(main)
                 }
                 if (detailLines.length){
+                    var prevScrollTop = bubble.dataset.detailsScrollTop ? parseInt(bubble.dataset.detailsScrollTop, 10) || 0 : 0
                     var details = document.createElement('details')
                     details.className = 'bubbleDetails'
                     if (shouldOpenDetails) details.open = true
@@ -388,9 +389,15 @@
                     var pre = document.createElement('pre')
                     pre.className = 'bubbleDetailsBody'
                     pre.textContent = detailLines.join('\n')
+                    pre.addEventListener('scroll', function(){
+                        bubble.dataset.detailsScrollTop = String(pre.scrollTop || 0)
+                    })
                     details.appendChild(summary)
                     details.appendChild(pre)
                     bubble.appendChild(details)
+                    if (prevScrollTop > 0){
+                        pre.scrollTop = prevScrollTop
+                    }
                     details.addEventListener('toggle', function(){
                         bubble.dataset.detailsOpen = details.open ? '1' : '0'
                     })
