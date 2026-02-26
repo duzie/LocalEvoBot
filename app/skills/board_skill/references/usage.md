@@ -11,6 +11,9 @@
 - update_board_task
 - append_board_task_output
 - list_board_tasks
+- send_board_message
+- list_board_messages
+- mark_board_messages_read
 - run_role_agent
 - run_role_agents_parallel
 
@@ -19,6 +22,8 @@
 - 运行角色 Agent 回写任务结果
 - 并发运行多个角色加速任务产出
 - 并发执行时按依赖与状态筛选任务
+- 发送消息给指定角色或任务
+- 拉取未读消息并标记已读
 - 任务默认按 task_id 生成锁文件（current_tasks/）
 - 使用 lock_paths 自定义锁目标（文件/目录/任务）
 - 依赖门禁支持 all/any/none 策略

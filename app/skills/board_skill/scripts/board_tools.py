@@ -93,6 +93,11 @@ def _error_payload(code: str, message: str, **fields) -> Dict[str, Any]:
         payload[str(k)] = v
     return payload
 
+def _next_message_id(board: Dict[str, Any]) -> int:
+    next_id = int(board.get("next_message_id") or 1)
+    board["next_message_id"] = next_id + 1
+    return next_id
+
 def _is_url(value: str) -> bool:
     return bool(re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", value or ""))
 
@@ -427,6 +432,35 @@ def _compose_task_input(task_input: str, payload: Dict[str, Any], board_snapshot
             context_parts.append(f"阶段: {phase}")
         if milestone:
             context_parts.append(f"里程碑: {milestone}")
+        roles = board_snapshot.get("roles") or []
+        if roles:
+            role_lines = []
+            for r in roles:
+                name = str(r.get("name") or "").strip()
+                desc = str(r.get("description") or "").strip()
+                if not name:
+                    continue
+                if desc:
+                    role_lines.append(f"- {name}: {desc}")
+                else:
+                    role_lines.append(f"- {name}")
+            if role_lines:
+                context_parts.append("角色清单:\n" + "\n".join(role_lines))
+        tasks = board_snapshot.get("tasks") or []
+        if tasks:
+            task_lines = []
+            for t in tasks:
+                title = str(t.get("title") or "").strip()
+                owner = str(t.get("owner") or "").strip()
+                status = str(t.get("status") or "").strip()
+                if not title:
+                    continue
+                if owner:
+                    task_lines.append(f"- {title}（{status} | {owner}）")
+                else:
+                    task_lines.append(f"- {title}（{status}）")
+            if task_lines:
+                context_parts.append("任务分布:\n" + "\n".join(task_lines))
     if task:
         title = str(task.get("title") or "").strip()
         acceptance = str(task.get("acceptance") or "").strip()
@@ -448,6 +482,24 @@ def _compose_task_input(task_input: str, payload: Dict[str, Any], board_snapshot
             if texts:
                 context_parts.append("最近产物: " + " | ".join(texts))
     extra_context = payload.get("context") or payload.get("summary") or payload.get("notes")
+    role_name = str(payload.get("role_name") or "").strip()
+    if role_name:
+        context_parts.append(f"当前角色: {role_name}")
+    if board_snapshot and role_name:
+        board_messages = board_snapshot.get("messages") or []
+        unread = [m for m in board_messages if m.get("target") == role_name and role_name not in (m.get("read_by") or [])]
+        if unread:
+            recent = unread[-5:]
+            lines = []
+            for msg in recent:
+                sender = str(msg.get("sender") or "").strip()
+                message = str(msg.get("message") or "").strip()
+                if sender and message:
+                    lines.append(f"- {sender}: {message}")
+                elif message:
+                    lines.append(f"- {message}")
+            if lines:
+                context_parts.append("未读消息:\n" + "\n".join(lines))
     if extra_context:
         context_parts.append(f"补充说明: {str(extra_context).strip()}")
     output_dir = payload.get("output_dir") or payload.get("target_dir") or payload.get("directory")
@@ -564,9 +616,11 @@ def create_board(goal: str, phase: str = "", milestone: str = "", roles: List[Di
             "milestone": milestone or "",
             "roles": roles or [],
             "tasks": [],
+            "messages": [],
             "created_at": now,
             "updated_at": now,
-            "next_task_id": 1
+            "next_task_id": 1,
+            "next_message_id": 1
         }
         for task in tasks or []:
             title = str(task.get("title") or "").strip()
@@ -700,6 +754,81 @@ def list_board_tasks(status: str = "", owner: str = "") -> Dict[str, Any]:
         tasks = [t for t in tasks if t.get("owner") == owner]
     return {"ok": True, "tasks": tasks}
 
+@tool
+def send_board_message(sender: str, message: str, target: str = "", task_id: int = 0, message_type: str = "info") -> Dict[str, Any]:
+    """
+    发送公告板消息。
+    """
+    def _update(board):
+        if not str(message or "").strip():
+            return _error_payload("message_empty", "message 不能为空")
+        messages = board.get("messages") or []
+        msg = {
+            "id": _next_message_id(board),
+            "sender": str(sender or "").strip(),
+            "target": str(target or "").strip(),
+            "task_id": int(task_id or 0),
+            "type": str(message_type or "info"),
+            "message": str(message),
+            "created_at": datetime.now().isoformat(),
+            "read_by": []
+        }
+        messages.append(msg)
+        board["messages"] = messages
+        board["updated_at"] = datetime.now().isoformat()
+        return {"ok": True, "message": msg}
+    return _update_board_locked(_update)
+
+@tool
+def list_board_messages(target: str = "", sender: str = "", task_id: int = 0, unread_for: str = "", limit: int = 50) -> Dict[str, Any]:
+    """
+    获取公告板消息列表。
+    """
+    board = _load_board_locked()
+    if not board:
+        return _error_payload("board_missing", "公告板尚未创建")
+    messages = board.get("messages") or []
+    if target:
+        messages = [m for m in messages if str(m.get("target") or "") == str(target)]
+    if sender:
+        messages = [m for m in messages if str(m.get("sender") or "") == str(sender)]
+    if task_id:
+        messages = [m for m in messages if int(m.get("task_id") or 0) == int(task_id)]
+    if unread_for:
+        messages = [m for m in messages if str(unread_for) not in (m.get("read_by") or [])]
+    messages = messages[-max(1, int(limit or 1)):]
+    return {"ok": True, "messages": messages}
+
+@tool
+def mark_board_messages_read(reader: str, message_ids: List[int]) -> Dict[str, Any]:
+    """
+    标记公告板消息已读。
+    """
+    def _update(board):
+        if not reader:
+            return _error_payload("reader_missing", "reader 不能为空")
+        ids = set()
+        for i in message_ids or []:
+            try:
+                ids.add(int(i))
+            except Exception:
+                continue
+        if not ids:
+            return _error_payload("message_ids_empty", "message_ids 不能为空")
+        messages = board.get("messages") or []
+        updated = 0
+        for m in messages:
+            if int(m.get("id") or 0) in ids:
+                readers = m.get("read_by") or []
+                if reader not in readers:
+                    readers.append(reader)
+                    m["read_by"] = readers
+                    updated += 1
+        board["messages"] = messages
+        board["updated_at"] = datetime.now().isoformat()
+        return {"ok": True, "updated": updated}
+    return _update_board_locked(_update)
+
 def _get_task_by_id(board: Dict[str, Any], task_id: int) -> Optional[Dict[str, Any]]:
     tasks = board.get("tasks") or []
     for task in tasks:
@@ -757,7 +886,7 @@ def run_role_agent(role_name: str, task_input: str, role_prompt: str = "", tools
     if env_workdir:
         os.makedirs(env_workdir, exist_ok=True)
     effective_workdir = (workdir or output_dir or "").strip() or env_workdir or _get_board_output_dir()
-    payload = {"context": context, "summary": summary, "output_dir": output_dir, "workdir": workdir}
+    payload = {"context": context, "summary": summary, "output_dir": output_dir, "workdir": workdir, "role_name": role_name}
     if not output_dir and not workdir:
         payload["output_dir"] = effective_workdir
     merged_input = _compose_task_input(task_input, payload, board_snapshot, task)
@@ -899,6 +1028,9 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
                 if board_snapshot and payload.get("task_id"):
                     task = _get_task_by_id(board_snapshot, int(payload.get("task_id")))
                 working_payload = payload
+                if "role_name" not in working_payload:
+                    working_payload = dict(working_payload)
+                    working_payload["role_name"] = payload.get("role_name") or ""
                 selected_workdir = payload.get("workdir") or payload.get("output_dir") or payload.get("target_dir") or payload.get("directory") or ""
                 if not selected_workdir:
                     env_workdir = (os.getenv("AGENT_WORKDIR") or "").strip()
