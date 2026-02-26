@@ -11,6 +11,7 @@ from typing import Dict, Any, List, Optional, Type
 from app.agent import create_llm
 from app.skills.registry import load_skills
 from app.integrations.mcp_client import load_mcp_tools
+from app.integrations import heartbeat
 from app.prompts import get_agent_prompt
 from web.backend.shared import shared
 
@@ -98,6 +99,11 @@ def _next_message_id(board: Dict[str, Any]) -> int:
     board["next_message_id"] = next_id + 1
     return next_id
 
+def _next_workflow_id(board: Dict[str, Any]) -> int:
+    next_id = int(board.get("next_workflow_id") or 1)
+    board["next_workflow_id"] = next_id + 1
+    return next_id
+
 def _is_url(value: str) -> bool:
     return bool(re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", value or ""))
 
@@ -155,6 +161,36 @@ def _get_board_output_dir():
     base = os.path.join(root, "app", "data", "board", "outputs")
     os.makedirs(base, exist_ok=True)
     return base
+
+def _board_exists() -> bool:
+    try:
+        return os.path.exists(_get_board_path())
+    except Exception:
+        return False
+
+def _message_timeout_tick():
+    try:
+        process_board_message_timeouts()
+    except Exception:
+        return
+
+heartbeat.register_task("board_message_timeouts", _message_timeout_tick, interval=60, enabled=_board_exists)
+
+def _board_health_tick():
+    try:
+        check_and_notify_board_health()
+    except Exception:
+        return
+
+heartbeat.register_task("board_health_check", _board_health_tick, interval=300, enabled=_board_exists)
+
+def _workflow_tick():
+    try:
+        process_board_workflows()
+    except Exception:
+        return
+
+heartbeat.register_task("board_workflow_tick", _workflow_tick, interval=30, enabled=_board_exists)
 
 def _get_lock_path():
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
@@ -620,7 +656,10 @@ def create_board(goal: str, phase: str = "", milestone: str = "", roles: List[Di
             "created_at": now,
             "updated_at": now,
             "next_task_id": 1,
-            "next_message_id": 1
+            "next_message_id": 1,
+            "dead_messages": [],
+            "workflows": [],
+            "next_workflow_id": 1
         }
         for task in tasks or []:
             title = str(task.get("title") or "").strip()
@@ -755,7 +794,200 @@ def list_board_tasks(status: str = "", owner: str = "") -> Dict[str, Any]:
     return {"ok": True, "tasks": tasks}
 
 @tool
-def send_board_message(sender: str, message: str, target: str = "", task_id: int = 0, message_type: str = "info") -> Dict[str, Any]:
+def add_board_workflow(name: str, steps: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    创建工作流定义。
+    """
+    def _update(board):
+        if not str(name or "").strip():
+            return _error_payload("workflow_name_empty", "name 不能为空")
+        if not isinstance(steps, list) or not steps:
+            return _error_payload("workflow_steps_empty", "steps 不能为空")
+        normalized = []
+        for idx, step in enumerate(steps):
+            data = step or {}
+            title = str(data.get("title") or data.get("task_input") or f"步骤 {idx + 1}").strip()
+            role_name = str(data.get("role_name") or data.get("owner") or "").strip()
+            task_input = str(data.get("task_input") or data.get("input") or "").strip()
+            deps = data.get("deps") or []
+            normalized.append({
+                "id": idx + 1,
+                "title": title,
+                "role_name": role_name,
+                "role_prompt": data.get("role_prompt") or "",
+                "task_input": task_input,
+                "deps": deps,
+                "dep_policy": data.get("dep_policy") or "",
+                "status_after": data.get("status_after") or "待验收",
+                "tools_allowlist": data.get("tools_allowlist") or [],
+                "skills_allowlist": data.get("skills_allowlist") or [],
+                "max_iterations": data.get("max_iterations") or 30,
+                "max_execution_time": data.get("max_execution_time") or 300,
+                "lock_paths": data.get("lock_paths") or [],
+                "lock_ttl": data.get("lock_ttl") or 900,
+                "workdir": data.get("workdir") or "",
+                "output_dir": data.get("output_dir") or "",
+                "task_id": 0,
+                "status": "待处理"
+            })
+        wf = {
+            "id": _next_workflow_id(board),
+            "name": str(name),
+            "status": "draft",
+            "steps": normalized,
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "started_at": "",
+            "completed_at": ""
+        }
+        board["workflows"] = board.get("workflows") or []
+        board["workflows"].append(wf)
+        return {"ok": True, "workflow": wf}
+    return _update_board_locked(_update)
+
+@tool
+def list_board_workflows(status: str = "") -> Dict[str, Any]:
+    """
+    列出公告板工作流。
+    """
+    board = _load_board_locked()
+    if not board:
+        return _error_payload("board_missing", "公告板尚未创建")
+    workflows = board.get("workflows") or []
+    if status:
+        workflows = [w for w in workflows if str(w.get("status") or "") == str(status)]
+    return {"ok": True, "workflows": workflows}
+
+@tool
+def start_board_workflow(workflow_id: int) -> Dict[str, Any]:
+    """
+    启动工作流并创建关联任务。
+    """
+    def _update(board):
+        workflows = board.get("workflows") or []
+        for wf in workflows:
+            if int(wf.get("id") or 0) == int(workflow_id):
+                steps = wf.get("steps") or []
+                for step in steps:
+                    if int(step.get("task_id") or 0) > 0:
+                        continue
+                    task = {
+                        "id": board.get("next_task_id", 1),
+                        "title": step.get("title") or "",
+                        "owner": step.get("role_name") or "",
+                        "status": _normalize_status(step.get("status") or "待处理"),
+                        "deps": step.get("deps") or [],
+                        "acceptance": "",
+                        "outputs": [],
+                        "workflow_id": wf.get("id"),
+                        "created_at": datetime.now().isoformat(),
+                        "updated_at": datetime.now().isoformat()
+                    }
+                    board["tasks"] = board.get("tasks") or []
+                    board["tasks"].append(task)
+                    board["next_task_id"] = task["id"] + 1
+                    step["task_id"] = task["id"]
+                wf["steps"] = steps
+                wf["status"] = "running"
+                if not wf.get("started_at"):
+                    wf["started_at"] = datetime.now().isoformat()
+                wf["updated_at"] = datetime.now().isoformat()
+                board["workflows"] = workflows
+                return {"ok": True, "workflow": wf}
+        return _error_payload("workflow_not_found", "未找到工作流")
+    return _update_board_locked(_update)
+
+@tool
+def stop_board_workflow(workflow_id: int, status: str = "paused") -> Dict[str, Any]:
+    """
+    暂停或停止工作流。
+    """
+    def _update(board):
+        workflows = board.get("workflows") or []
+        for wf in workflows:
+            if int(wf.get("id") or 0) == int(workflow_id):
+                wf["status"] = str(status or "paused")
+                wf["updated_at"] = datetime.now().isoformat()
+                board["workflows"] = workflows
+                return {"ok": True, "workflow": wf}
+        return _error_payload("workflow_not_found", "未找到工作流")
+    return _update_board_locked(_update)
+
+@tool
+def process_board_workflows(max_workers: int = 3) -> Dict[str, Any]:
+    """
+    推进运行中的工作流。
+    """
+    board = _load_board_locked()
+    if not board:
+        return _error_payload("board_missing", "公告板尚未创建")
+    workflows = board.get("workflows") or []
+    running = [w for w in workflows if str(w.get("status") or "") == "running"]
+    if not running:
+        return {"ok": True, "message": "无运行中的工作流", "workflows": []}
+    tasks = []
+    for wf in running:
+        for step in wf.get("steps") or []:
+            task_id = int(step.get("task_id") or 0)
+            if not task_id:
+                continue
+            tasks.append({
+                "task_id": task_id,
+                "role_name": step.get("role_name") or "",
+                "role_prompt": step.get("role_prompt") or "",
+                "task_input": step.get("task_input") or "",
+                "deps": step.get("deps") or [],
+                "dep_policy": step.get("dep_policy") or "",
+                "status_after": step.get("status_after") or "待验收",
+                "tools_allowlist": step.get("tools_allowlist") or [],
+                "skills_allowlist": step.get("skills_allowlist") or [],
+                "max_iterations": step.get("max_iterations") or 30,
+                "max_execution_time": step.get("max_execution_time") or 300,
+                "lock_paths": step.get("lock_paths") or [],
+                "lock_ttl": step.get("lock_ttl") or 900,
+                "workdir": step.get("workdir") or "",
+                "output_dir": step.get("output_dir") or ""
+            })
+    if tasks:
+        run_role_agents_parallel.invoke({
+            "tasks": tasks,
+            "max_workers": max_workers,
+            "allowed_statuses": ["待处理", "需返工"]
+        })
+    board_latest = _load_board_locked()
+    if board_latest:
+        def _update(b):
+            updated = []
+            for wf in b.get("workflows") or []:
+                if str(wf.get("status") or "") != "running":
+                    updated.append(wf)
+                    continue
+                all_done = True
+                for step in wf.get("steps") or []:
+                    task_id = int(step.get("task_id") or 0)
+                    if not task_id:
+                        all_done = False
+                        break
+                    task = _get_task_by_id(b, task_id)
+                    if not task:
+                        all_done = False
+                        break
+                    status = _normalize_status(task.get("status") or "")
+                    if status not in {"已完成", "待验收"}:
+                        all_done = False
+                        break
+                if all_done:
+                    wf["status"] = "completed"
+                    wf["completed_at"] = datetime.now().isoformat()
+                wf["updated_at"] = datetime.now().isoformat()
+                updated.append(wf)
+            b["workflows"] = updated
+            return {"ok": True, "workflows": updated}
+        return _update_board_locked(_update)
+    return {"ok": True, "workflows": running}
+
+@tool
+def send_board_message(sender: str, message: str, target: str = "", task_id: int = 0, message_type: str = "info", require_ack: bool = False, ack_timeout: int = 300, max_retries: int = 2) -> Dict[str, Any]:
     """
     发送公告板消息。
     """
@@ -771,7 +1003,14 @@ def send_board_message(sender: str, message: str, target: str = "", task_id: int
             "type": str(message_type or "info"),
             "message": str(message),
             "created_at": datetime.now().isoformat(),
-            "read_by": []
+            "read_by": [],
+            "require_ack": bool(require_ack),
+            "ack_timeout": int(ack_timeout or 0),
+            "max_retries": int(max_retries or 0),
+            "retry_count": 0,
+            "last_retry_at": "",
+            "status": "sent",
+            "acked_at": ""
         }
         messages.append(msg)
         board["messages"] = messages
@@ -780,7 +1019,7 @@ def send_board_message(sender: str, message: str, target: str = "", task_id: int
     return _update_board_locked(_update)
 
 @tool
-def list_board_messages(target: str = "", sender: str = "", task_id: int = 0, unread_for: str = "", limit: int = 50) -> Dict[str, Any]:
+def list_board_messages(target: str = "", sender: str = "", task_id: int = 0, unread_for: str = "", status: str = "", limit: int = 50) -> Dict[str, Any]:
     """
     获取公告板消息列表。
     """
@@ -796,6 +1035,8 @@ def list_board_messages(target: str = "", sender: str = "", task_id: int = 0, un
         messages = [m for m in messages if int(m.get("task_id") or 0) == int(task_id)]
     if unread_for:
         messages = [m for m in messages if str(unread_for) not in (m.get("read_by") or [])]
+    if status:
+        messages = [m for m in messages if str(m.get("status") or "") == str(status)]
     messages = messages[-max(1, int(limit or 1)):]
     return {"ok": True, "messages": messages}
 
@@ -829,11 +1070,208 @@ def mark_board_messages_read(reader: str, message_ids: List[int]) -> Dict[str, A
         return {"ok": True, "updated": updated}
     return _update_board_locked(_update)
 
+@tool
+def ack_board_message(reader: str, message_id: int) -> Dict[str, Any]:
+    """
+    确认消息已处理。
+    """
+    def _update(board):
+        if not reader:
+            return _error_payload("reader_missing", "reader 不能为空")
+        target_id = int(message_id or 0)
+        if target_id <= 0:
+            return _error_payload("message_id_invalid", "message_id 非法")
+        messages = board.get("messages") or []
+        updated = False
+        for m in messages:
+            if int(m.get("id") or 0) == target_id:
+                readers = m.get("read_by") or []
+                if reader not in readers:
+                    readers.append(reader)
+                    m["read_by"] = readers
+                if m.get("require_ack"):
+                    m["status"] = "acked"
+                    m["acked_at"] = datetime.now().isoformat()
+                updated = True
+                break
+        if not updated:
+            return _error_payload("message_not_found", "未找到消息")
+        board["messages"] = messages
+        board["updated_at"] = datetime.now().isoformat()
+        return {"ok": True, "updated": True}
+    return _update_board_locked(_update)
+
+@tool
+def process_board_message_timeouts(now: str = "") -> Dict[str, Any]:
+    """
+    处理需要确认的超时消息，执行重试或进入死信。
+    """
+    def _update(board):
+        messages = board.get("messages") or []
+        dead = board.get("dead_messages") or []
+        current = datetime.now() if not now else datetime.fromisoformat(str(now))
+        retried = 0
+        dead_count = 0
+        retry_delays = [60, 300, 900, 1800]
+        for m in messages:
+            if not m.get("require_ack"):
+                continue
+            if str(m.get("status") or "") == "acked":
+                continue
+            timeout = int(m.get("ack_timeout") or 0)
+            if timeout <= 0:
+                continue
+            base_time = m.get("last_retry_at") or m.get("created_at") or ""
+            if not base_time:
+                continue
+            try:
+                base_dt = datetime.fromisoformat(str(base_time))
+            except Exception:
+                continue
+            delta = (current - base_dt).total_seconds()
+            retry_count = int(m.get("retry_count") or 0)
+            delay_idx = min(retry_count, len(retry_delays) - 1)
+            next_delay = max(timeout, retry_delays[delay_idx])
+            if delta <= next_delay:
+                continue
+            max_retries = int(m.get("max_retries") or 0)
+            if retry_count < max_retries:
+                m["retry_count"] = retry_count + 1
+                m["last_retry_at"] = current.isoformat()
+                m["status"] = "retry"
+                retried += 1
+            else:
+                m["status"] = "dead"
+                dead.append({
+                    "id": m.get("id"),
+                    "sender": m.get("sender"),
+                    "target": m.get("target"),
+                    "task_id": m.get("task_id"),
+                    "message": m.get("message"),
+                    "dead_at": current.isoformat()
+                })
+                dead_count += 1
+        board["messages"] = messages
+        board["dead_messages"] = dead
+        board["updated_at"] = datetime.now().isoformat()
+        return {"ok": True, "retried": retried, "dead": dead_count}
+    return _update_board_locked(_update)
+
+@tool
+def cleanup_board_messages(max_age_days: int = 7, max_dead_messages: int = 200) -> Dict[str, Any]:
+    """
+    清理过期消息与过多死信。
+    """
+    def _update(board):
+        messages = board.get("messages") or []
+        dead = board.get("dead_messages") or []
+        now = datetime.now()
+        cutoff = now.timestamp() - max(0, int(max_age_days or 0)) * 86400
+        kept = []
+        removed = 0
+        for m in messages:
+            created = m.get("created_at") or ""
+            if not created:
+                kept.append(m)
+                continue
+            try:
+                created_ts = datetime.fromisoformat(str(created)).timestamp()
+            except Exception:
+                kept.append(m)
+                continue
+            if created_ts < cutoff:
+                removed += 1
+                continue
+            kept.append(m)
+        if max_dead_messages and len(dead) > int(max_dead_messages):
+            dead = dead[-int(max_dead_messages):]
+        board["messages"] = kept
+        board["dead_messages"] = dead
+        board["updated_at"] = datetime.now().isoformat()
+        return {"ok": True, "removed": removed, "remaining": len(kept), "dead_remaining": len(dead)}
+    return _update_board_locked(_update)
+
+@tool
+def get_board_message_health() -> Dict[str, Any]:
+    """
+    获取消息队列健康指标。
+    """
+    board = _load_board_locked()
+    if not board:
+        return _error_payload("board_missing", "公告板尚未创建")
+    messages = board.get("messages") or []
+    dead = board.get("dead_messages") or []
+    unacked = [m for m in messages if m.get("require_ack") and str(m.get("status") or "") != "acked"]
+    oldest_age = 0
+    now = datetime.now()
+    for m in messages:
+        created = m.get("created_at") or ""
+        if not created:
+            continue
+        try:
+            age = (now - datetime.fromisoformat(str(created))).total_seconds()
+        except Exception:
+            continue
+        if age > oldest_age:
+            oldest_age = age
+    return {
+        "ok": True,
+        "total_messages": len(messages),
+        "unacked_messages": len(unacked),
+        "dead_messages": len(dead),
+        "oldest_message_age_sec": int(oldest_age)
+    }
+
+@tool
+def check_and_notify_board_health(dead_threshold: int = 10, target: str = "admin", message_type: str = "warning") -> Dict[str, Any]:
+    """
+    检查消息健康并在死信过多时发出告警。
+    """
+    board = _load_board_locked()
+    if not board:
+        return _error_payload("board_missing", "公告板尚未创建")
+    health = get_board_message_health()
+    if not health.get("ok"):
+        return health
+    dead_count = int(health.get("dead_messages") or 0)
+    if dead_count < int(dead_threshold or 0):
+        return {"ok": True, "notified": False, "dead_messages": dead_count}
+    alert_message = f"死信数量过多: {dead_count}"
+    def _update(b):
+        msg = {
+            "id": _next_message_id(b),
+            "sender": "system",
+            "target": str(target or "admin"),
+            "task_id": 0,
+            "type": str(message_type or "warning"),
+            "message": alert_message,
+            "created_at": datetime.now().isoformat(),
+            "read_by": [],
+            "require_ack": False,
+            "ack_timeout": 0,
+            "max_retries": 0,
+            "retry_count": 0,
+            "last_retry_at": "",
+            "status": "sent",
+            "acked_at": ""
+        }
+        b["messages"] = (b.get("messages") or []) + [msg]
+        b["updated_at"] = datetime.now().isoformat()
+        return {"ok": True, "notified": True, "message": msg, "dead_messages": dead_count}
+    return _update_board_locked(_update)
+
 def _get_task_by_id(board: Dict[str, Any], task_id: int) -> Optional[Dict[str, Any]]:
     tasks = board.get("tasks") or []
     for task in tasks:
         if task.get("id") == task_id:
             return task
+    return None
+
+def _get_workflow_by_id(board: Dict[str, Any], workflow_id: int) -> Optional[Dict[str, Any]]:
+    workflows = board.get("workflows") or []
+    for wf in workflows:
+        if int(wf.get("id") or 0) == int(workflow_id):
+            return wf
     return None
 
 def _deps_completed(board: Dict[str, Any], deps: List[Any]) -> bool:

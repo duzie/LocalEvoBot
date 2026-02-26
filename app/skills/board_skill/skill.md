@@ -20,6 +20,19 @@ app.skills.board_skill.scripts
 - update_board_task: 更新任务
 - append_board_task_output: 追加任务产物
 - list_board_tasks: 任务筛选
+- add_board_workflow: 创建工作流
+- list_board_workflows: 查询工作流
+- start_board_workflow: 启动工作流
+- stop_board_workflow: 暂停工作流
+- process_board_workflows: 推进工作流
+- send_board_message: 发送消息
+- list_board_messages: 查询消息
+- mark_board_messages_read: 标记消息已读
+- ack_board_message: 确认消息已处理
+- process_board_message_timeouts: 处理超时消息
+- cleanup_board_messages: 清理消息
+- get_board_message_health: 消息健康指标
+- check_and_notify_board_health: 健康检查告警
 - run_role_agent: 运行角色 Agent
 - run_role_agents_parallel: 并发运行角色 Agent
 
