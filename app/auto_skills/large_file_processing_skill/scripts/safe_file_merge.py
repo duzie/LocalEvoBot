@@ -1,13 +1,14 @@
 from langchain_core.tools import tool
 import os
 import shutil
+import re
 from typing import Dict, Any, Optional
 from langchain.tools import tool
 
 
 @tool
 def safe_file_merge(target_file: str, new_content: str, insert_position: str = "end", 
-                   backup_suffix: str = ".bak") -> Dict[str, Any]:
+                   backup_suffix: str = ".bak", anchor_pattern: str = "", require_unique: bool = True, ensure_present: bool = True) -> Dict[str, Any]:
     """
     安全合并文件内容（读取原始内容，合并新内容，写入备份）
     
@@ -19,7 +20,11 @@ def safe_file_merge(target_file: str, new_content: str, insert_position: str = "
             - "end": 文件末尾（默认）
             - "after_last_class": 最后一个类定义之后
             - "after_line:X": 在第X行之后插入（X为行号）
+            - "after_pattern": 在锚点模式命中行之后插入（配合 anchor_pattern）
         backup_suffix: 备份文件后缀，默认".bak"
+        anchor_pattern: 锚点正则（用于 after_pattern）
+        require_unique: 锚点是否要求唯一命中
+        ensure_present: 写入后校验 new_content 是否存在
         
     Returns:
         包含操作结果的字典
@@ -87,6 +92,31 @@ def safe_file_merge(target_file: str, new_content: str, insert_position: str = "
                     "success": False,
                     "error": f"无效的行号格式: {insert_position}"
                 }
+        elif insert_position == "after_pattern":
+            if not anchor_pattern:
+                return {
+                    "success": False,
+                    "error": "after_pattern 需要提供 anchor_pattern"
+                }
+            lines = original_content.split('\n')
+            matches = [i for i, line in enumerate(lines) if re.search(anchor_pattern, line)]
+            if not matches:
+                return {
+                    "success": False,
+                    "error": "未找到锚点匹配行",
+                    "anchor_pattern": anchor_pattern
+                }
+            if require_unique and len(matches) != 1:
+                return {
+                    "success": False,
+                    "error": "锚点匹配行不唯一",
+                    "anchor_pattern": anchor_pattern,
+                    "match_count": len(matches)
+                }
+            idx = matches[0]
+            before = '\n'.join(lines[:idx + 1])
+            after = '\n'.join(lines[idx + 1:])
+            merged_content = before + "\n" + new_content + "\n" + after
         else:
             return {
                 "success": False,
@@ -100,6 +130,23 @@ def safe_file_merge(target_file: str, new_content: str, insert_position: str = "
         # 计算变化
         original_size = len(original_content)
         merged_size = len(merged_content)
+        added_size = merged_size - original_size
+        if merged_size <= original_size:
+            shutil.copy2(backup_file, target_file)
+            return {
+                "success": False,
+                "error": "合并后文件大小异常，已回滚",
+                "backup_file": backup_file,
+                "original_size": original_size,
+                "merged_size": merged_size
+            }
+        if ensure_present and new_content and new_content not in merged_content:
+            shutil.copy2(backup_file, target_file)
+            return {
+                "success": False,
+                "error": "合并内容校验失败，已回滚",
+                "backup_file": backup_file
+            }
         
         return {
             "success": True,
@@ -108,7 +155,7 @@ def safe_file_merge(target_file: str, new_content: str, insert_position: str = "
             "backup_file": backup_file,
             "original_size": original_size,
             "merged_size": merged_size,
-            "added_size": merged_size - original_size,
+            "added_size": added_size,
             "insert_position": insert_position,
             "message": f"内容已安全合并，原始文件已备份到 {backup_file}"
         }

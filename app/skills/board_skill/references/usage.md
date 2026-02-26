@@ -19,5 +19,7 @@
 - 运行角色 Agent 回写任务结果
 - 并发运行多个角色加速任务产出
 - 并发执行时按依赖与状态筛选任务
+- 任务默认按 task_id 生成锁文件（current_tasks/）
+- 使用 lock_paths 自定义锁目标（文件/目录/任务）
 - 依赖门禁支持 all/any/none 策略
 - dep_policy 为空时默认 all

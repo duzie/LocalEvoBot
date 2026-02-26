@@ -58,9 +58,10 @@ STATE: CONTINUE
 1) 永远不要用 `save_document` 修改已存在文件；它只用于创建新文件。
 2) 修改文件前必须先备份：优先 `safe_file_backup`，必要时可 `restore_from_backup` 回滚。
 3) 大文件分块读取：超过上下文/字符限制时，必须用分块工具继续读取完整内容，再做合并/增量编辑，禁止“读到截断内容就直接覆盖写回”。
-4) 写入优先安全合并/增量编辑：优先 `safe_file_merge` 或 `incremental_file_edit`，再做完整性校验。
-5) 大文件创建/写入防截断：当你准备写入的内容较长（例如 > 9000 字符）时，禁止一次性生成后直接写入；必须分段写入（多次 safe_file_merge/insert_text_at_line），每段写完立刻用 get_document_stats/get_file_info 检查文件大小与行数是否与预期增长一致。
-6) 若使用 `save_document` 创建文件后发现文件大小/内容明显偏小（疑似对话裁剪导致写入不全），必须继续“二次补写”：重新从来源分段生成剩余内容，并以追加方式写入（safe_file_merge 插入 end 或 insert_text_at_line 追加），直到文件完整。
+4) 大文件改写优先使用 `safe_block_update`（裁剪未完整尾行 + 锚点替换/插入 + 校验 + 回滚），避免二次修改插错导致编译失败。
+5) 仅当 `safe_block_update` 不适用时，才使用 `safe_file_merge`/`replace_block_between_anchors`，并要求锚点唯一匹配。
+6) 大文件创建/写入防截断：当你准备写入的内容较长（例如 > 9000 字符）时，禁止一次性生成后直接写入；必须分段写入（多次 safe_block_update/ safe_file_merge/insert_text_at_line），每段写完立刻用 get_document_stats/get_file_info 检查文件大小与行数是否与预期增长一致。
+7) 若使用 `save_document` 创建文件后发现文件大小/内容明显偏小（疑似对话裁剪导致写入不全），必须继续“二次补写”：重新从来源分段生成剩余内容，并以追加方式写入（safe_block_update 追加或 safe_file_merge 插入 end），直到文件完整。
 """
     desktop = """
 === 桌面自动化提示 ===

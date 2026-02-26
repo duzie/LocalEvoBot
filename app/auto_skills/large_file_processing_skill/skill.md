@@ -16,6 +16,9 @@ app.auto_skills.large_file_processing_skill.scripts
 - read_large_file_chunks
 - safe_file_merge
 - extract_and_merge_class
+- truncate_incomplete_tail
+- replace_block_between_anchors
+- safe_block_update
 - validate_file_integrity
 - restore_from_backup
 

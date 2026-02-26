@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 @tool
-def save_document(file_path: str, content: str):
+def save_document(file_path: str, content: str, max_chars: int = 9000):
     """
     保存文档到指定路径
     
@@ -16,6 +16,18 @@ def save_document(file_path: str, content: str):
         包含操作结果的字典
     """
     try:
+        if content is None:
+            content = ""
+        max_len = max(1000, int(max_chars or 9000))
+        if len(content) > max_len:
+            return {
+                "success": False,
+                "message": "内容过大，禁止一次性写入",
+                "error": "content_too_large",
+                "max_chars": max_len,
+                "content_length": len(content),
+                "suggestion": "请分段写入（safe_file_merge/insert_text_at_line），并逐段校验文件大小"
+            }
         # 确保目录存在
         directory = os.path.dirname(file_path)
         if directory and not os.path.exists(directory):

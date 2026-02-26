@@ -4,6 +4,7 @@ import os
 import json
 import re
 import time
+import hashlib
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional, Type
@@ -155,6 +156,118 @@ def _get_lock_path():
     base = os.path.join(root, "app", "data", "board")
     os.makedirs(base, exist_ok=True)
     return os.path.join(base, "board.lock")
+
+def _get_file_lock_dir():
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+    base = os.path.join(root, "app", "data", "board", "current_tasks")
+    os.makedirs(base, exist_ok=True)
+    return base
+
+def _lock_key(target: str) -> str:
+    text = str(target or "").strip().lower()
+    return hashlib.sha1(text.encode("utf-8", errors="ignore")).hexdigest()
+
+def _safe_lock_name(name: str) -> str:
+    s = str(name or "").strip()
+    if not s:
+        return _lock_key("empty")
+    s = re.sub(r"[^\w\-\.]+", "_", s)
+    s = s.strip("_")
+    if len(s) > 80:
+        return _lock_key(s)
+    return s or _lock_key("empty")
+
+def _lock_path_for_target(target: str) -> str:
+    return os.path.join(_get_file_lock_dir(), _safe_lock_name(target) + ".lock")
+
+def _read_lock_payload(path: str) -> Dict[str, Any]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = f.read()
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+def _is_lock_expired(payload: Dict[str, Any]) -> bool:
+    try:
+        expires_at = float(payload.get("expires_at") or 0)
+        if expires_at <= 0:
+            return False
+        return time.time() > expires_at
+    except Exception:
+        return False
+
+def _try_acquire_lock(target: str, owner: str, ttl: int) -> Dict[str, Any]:
+    path = _lock_path_for_target(target)
+    now = time.time()
+    payload = {
+        "mode": "git_lock",
+        "owner": owner,
+        "target": target,
+        "created_at": now,
+        "expires_at": now + max(1, int(ttl or 1))
+    }
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+        os.close(fd)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False))
+        return {"ok": True, "path": path, "payload": payload}
+    except FileExistsError:
+        existing = _read_lock_payload(path)
+        if existing and _is_lock_expired(existing):
+            try:
+                os.remove(path)
+            except Exception:
+                return {"ok": False, "path": path, "existing": existing}
+            return _try_acquire_lock(target, owner, ttl)
+        return {"ok": False, "path": path, "existing": existing}
+    except Exception as e:
+        return {"ok": False, "path": path, "error": str(e)}
+
+def _release_lock_path(path: str):
+    try:
+        if path and os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        return
+
+def _normalize_lock_targets(paths: List[str]) -> List[str]:
+    seen = set()
+    results = []
+    for p in paths or []:
+        text = str(p or "").strip()
+        if not text:
+            continue
+        if text.startswith("task:") or text.startswith("dir:") or text.startswith("file:"):
+            norm = text
+        else:
+            norm = os.path.abspath(text)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        results.append(norm)
+    return results
+
+def _acquire_locks(lock_paths: List[str], owner: str, ttl: int) -> Dict[str, Any]:
+    targets = _normalize_lock_targets(lock_paths)
+    acquired = []
+    for target in targets:
+        result = _try_acquire_lock(target, owner, ttl)
+        if not result.get("ok"):
+            for item in acquired:
+                _release_lock_path(item.get("path"))
+            return {
+                "ok": False,
+                "failed_target": target,
+                "failed_lock_path": result.get("path"),
+                "existing": result.get("existing"),
+                "error": result.get("error"),
+                "acquired": acquired
+            }
+        acquired.append({"target": target, "path": result.get("path")})
+    return {"ok": True, "acquired": acquired}
 
 def _acquire_lock(timeout: int = 5, interval: float = 0.05) -> bool:
     lock_path = _get_lock_path()
@@ -410,6 +523,31 @@ def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", t
     _append_role_event(role_name, "end", role=role_name)
     return {"ok": True, "role": role_name, "output": output}
 
+def _execute_role_task_with_locks(role_name: str, task_input: str, role_prompt: str, tools_allowlist: List[str], skills_allowlist: List[str], max_iterations: int, max_execution_time: int, workdir: str, lock_paths: List[str], lock_ttl: int, lock_owner: str, task_id: int = 0) -> Dict[str, Any]:
+    effective_lock_paths = lock_paths or ([f"task:{task_id}"] if task_id else [])
+    lock_result = _acquire_locks(effective_lock_paths, lock_owner, lock_ttl)
+    if not lock_result.get("ok"):
+        return _error_payload(
+            "lock_conflict",
+            "文件锁冲突",
+            role=role_name,
+            lock=lock_result
+        )
+    try:
+        return _execute_role_task(
+            role_name=role_name,
+            task_input=task_input,
+            role_prompt=role_prompt,
+            tools_allowlist=tools_allowlist,
+            skills_allowlist=skills_allowlist,
+            max_iterations=max_iterations,
+            max_execution_time=max_execution_time,
+            workdir=workdir
+        )
+    finally:
+        for item in (lock_result.get("acquired") or []):
+            _release_lock_path(item.get("path"))
+
 @tool
 def create_board(goal: str, phase: str = "", milestone: str = "", roles: List[Dict[str, Any]] = None, tasks: List[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
@@ -607,7 +745,7 @@ def _deps_satisfied(board: Dict[str, Any], deps: List[Any], policy: str) -> bool
     return _deps_completed(board, dep_ids)
 
 @tool
-def run_role_agent(role_name: str, task_input: str, role_prompt: str = "", tools_allowlist: List[str] = None, skills_allowlist: List[str] = None, task_id: int = 0, status_after: str = "待验收", max_iterations: int = 30, max_execution_time: int = 300, context: str = "", summary: str = "", output_dir: str = "", workdir: str = "") -> Dict[str, Any]:
+def run_role_agent(role_name: str, task_input: str, role_prompt: str = "", tools_allowlist: List[str] = None, skills_allowlist: List[str] = None, task_id: int = 0, status_after: str = "待验收", max_iterations: int = 30, max_execution_time: int = 300, context: str = "", summary: str = "", output_dir: str = "", workdir: str = "", lock_paths: List[str] = None, lock_ttl: int = 900) -> Dict[str, Any]:
     """
     创建角色 Agent 并执行单次任务，返回输出结果。
     """
@@ -624,16 +762,31 @@ def run_role_agent(role_name: str, task_input: str, role_prompt: str = "", tools
         payload["output_dir"] = effective_workdir
     merged_input = _compose_task_input(task_input, payload, board_snapshot, task)
     selected_workdir = effective_workdir
-    result = _execute_role_task(
-        role_name=role_name,
-        task_input=merged_input,
-        role_prompt=role_prompt,
-        tools_allowlist=tools_allowlist,
-        skills_allowlist=skills_allowlist,
-        max_iterations=max_iterations,
-        max_execution_time=max_execution_time,
-        workdir=selected_workdir
-    )
+    lock_owner = role_name or f"task_{task_id or 'role'}"
+    effective_lock_paths = lock_paths or ([f"task:{task_id}"] if task_id else [])
+    lock_result = _acquire_locks(effective_lock_paths, lock_owner, lock_ttl)
+    if not lock_result.get("ok"):
+        return _error_payload(
+            "lock_conflict",
+            "文件锁冲突",
+            role=role_name,
+            task_id=task_id,
+            lock=lock_result
+        )
+    try:
+        result = _execute_role_task(
+            role_name=role_name,
+            task_input=merged_input,
+            role_prompt=role_prompt,
+            tools_allowlist=tools_allowlist,
+            skills_allowlist=skills_allowlist,
+            max_iterations=max_iterations,
+            max_execution_time=max_execution_time,
+            workdir=selected_workdir
+        )
+    finally:
+        for item in (lock_result.get("acquired") or []):
+            _release_lock_path(item.get("path"))
     output = result.get("output")
     if task_id:
         append_board_task_output.invoke({
@@ -758,8 +911,9 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
                     if not working_payload.get("workdir") and not working_payload.get("output_dir"):
                         working_payload["output_dir"] = selected_workdir
                 merged_input = _compose_task_input(working_payload.get("task_input") or "", working_payload, board_snapshot, task)
+                lock_owner = payload.get("role_name") or f"task_{payload.get('task_id') or meta['index']}"
                 future = executor.submit(
-                    _execute_role_task,
+                    _execute_role_task_with_locks,
                     role_name=payload.get("role_name") or "",
                     task_input=merged_input,
                     role_prompt=payload.get("role_prompt") or "",
@@ -767,7 +921,11 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
                     skills_allowlist=payload.get("skills_allowlist") or [],
                     max_iterations=payload.get("max_iterations") or 30,
                     max_execution_time=payload.get("max_execution_time") or 300,
-                    workdir=selected_workdir
+                    workdir=selected_workdir,
+                    lock_paths=payload.get("lock_paths") or [],
+                    lock_ttl=payload.get("lock_ttl") or 900,
+                    lock_owner=lock_owner,
+                    task_id=int(payload.get("task_id") or 0)
                 )
                 futures[future] = meta
             for future in as_completed(futures):
