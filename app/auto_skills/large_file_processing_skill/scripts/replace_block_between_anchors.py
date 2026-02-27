@@ -38,6 +38,14 @@ def replace_block_between_anchors(
             original = f.read()
 
         replacement = ""
+        if skip_if_present and new_block and new_block in original:
+            return {
+                "success": True,
+                "message": "内容已存在，已跳过",
+                "file_path": file_path,
+                "used_fallback": False,
+                "skipped": True
+            }
         used_fallback = False
         if start_pattern and end_pattern:
             starts = [m for m in re.finditer(start_pattern, original)]

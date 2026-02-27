@@ -67,9 +67,10 @@ STATE: CONTINUE
 8) 为避免重复写入，插入/替换需开启 skip_if_present。
 9) 若出现“部分重叠”场景，使用 insert_text_at_line 时开启 dedupe_overlap。
 10) 使用 `safe_file_merge` 插入函数定义时，必须使用 before_pattern 或 replace_block_between_anchors，禁止 after_pattern。
-11) 每次修改完成后必须调用 `validate_file_integrity` 校验；失败则 `restore_from_backup` 回滚。
-12) 大文件创建/写入防截断：当你准备写入的内容较长（例如 > 9000 字符）时，禁止一次性生成后直接写入；必须分段写入（多次 safe_block_update/ safe_file_merge/insert_text_at_line），每段写完立刻用 get_document_stats/get_file_info 检查文件大小与行数是否与预期增长一致。
-13) 若使用 `save_document` 创建文件后发现文件大小/内容明显偏小（疑似对话裁剪导致写入不全），必须继续“二次补写”：重新从来源分段生成剩余内容，并以追加方式写入（safe_block_update 追加或 safe_file_merge 插入 end），直到文件完整。
+11) replace_block_between_anchors 默认禁止行号兜底；只有在 expected_old 命中且明确允许时才能兜底。
+12) 每次修改完成后必须调用 `validate_file_integrity` 校验；失败则 `restore_from_backup` 回滚。
+13) 大文件创建/写入防截断：当你准备写入的内容较长（例如 > 9000 字符）时，禁止一次性生成后直接写入；必须分段写入（多次 safe_block_update/ safe_file_merge/insert_text_at_line），每段写完立刻用 get_document_stats/get_file_info 检查文件大小与行数是否与预期增长一致。
+14) 若使用 `save_document` 创建文件后发现文件大小/内容明显偏小（疑似对话裁剪导致写入不全），必须继续“二次补写”：重新从来源分段生成剩余内容，并以追加方式写入（safe_block_update 追加或 safe_file_merge 插入 end），直到文件完整。
 """
     desktop = """
 === 桌面自动化提示 ===
