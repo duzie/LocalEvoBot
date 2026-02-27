@@ -16,7 +16,9 @@ def safe_block_update(
     backup_suffix: str = ".bak",
     require_unique: bool = True,
     ensure_present: bool = True,
-    truncate_incomplete_tail: bool = True
+    truncate_incomplete_tail: bool = True,
+    expected_old: str = "",
+    skip_if_present: bool = True
 ) -> Dict[str, Any]:
     """
     大文件安全更新：裁剪未完整尾行 + 锚点替换/插入 + 校验 + 回滚。
@@ -60,6 +62,19 @@ def safe_block_update(
                     break
             if end is None:
                 return {"success": False, "error": "未找到位于起始锚点之后的结束锚点"}
+            if skip_if_present and new_block and new_block in content[start.end():end.start()]:
+                return {
+                    "success": True,
+                    "message": "区间已包含内容，已跳过",
+                    "file_path": file_path,
+                    "backup_file": backup_file,
+                    "original_size": len(original),
+                    "new_size": len(original),
+                    "insert_mode": mode,
+                    "skipped": True
+                }
+            if expected_old and expected_old not in content[start.end():end.start()]:
+                return {"success": False, "error": "锚点命中但内容校验失败"}
             before = content[:start.end()]
             after = content[end.start():]
             updated = before + "\n" + (new_block or "") + "\n" + after
@@ -75,8 +90,30 @@ def safe_block_update(
             idx = matches[0]
             before = "\n".join(lines[:idx + 1])
             after = "\n".join(lines[idx + 1:])
+            if skip_if_present and new_block and new_block in after:
+                return {
+                    "success": True,
+                    "message": "锚点后已包含内容，已跳过",
+                    "file_path": file_path,
+                    "backup_file": backup_file,
+                    "original_size": len(original),
+                    "new_size": len(original),
+                    "insert_mode": mode,
+                    "skipped": True
+                }
             updated = before + "\n" + (new_block or "") + "\n" + after
         elif mode == "append":
+            if skip_if_present and new_block and new_block in content:
+                return {
+                    "success": True,
+                    "message": "内容已存在，已跳过",
+                    "file_path": file_path,
+                    "backup_file": backup_file,
+                    "original_size": len(original),
+                    "new_size": len(original),
+                    "insert_mode": mode,
+                    "skipped": True
+                }
             updated = content + ("\n" if content and not content.endswith("\n") else "") + (new_block or "") + "\n"
         else:
             return {"success": False, "error": f"不支持的 insert_mode: {insert_mode}"}

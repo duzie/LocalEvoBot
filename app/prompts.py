@@ -61,9 +61,14 @@ STATE: CONTINUE
 2) 修改文件前必须先备份：优先 `safe_file_backup`，必要时可 `restore_from_backup` 回滚。
 3) 大文件分块读取：超过上下文/字符限制时，必须用分块工具继续读取完整内容，再做合并/增量编辑，禁止“读到截断内容就直接覆盖写回”。
 4) 大文件改写优先使用 `safe_block_update`（裁剪未完整尾行 + 锚点替换/插入 + 校验 + 回滚），避免二次修改插错导致编译失败。
-5) 仅当 `safe_block_update` 不适用时，才使用 `safe_file_merge`/`replace_block_between_anchors`，并要求锚点唯一匹配。
-6) 大文件创建/写入防截断：当你准备写入的内容较长（例如 > 9000 字符）时，禁止一次性生成后直接写入；必须分段写入（多次 safe_block_update/ safe_file_merge/insert_text_at_line），每段写完立刻用 get_document_stats/get_file_info 检查文件大小与行数是否与预期增长一致。
-7) 若使用 `save_document` 创建文件后发现文件大小/内容明显偏小（疑似对话裁剪导致写入不全），必须继续“二次补写”：重新从来源分段生成剩余内容，并以追加方式写入（safe_block_update 追加或 safe_file_merge 插入 end），直到文件完整。
+5) 修改场景禁止用 `safe_file_merge` 追加式写入；仅限插入新增。
+6) 必须优先 `replace_block_between_anchors` 做区间替换，并提供 expected_old 进行内容校验；锚点失败才允许行号兜底，且兜底必须提供 expected_old。
+7) 使用 `insert_text_at_line` 必须提供 expected_pattern，目标行不匹配则禁止插入。
+8) 为避免重复写入，插入/替换需开启 skip_if_present。
+9) 若出现“部分重叠”场景，使用 insert_text_at_line 时开启 dedupe_overlap。
+10) 每次修改完成后必须调用 `validate_file_integrity` 校验；失败则 `restore_from_backup` 回滚。
+11) 大文件创建/写入防截断：当你准备写入的内容较长（例如 > 9000 字符）时，禁止一次性生成后直接写入；必须分段写入（多次 safe_block_update/ safe_file_merge/insert_text_at_line），每段写完立刻用 get_document_stats/get_file_info 检查文件大小与行数是否与预期增长一致。
+12) 若使用 `save_document` 创建文件后发现文件大小/内容明显偏小（疑似对话裁剪导致写入不全），必须继续“二次补写”：重新从来源分段生成剩余内容，并以追加方式写入（safe_block_update 追加或 safe_file_merge 插入 end），直到文件完整。
 """
     desktop = """
 === 桌面自动化提示 ===

@@ -1,5 +1,6 @@
 from langchain_core.tools import tool
 import os
+import re
 from typing import Dict, Any
 
 
@@ -20,6 +21,9 @@ def insert_text_at_line(
     text: str,
     position: str = "before",
     encoding: str = "utf-8",
+    expected_pattern: str = "",
+    skip_if_present: bool = True,
+    dedupe_overlap: bool = True,
 ) -> Dict[str, Any]:
     """
     按行号向文本文件插入内容（适用于将过长输出分段写入文件）。
@@ -60,6 +64,16 @@ def insert_text_at_line(
             content = f.read()
         normalized = _normalize_newlines(content)
         lines = normalized.splitlines(True)
+        normalized_insert = _normalize_newlines(text).strip()
+        if skip_if_present and normalized_insert and normalized_insert in normalized:
+            return {
+                "success": True,
+                "file_path": path,
+                "skipped": True,
+                "reason": "内容已存在",
+                "old_total_lines": len(lines),
+                "new_total_lines": len(lines),
+            }
 
         total_lines = len(lines)
         if ln > total_lines + 1:
@@ -69,11 +83,52 @@ def insert_text_at_line(
         if pos == "after" and ln <= total_lines:
             idx = ln
 
+        if expected_pattern and total_lines > 0 and ln <= total_lines:
+            line_text = lines[ln - 1].rstrip("\r\n")
+            if not re.search(expected_pattern, line_text):
+                return {
+                    "success": False,
+                    "error": "行内容校验失败",
+                    "expected_pattern": expected_pattern,
+                    "actual_line": line_text,
+                    "line_number": ln,
+                }
+
         if not lines:
             lines = []
             idx = 0
 
-        insert_lines = insert_text.splitlines(True)
+        insert_text_value = insert_text
+        if dedupe_overlap and normalized_insert:
+            existing_text = normalized
+            if pos == "before":
+                if idx <= len(lines):
+                    existing_text = _normalize_newlines("".join(lines[idx:]))
+            elif pos == "after":
+                if idx <= len(lines):
+                    existing_text = _normalize_newlines("".join(lines[idx:]))
+            if existing_text:
+                max_overlap = min(len(normalized_insert), len(existing_text))
+                overlap_size = 0
+                for size in range(max_overlap, 0, -1):
+                    if normalized_insert.endswith(existing_text[:size]):
+                        overlap_size = size
+                        break
+                if overlap_size > 0 and overlap_size < len(normalized_insert):
+                    insert_text_value = normalized_insert[:len(normalized_insert) - overlap_size]
+                    if insert_text_value:
+                        insert_text_value = _ensure_trailing_newline(insert_text_value)
+                elif overlap_size == len(normalized_insert):
+                    return {
+                        "success": True,
+                        "file_path": path,
+                        "skipped": True,
+                        "reason": "内容与后续重叠，已跳过",
+                        "old_total_lines": total_lines,
+                        "new_total_lines": total_lines,
+                    }
+
+        insert_lines = insert_text_value.splitlines(True)
         new_lines = lines[:idx] + insert_lines + lines[idx:]
 
         out = "".join(new_lines)

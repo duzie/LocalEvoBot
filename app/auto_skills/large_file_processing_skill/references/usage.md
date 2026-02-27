@@ -14,4 +14,8 @@
 - restore_from_backup
 
 ## Examples
-- 调用对应工具完成任务
+- 修改场景优先区间替换：replace_block_between_anchors(..., expected_old="def foo")
+- 锚点失败才允许行号兜底：replace_block_between_anchors(..., allow_fallback=True, start_line=120, end_line=180, expected_old="def foo")
+- 大块替换增加内容校验：safe_block_update(..., expected_old="def foo")
+- 避免重复写入：replace_block_between_anchors(..., skip_if_present=True)
+- 修改完成后校验：validate_file_integrity(...)

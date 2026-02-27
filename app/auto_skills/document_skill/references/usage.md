@@ -61,6 +61,9 @@
     - `text` (str): 要插入的文本（支持多行）。
     - `position` (str): 插入位置，"before"（默认）表示插入到该行前，"after" 表示插入到该行后。
     - `encoding` (str): 文件编码（默认"utf-8"）。
+    - `expected_pattern` (str): 目标行内容校验（正则）。不匹配则拒绝插入。
+    - `skip_if_present` (bool): 若内容已存在则跳过插入（默认True）。
+    - `dedupe_overlap` (bool): 若与后续内容部分重叠，则自动去重（默认True）。
 
 - **Returns**: 包含插入结果与新行数的字典。
 
@@ -120,6 +123,9 @@ insert_text_at_line(
     file_path="app.py",
     line_number=10,
     text="...要插入的长代码...",
-    position="before"
+    position="before",
+    expected_pattern="^def some_function\\(",
+    skip_if_present=True,
+    dedupe_overlap=True
 )
 ```
