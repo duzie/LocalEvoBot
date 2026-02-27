@@ -18,4 +18,5 @@
 - 锚点失败才允许行号兜底：replace_block_between_anchors(..., allow_fallback=True, start_line=120, end_line=180, expected_old="def foo")
 - 大块替换增加内容校验：safe_block_update(..., expected_old="def foo")
 - 避免重复写入：replace_block_between_anchors(..., skip_if_present=True)
+- 在函数前插入新函数：safe_file_merge(..., insert_position="before_pattern", anchor_pattern="^def target_function\\(", skip_if_present=True)
 - 修改完成后校验：validate_file_integrity(...)

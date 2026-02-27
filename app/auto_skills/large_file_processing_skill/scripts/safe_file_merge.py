@@ -8,7 +8,7 @@ from langchain.tools import tool
 
 @tool
 def safe_file_merge(target_file: str, new_content: str, insert_position: str = "end", 
-                   backup_suffix: str = ".bak", anchor_pattern: str = "", require_unique: bool = True, ensure_present: bool = True) -> Dict[str, Any]:
+                   backup_suffix: str = ".bak", anchor_pattern: str = "", require_unique: bool = True, ensure_present: bool = True, skip_if_present: bool = True) -> Dict[str, Any]:
     """
     安全合并文件内容（读取原始内容，合并新内容，写入备份）
     
@@ -21,10 +21,12 @@ def safe_file_merge(target_file: str, new_content: str, insert_position: str = "
             - "after_last_class": 最后一个类定义之后
             - "after_line:X": 在第X行之后插入（X为行号）
             - "after_pattern": 在锚点模式命中行之后插入（配合 anchor_pattern）
+            - "before_pattern": 在锚点模式命中行之前插入（配合 anchor_pattern）
         backup_suffix: 备份文件后缀，默认".bak"
         anchor_pattern: 锚点正则（用于 after_pattern）
         require_unique: 锚点是否要求唯一命中
         ensure_present: 写入后校验 new_content 是否存在
+        skip_if_present: 内容已存在则跳过写入
         
     Returns:
         包含操作结果的字典
@@ -50,6 +52,15 @@ def safe_file_merge(target_file: str, new_content: str, insert_position: str = "
         # 读取原始内容
         with open(target_file, 'r', encoding='utf-8', errors='ignore') as f:
             original_content = f.read()
+        
+        if skip_if_present and new_content and new_content in original_content:
+            return {
+                "success": True,
+                "action": "skipped",
+                "file_path": target_file,
+                "backup_file": backup_file,
+                "message": "内容已存在，已跳过"
+            }
         
         # 根据插入位置处理
         if insert_position == "beginning":
@@ -116,6 +127,31 @@ def safe_file_merge(target_file: str, new_content: str, insert_position: str = "
             idx = matches[0]
             before = '\n'.join(lines[:idx + 1])
             after = '\n'.join(lines[idx + 1:])
+            merged_content = before + "\n" + new_content + "\n" + after
+        elif insert_position == "before_pattern":
+            if not anchor_pattern:
+                return {
+                    "success": False,
+                    "error": "before_pattern 需要提供 anchor_pattern"
+                }
+            lines = original_content.split('\n')
+            matches = [i for i, line in enumerate(lines) if re.search(anchor_pattern, line)]
+            if not matches:
+                return {
+                    "success": False,
+                    "error": "未找到锚点匹配行",
+                    "anchor_pattern": anchor_pattern
+                }
+            if require_unique and len(matches) != 1:
+                return {
+                    "success": False,
+                    "error": "锚点匹配行不唯一",
+                    "anchor_pattern": anchor_pattern,
+                    "match_count": len(matches)
+                }
+            idx = matches[0]
+            before = '\n'.join(lines[:idx])
+            after = '\n'.join(lines[idx:])
             merged_content = before + "\n" + new_content + "\n" + after
         else:
             return {
