@@ -32,7 +32,7 @@ def _emit_event(tool_name: str, event: str, **fields):
     shared.broadcast_threadsafe(json.dumps(payload, ensure_ascii=False))
 
 @tool
-def incremental_file_edit(file_path: str, operation: str, target_pattern: str, content: str, create_backup: bool = true):
+def incremental_file_edit(file_path: str, operation: str, target_pattern: str, content: str, create_backup: bool = True):
     """
     增量编辑文件，只修改指定部分
     Args:

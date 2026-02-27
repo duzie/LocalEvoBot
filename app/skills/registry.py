@@ -185,8 +185,8 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
             importlib.invalidate_caches()
         try:
             package = importlib.import_module(pkg_name)
-            if auto_package_name and pkg_name == auto_package_name:
-                 print(f"Registry: Loaded package {pkg_name} from {package.__file__ if hasattr(package, '__file__') else 'unknown'}")
+            # if auto_package_name and pkg_name == auto_package_name:
+            #      print(f"Registry: Loaded package {pkg_name} from {package.__file__ if hasattr(package, '__file__') else 'unknown'}")
         except ImportError as e:
             print(f"Warning: Could not import package {pkg_name}: {e}")
             return []
@@ -213,7 +213,7 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
                     packages_to_scan.append(f"{pkg_name}.{module_name}.scripts")
 
         for scripts_package in packages_to_scan:
-            print(f"Registry: Processing scripts package {scripts_package}")
+            # print(f"Registry: Processing scripts package {scripts_package}")
             if auto_package_name and pkg_name == auto_package_name:
                 prefixes = [scripts_package]
                 if scripts_package.endswith(".scripts"):
@@ -232,7 +232,7 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
                 continue
             
             if hasattr(scripts_module, "__path__"):
-                print(f"Registry: Scanning modules in {scripts_package}")
+                # print(f"Registry: Scanning modules in {scripts_package}")
                 for _, module_name, _ in pkgutil.iter_modules(scripts_module.__path__):
                     full_module_name = f"{scripts_package}.{module_name}"
                     # print(f"Registry: Found script module {full_module_name}")
@@ -249,9 +249,9 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
                                     found_tools += 1
                                 except Exception:
                                     pass
-                        if found_tools > 0:
-                            print(f"Registry: Loaded {found_tools} tools from {full_module_name}")
-                        else:
+                        if found_tools == 0:
+                            # print(f"Registry: Loaded {found_tools} tools from {full_module_name}")
+                        # else:
                             print(f"Registry: No tools found in {full_module_name}")
                     except Exception as e:
                         print(f"Registry Warning: Failed to load module {full_module_name}: {e}")
