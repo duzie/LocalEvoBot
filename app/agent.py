@@ -86,7 +86,7 @@ def create_llm():
             provider = "doubao"
         elif (os.getenv("DEEPSEEK_API_KEY") or "").strip():
             provider = "deepseek"
-        elif (os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY") or "").strip():
+        elif (os.getenv("QWEN_CODING_PLAN_API_KEY") or os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY") or "").strip():
             provider = "qwen"
         elif (os.getenv("OPENAI_API_KEY") or "").strip():
             provider = "openai"
@@ -133,11 +133,17 @@ def create_llm():
         )
 
     if provider == "qwen":
-        api_key = os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
-        base_url = os.getenv("QWEN_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        coding_plan_key = os.getenv("QWEN_CODING_PLAN_API_KEY")
+        api_key = coding_plan_key or os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+        if (os.getenv("QWEN_BASE_URL") or "").strip():
+            base_url = os.getenv("QWEN_BASE_URL")
+        elif (coding_plan_key or "").strip():
+            base_url = "https://coding.dashscope.aliyuncs.com/v1"
+        else:
+            base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
         model_name = os.getenv("QWEN_MODEL_NAME") or "qwen-plus"
         if not api_key:
-            raise ValueError("请确保 .env 文件中配置了 QWEN_API_KEY (或 DASHSCOPE_API_KEY)")
+            raise ValueError("请确保 .env 文件中配置了 QWEN_CODING_PLAN_API_KEY 或 QWEN_API_KEY (或 DASHSCOPE_API_KEY)")
         return ChatOpenAI(
             model=model_name,
             openai_api_key=api_key,

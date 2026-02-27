@@ -44,6 +44,7 @@ _SCHEMA_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "DEEPSEEK_BASE_URL": {"label": "DeepSeek Base URL", "desc": "DeepSeek API 地址", "group": "DeepSeek", "common": True},
     "DEEPSEEK_MODEL_NAME": {"label": "DeepSeek 模型名", "desc": "对话模型名称", "group": "DeepSeek", "common": True},
     "QWEN_API_KEY": {"label": "Qwen API Key", "desc": "Qwen/DashScope 密钥", "group": "Qwen", "common": True, "secret": True},
+    "QWEN_CODING_PLAN_API_KEY": {"label": "Coding Plan API Key", "desc": "通义千问 Coding Plan 密钥", "group": "Qwen", "common": False, "secret": True},
     "DASHSCOPE_API_KEY": {"label": "DashScope API Key", "desc": "通义千问 DashScope 密钥（可替代 QWEN_API_KEY）", "group": "Qwen", "common": False, "secret": True},
     "QWEN_BASE_URL": {"label": "Qwen Base URL", "desc": "Qwen API 地址", "group": "Qwen", "common": False},
     "QWEN_MODEL_NAME": {"label": "Qwen 模型名", "desc": "对话模型名称", "group": "Qwen", "common": True},
