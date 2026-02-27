@@ -702,6 +702,8 @@ def _ensure_task_templates(summary_data, chat_history, llm, project_id, user_id)
     if not isinstance(summary_data, dict):
         return summary_data
     items = summary_data.get("items") or {}
+    if not isinstance(items, dict):
+        items = {}
     tasks = items.get("task_experiences") or []
     templates = summary_data.get("task_templates") or []
     if templates:
@@ -827,7 +829,11 @@ def _build_task_experiences_from_plan(plan):
     return [summary]
 
 def _save_cognition_summary(summary, project_id, user_id):
+    if not isinstance(summary, dict):
+        return []
     items = summary.get("items") or {}
+    if not isinstance(items, dict):
+        items = {}
     task_templates = summary.get("task_templates") or []
     proposed_tags = _normalize_tags(summary.get("proposed_tags") or [])
     base_tags = proposed_tags + [f"project:{project_id}"]
@@ -903,6 +909,8 @@ def _should_prompt_save(summary_text):
     if not data or not isinstance(data, dict):
         return False, None
     items = data.get("items") or {}
+    if not isinstance(items, dict):
+        items = {}
     behavior = items.get("behavior_preferences") or []
     code_style = items.get("code_style_preferences") or []
     templates = data.get("task_templates") or []
