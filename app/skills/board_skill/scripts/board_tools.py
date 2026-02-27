@@ -94,6 +94,55 @@ def _error_payload(code: str, message: str, **fields) -> Dict[str, Any]:
         payload[str(k)] = v
     return payload
 
+def _read_int_env(key: str, default: int) -> int:
+    try:
+        value = os.getenv(key)
+        if value is None or str(value).strip() == "":
+            return int(default)
+        parsed = int(str(value).strip())
+        return parsed if parsed >= 0 else int(default)
+    except Exception:
+        return int(default)
+
+def _read_bool_env(key: str, default: bool) -> bool:
+    try:
+        value = os.getenv(key)
+        if value is None or str(value).strip() == "":
+            return bool(default)
+        return str(value).strip().lower() in ("1", "true", "yes", "on")
+    except Exception:
+        return bool(default)
+
+def _read_optional_bool_env(key: str):
+    value = os.getenv(key)
+    if value is None or str(value).strip() == "":
+        return None
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+def _resolve_role_limits():
+    role_limits_disabled = _read_optional_bool_env("ROLE_AGENT_LIMITS_DISABLED")
+    limits_disabled = role_limits_disabled if role_limits_disabled is not None else _read_bool_env("AGENT_LIMITS_DISABLED", False)
+    role_max_iter = os.getenv("ROLE_AGENT_MAX_ITERATIONS")
+    role_max_time = os.getenv("ROLE_AGENT_MAX_EXECUTION_TIME")
+    if role_max_iter is None or str(role_max_iter).strip() == "":
+        default_max_iter = _read_int_env("AGENT_MAX_ITERATIONS", 50000000)
+    else:
+        default_max_iter = _read_int_env("ROLE_AGENT_MAX_ITERATIONS", 50000000)
+    if role_max_time is None or str(role_max_time).strip() == "":
+        default_max_time = _read_int_env("AGENT_MAX_EXECUTION_TIME", 600)
+    else:
+        default_max_time = _read_int_env("ROLE_AGENT_MAX_EXECUTION_TIME", 600)
+    return limits_disabled, default_max_iter, default_max_time
+
+def _coerce_limit(value, fallback: int):
+    if value is None:
+        return fallback
+    try:
+        parsed = int(str(value).strip())
+        return parsed if parsed > 0 else fallback
+    except Exception:
+        return fallback
+
 def _next_message_id(board: Dict[str, Any]) -> int:
     next_id = int(board.get("next_message_id") or 1)
     board["next_message_id"] = next_id + 1
@@ -612,7 +661,7 @@ def _compose_task_input(task_input: str, payload: Dict[str, Any], board_snapshot
         parts.append("上下文信息:\n" + "\n".join(context_parts))
     return "\n\n".join(parts).strip()
 
-def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", tools_allowlist: List[str] = None, skills_allowlist: List[str] = None, max_iterations: int = 30, max_execution_time: int = 300, workdir: str = "") -> Dict[str, Any]:
+def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", tools_allowlist: List[str] = None, skills_allowlist: List[str] = None, max_iterations: int = None, max_execution_time: int = None, workdir: str = "") -> Dict[str, Any]:
     if shared.stop_requested:
         shared.set_status("stopped", "已停止", task_input)
         _append_role_event(role_name, "stopped", role=role_name)
@@ -633,22 +682,28 @@ def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", t
     prompt_extra = _build_role_prompt(role_name, role_prompt)
     prompt = get_agent_prompt(tools, prompt_extra if prompt_extra else None)
     agent = create_tool_calling_agent(llm, tools, prompt)
+    limits_disabled, default_max_iter, default_max_time = _resolve_role_limits()
+    effective_max_iterations = None
+    effective_max_time = None
+    if not limits_disabled:
+        effective_max_iterations = _coerce_limit(max_iterations, default_max_iter)
+        effective_max_time = _coerce_limit(max_execution_time, default_max_time)
     executor = AgentExecutor(
         agent=agent,
         tools=tools,
         verbose=True,
         handle_parsing_errors=True,
-        max_iterations=max(1, int(max_iterations or 30)),
-        max_execution_time=max(1, int(max_execution_time or 300))
+        max_iterations=effective_max_iterations,
+        max_execution_time=effective_max_time
     )
     _append_role_event(role_name, "start", role=role_name, workdir=wd)
     started_at = time.monotonic()
     raw_output = ""
     try:
         for chunk in executor.stream({"input": task_input or ""}):
-            if max_execution_time and (time.monotonic() - started_at) > float(max_execution_time):
+            if effective_max_time and (time.monotonic() - started_at) > float(effective_max_time):
                 shared.set_status("idle", "空闲", task_input, error="执行超时")
-                _append_role_event(role_name, "timeout", role=role_name, max_execution_time=max_execution_time)
+                _append_role_event(role_name, "timeout", role=role_name, max_execution_time=effective_max_time)
                 return _error_payload("timeout", "执行超时", timed_out=True, role=role_name, output=raw_output)
             if shared.stop_requested:
                 shared.set_status("stopped", "已停止", task_input)
@@ -1538,7 +1593,7 @@ def _deps_satisfied(board: Dict[str, Any], deps: List[Any], policy: str) -> bool
     return _deps_completed(board, dep_ids)
 
 @tool
-def run_role_agent(role_name: str, task_input: str, role_prompt: str = "", tools_allowlist: List[str] = None, skills_allowlist: List[str] = None, task_id: int = 0, status_after: str = "待验收", max_iterations: int = 30, max_execution_time: int = 300, context: str = "", summary: str = "", output_dir: str = "", workdir: str = "", lock_paths: List[str] = None, lock_ttl: int = 900) -> Dict[str, Any]:
+def run_role_agent(role_name: str, task_input: str, role_prompt: str = "", tools_allowlist: List[str] = None, skills_allowlist: List[str] = None, task_id: int = 0, status_after: str = "待验收", max_iterations: int = None, max_execution_time: int = None, context: str = "", summary: str = "", output_dir: str = "", workdir: str = "", lock_paths: List[str] = None, lock_ttl: int = 900) -> Dict[str, Any]:
     """
     创建角色 Agent 并执行单次任务，返回输出结果。
     """
@@ -1715,8 +1770,8 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
                     role_prompt=payload.get("role_prompt") or "",
                     tools_allowlist=payload.get("tools_allowlist") or [],
                     skills_allowlist=payload.get("skills_allowlist") or [],
-                    max_iterations=payload.get("max_iterations") or 30,
-                    max_execution_time=payload.get("max_execution_time") or 300,
+                    max_iterations=payload.get("max_iterations"),
+                    max_execution_time=payload.get("max_execution_time"),
                     workdir=selected_workdir,
                     lock_paths=payload.get("lock_paths") or [],
                     lock_ttl=payload.get("lock_ttl") or 900,
