@@ -1,4 +1,7 @@
 import os
+import time
+import random
+import asyncio
 from typing import List, Dict, Set
 from langchain_openai import ChatOpenAI
 from langchain.agents import AgentExecutor, create_tool_calling_agent
@@ -77,6 +80,121 @@ def _collect_tools_for_skills(skill_names: List[str]) -> Set[str]:
         collected.update(tool_names)
     return collected
 
+class _LLMRetryWrapper:
+    def __init__(self, llm, max_attempts: int, base_delay: float, max_delay: float):
+        self._llm = llm
+        self._max_attempts = max(1, int(max_attempts))
+        self._base_delay = max(0.0, float(base_delay))
+        self._max_delay = max(0.0, float(max_delay))
+
+    def _should_retry(self, exc: Exception) -> bool:
+        text = str(exc).lower()
+        if "no suitable clusters" in text:
+            return True
+        if "internalerror.algo" in text:
+            return True
+        if "model serving" in text:
+            return True
+        if "timeout" in text:
+            return True
+        if "rate limit" in text or "429" in text:
+            return True
+        return False
+
+    def _sleep(self, attempt: int):
+        if self._base_delay <= 0:
+            return
+        delay = min(self._max_delay, self._base_delay * (2 ** (attempt - 1)))
+        jitter = delay * (0.2 * random.random())
+        time.sleep(delay + jitter)
+
+    async def _sleep_async(self, attempt: int):
+        if self._base_delay <= 0:
+            return
+        delay = min(self._max_delay, self._base_delay * (2 ** (attempt - 1)))
+        jitter = delay * (0.2 * random.random())
+        await asyncio.sleep(delay + jitter)
+
+    def invoke(self, *args, **kwargs):
+        last_exc = None
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                return self._llm.invoke(*args, **kwargs)
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= self._max_attempts or not self._should_retry(exc):
+                    raise
+                self._sleep(attempt)
+        if last_exc:
+            raise last_exc
+
+    async def ainvoke(self, *args, **kwargs):
+        last_exc = None
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                return await self._llm.ainvoke(*args, **kwargs)
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= self._max_attempts or not self._should_retry(exc):
+                    raise
+                await self._sleep_async(attempt)
+        if last_exc:
+            raise last_exc
+
+    def stream(self, *args, **kwargs):
+        last_exc = None
+        for attempt in range(1, self._max_attempts + 1):
+            yielded = False
+            try:
+                for chunk in self._llm.stream(*args, **kwargs):
+                    yielded = True
+                    yield chunk
+                return
+            except Exception as exc:
+                last_exc = exc
+                if yielded or attempt >= self._max_attempts or not self._should_retry(exc):
+                    raise
+                self._sleep(attempt)
+        if last_exc:
+            raise last_exc
+
+    async def astream(self, *args, **kwargs):
+        last_exc = None
+        for attempt in range(1, self._max_attempts + 1):
+            yielded = False
+            try:
+                async for chunk in self._llm.astream(*args, **kwargs):
+                    yielded = True
+                    yield chunk
+                return
+            except Exception as exc:
+                last_exc = exc
+                if yielded or attempt >= self._max_attempts or not self._should_retry(exc):
+                    raise
+                await self._sleep_async(attempt)
+        if last_exc:
+            raise last_exc
+
+    def __getattr__(self, name):
+        return getattr(self._llm, name)
+
+def _apply_llm_retry(llm):
+    try:
+        max_attempts = int(os.getenv("LLM_RETRY_MAX") or 3)
+    except Exception:
+        max_attempts = 3
+    try:
+        base_delay = float(os.getenv("LLM_RETRY_BASE_DELAY") or 1.0)
+    except Exception:
+        base_delay = 1.0
+    try:
+        max_delay = float(os.getenv("LLM_RETRY_MAX_DELAY") or 6.0)
+    except Exception:
+        max_delay = 6.0
+    if max_attempts <= 1:
+        return llm
+    return _LLMRetryWrapper(llm, max_attempts=max_attempts, base_delay=base_delay, max_delay=max_delay)
+
 def create_llm():
     provider_raw = (os.getenv("LLM_PROVIDER") or "").strip().strip("'\"").lower()
     if provider_raw:
@@ -110,13 +228,14 @@ def create_llm():
             raise ValueError("请确保 .env 文件中配置了 DOUBAO_API_KEY（或复用 OPENAI_API_KEY）")
         if not model_name:
             raise ValueError("请确保 .env 文件中配置了 DOUBAO_MODEL_NAME（填接入点 Endpoint ID）")
-        return ChatOpenAI(
+        llm = ChatOpenAI(
             model=model_name,
             openai_api_key=api_key,
             openai_api_base=base_url,
             temperature=0.7,
             streaming=True,
         )
+        return _apply_llm_retry(llm)
 
     if provider == "deepseek":
         api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -124,13 +243,14 @@ def create_llm():
         model_name = os.getenv("DEEPSEEK_MODEL_NAME") or "deepseek-chat"
         if not api_key:
             raise ValueError("请确保 .env 文件中配置了 DEEPSEEK_API_KEY")
-        return ChatOpenAI(
+        llm = ChatOpenAI(
             model=model_name,
             openai_api_key=api_key,
             openai_api_base=base_url,
             temperature=0.7,
             streaming=True,
         )
+        return _apply_llm_retry(llm)
 
     if provider == "qwen":
         coding_plan_key = os.getenv("QWEN_CODING_PLAN_API_KEY")
@@ -144,13 +264,14 @@ def create_llm():
         model_name = os.getenv("QWEN_MODEL_NAME") or "qwen-plus"
         if not api_key:
             raise ValueError("请确保 .env 文件中配置了 QWEN_CODING_PLAN_API_KEY 或 QWEN_API_KEY (或 DASHSCOPE_API_KEY)")
-        return ChatOpenAI(
+        llm = ChatOpenAI(
             model=model_name,
             openai_api_key=api_key,
             openai_api_base=base_url,
             temperature=0.7,
             streaming=True,
         )
+        return _apply_llm_retry(llm)
 
     if provider == "openai":
         api_key = os.getenv("OPENAI_API_KEY")
@@ -179,7 +300,7 @@ def create_llm():
         n_threads = int(os.getenv("LOCAL_THREADS") or 8)
         n_batch = int(os.getenv("LOCAL_BATCH_SIZE") or 512)
         temperature = float(os.getenv("LOCAL_TEMPERATURE") or 0.7)
-        return ChatLlamaCpp(
+        llm = ChatLlamaCpp(
             model_path=model_path,
             n_ctx=n_ctx,
             n_gpu_layers=n_gpu_layers,
@@ -187,6 +308,7 @@ def create_llm():
             n_batch=n_batch,
             temperature=temperature,
         )
+        return _apply_llm_retry(llm)
 
     if provider in {"nim_minimax_m2", "nim_glm47"}:
         api_key = os.getenv("NIM_API_KEY") or os.getenv("NVIDIA_NIM_API_KEY") or os.getenv("NVIDIA_API_KEY")
@@ -197,13 +319,14 @@ def create_llm():
             model_name = os.getenv("NIM_GLM47_MODEL_NAME") or "z-ai/glm4.7"
         if not api_key:
             raise ValueError("请确保 .env 文件中配置了 NIM_API_KEY（NVIDIA API Catalog Key；自建 NIM 可填 no-key-required）")
-        return ChatOpenAI(
+        llm = ChatOpenAI(
             model=model_name,
             openai_api_key=api_key,
             openai_api_base=base_url,
             temperature=0.7,
             streaming=True,
         )
+        return _apply_llm_retry(llm)
 
     raise ValueError(f"不支持的 LLM_PROVIDER: {provider}")
 
