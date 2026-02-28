@@ -137,10 +137,21 @@ def safe_block_update(
                     start_matches += 1
                     if found_start_line == 0:
                         found_start_line = total_lines
+                        # 增加特殊处理：如果起始和结束锚点相同，且是同一行，则将其视为单行替换
+                        # 在这种情况下，found_end_line 应该在当前行之后，以便下一轮循环处理
+                        # 但由于我们需要替换当前行，所以我们标记 found_end_line 为 total_lines
+                        # 并在写入阶段特殊处理这种情况
                         if end_hit and found_end_line == 0:
-                            end_matches += 1
-                            found_end_line = total_lines
-                            continue
+                            # 检查 start_pattern 和 end_pattern 是否相同
+                            if start_pattern == end_pattern:
+                                end_matches += 1
+                                found_end_line = total_lines
+                                continue
+                            else:
+                                # 如果不同，且在同一行匹配到，可能是 bug 或特殊情况，暂时保持原逻辑
+                                end_matches += 1
+                                found_end_line = total_lines
+                                continue
                 if end_hit:
                     end_matches += 1
                     if found_start_line > 0 and found_end_line == 0:
@@ -192,9 +203,17 @@ def safe_block_update(
                     if line_num < found_start_line:
                         dst.write(line)
                         continue
-                    if line_num == found_start_line:
-                        dst.write(line)
-                        if new_block:
+                    if line_num == found_start_line and found_start_line == found_end_line and start_pattern == end_pattern:
+                    # 特殊情况：单行替换
+                    if new_block:
+                        dst.write(new_block)
+                        if not new_block.endswith("\n"):
+                            dst.write("\n")
+                    inserted = True if new_block else False
+                    continue
+                if line_num == found_start_line:
+                    dst.write(line)
+                    if new_block:
                             dst.write(new_block)
                             if not new_block.endswith("\n"):
                                 dst.write("\n")

@@ -20,6 +20,7 @@ app.auto_skills.safe_file_editing_skill.scripts
 - merge_classes_into_file
 - python_code_edit (Recommended for Python)
 - json_file_edit (Recommended for JSON)
+- simple_text_replace (Recommended for simple text/regex replacement)
 
 ## Platforms
 - Windows
