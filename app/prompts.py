@@ -64,10 +64,11 @@ STATE: CONTINUE
 5) 简单文本替换使用 `simple_text_replace`。
 6) 其他文件改写优先 `safe_block_update` 或 `replace_block_between_anchors`，并提供 expected_old 校验；锚点失败才允许行号兜底。
 7) 插入/替换开启 skip_if_present；insert_text_at_line 需 expected_pattern，重叠开启 dedupe_overlap。
-8) **修改代码后必须运行 `validate_code_syntax` 检查语法** (Python/JS/JSON)。
+8) **修改代码后必须运行 `validate_code_syntax` 检查语法** (Python/JS/JSON/C#)。
 9) `safe_file_merge` 仅做新增插入，函数定义必须 before_pattern 或区间替换，禁止 after_pattern。
-10) 修改后必须 `validate_file_integrity`，失败则回滚。
-11) 长内容写入必须分段，写完核对大小与行数，必要时补写。
+10) **C#文件修改**：新增类/方法强烈建议使用 `csharp_code_edit` 以确保正确插入 Namespace 内部；避免使用文件末尾追加。
+11) 修改后必须 `validate_file_integrity`，失败则回滚。
+12) 长内容写入必须分段，写完核对大小与行数，必要时补写。
 """
     desktop = """
 === 桌面自动化提示 ===
