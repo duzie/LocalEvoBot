@@ -61,11 +61,14 @@ STATE: CONTINUE
 2) 修改前先备份，失败回滚：`safe_file_backup` / `restore_from_backup`。
 3) **Python 文件修改必须优先使用 `python_code_edit`**，它基于 AST 语法树，能自动处理缩进和语法检查，禁止使用正则表达式或全量覆盖修改 Python 代码。
 4) **JSON 文件修改必须优先使用 `json_file_edit`**，禁止使用正则替换。
-5) 其他文件改写优先 `safe_block_update` 或 `replace_block_between_anchors`，并提供 expected_old 校验；锚点失败才允许行号兜底。
-6) 插入/替换开启 skip_if_present；insert_text_at_line 需 expected_pattern，重叠开启 dedupe_overlap。
-6) `safe_file_merge` 仅做新增插入，函数定义必须 before_pattern 或区间替换，禁止 after_pattern。
-7) 修改后必须 `validate_file_integrity`，失败则回滚。
-8) 长内容写入必须分段，写完核对大小与行数，必要时补写。
+5) 简单文本替换使用 `simple_text_replace`。
+6) 其他文件改写优先 `safe_block_update` 或 `replace_block_between_anchors`，并提供 expected_old 校验；锚点失败才允许行号兜底。
+7) 插入/替换开启 skip_if_present；insert_text_at_line 需 expected_pattern，重叠开启 dedupe_overlap。
+8) **修改代码后必须运行 `validate_code_syntax` 检查语法** (Python/JS/JSON/C#)。
+9) `safe_file_merge` 仅做新增插入，函数定义必须 before_pattern 或区间替换，禁止 after_pattern。
+10) **C#文件修改**：新增类/方法强烈建议使用 `csharp_code_edit` 以确保正确插入 Namespace 内部；避免使用文件末尾追加。
+11) 修改后必须 `validate_file_integrity`，失败则回滚。
+12) 长内容写入必须分段，写完核对大小与行数，必要时补写。
 """
     desktop = """
 === 桌面自动化提示 ===
@@ -96,7 +99,7 @@ STATE: CONTINUE
         dyn += browser
     if any(n in ("inspect_environment", "install_packages", "scaffold_skill", "write_tool_code", "reload_skills", "promote_skill") for n in names):
         dyn += skillgen
-    if any(n in ("save_document", "read_document_part", "read_large_file_chunks", "safe_file_backup", "safe_file_merge", "incremental_file_edit", "validate_file_integrity", "restore_from_backup", "extract_code_class", "merge_classes_into_file", "insert_text_at_line", "python_code_edit", "json_file_edit") for n in names):
+    if any(n in ("save_document", "read_document_part", "read_large_file_chunks", "safe_file_backup", "safe_file_merge", "incremental_file_edit", "validate_file_integrity", "restore_from_backup", "extract_code_class", "merge_classes_into_file", "insert_text_at_line", "python_code_edit", "json_file_edit", "simple_text_replace", "validate_code_syntax") for n in names):
         dyn += file_safety
     if any(n.startswith("uia_") or n.startswith("ocr_") or n.startswith("gui_") for n in names):
         dyn += desktop

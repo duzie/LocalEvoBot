@@ -1471,6 +1471,9 @@ def main():
                     text = chunk.get("output")
                     if text is None:
                         continue
+                    # 确保 text 是字符串
+                    if not isinstance(text, str):
+                        text = str(text)
                     if text.startswith(raw_output):
                         delta = text[len(raw_output):]
                         raw_output = text
