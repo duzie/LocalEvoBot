@@ -258,7 +258,7 @@ def _get_short_term_db_path(date_key: str = None):
     data_dir = os.path.join(base_dir, "app", "data")
     os.makedirs(data_dir, exist_ok=True)
     if not date_key:
-        date_key = datetime.now(timezone.utc).strftime("%Y%m%d")
+        date_key = datetime.now().astimezone().strftime("%Y%m%d")
     return os.path.join(data_dir, f"short_term_memory_{date_key}.sqlite3")
 
 def _get_short_term_md_dir():
@@ -324,7 +324,7 @@ def _add_short_term_message(role: str, content: str, project_id: str, user_id: s
     r = str(role or "").strip()
     if r in {"user", "assistant", "system"} and len(text) > 20000:
         text = text[:20000] + "\n...(truncated for storage)..."
-    created_at = datetime.now(timezone.utc).isoformat()
+    created_at = datetime.now().astimezone().isoformat()
     date_key = created_at[:10].replace("-", "")
     _init_short_term_db(date_key)
     path = _get_short_term_db_path(date_key)

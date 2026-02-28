@@ -6,6 +6,32 @@ from typing import Dict, Any, Optional
 from langchain.tools import tool
 
 
+def _stream_contains(file_path: str, needle: str, encoding: str) -> bool:
+    if not needle:
+        return False
+    tail = ""
+    needle_len = len(needle)
+    with open(file_path, "r", encoding=encoding, errors="ignore") as f:
+        while True:
+            chunk = f.read(65536)
+            if not chunk:
+                break
+            data = tail + chunk
+            if needle in data:
+                return True
+            if needle_len > 1:
+                tail = data[-(needle_len - 1):]
+            else:
+                tail = ""
+    return False
+
+
+def _iter_lines(file_path: str, encoding: str):
+    with open(file_path, "r", encoding=encoding, errors="ignore") as f:
+        for line in f:
+            yield line
+
+
 @tool
 def safe_file_merge(target_file: str, new_content: str, insert_position: str = "end", 
                    backup_suffix: str = ".bak", anchor_pattern: str = "", require_unique: bool = True, ensure_present: bool = True, skip_if_present: bool = True) -> Dict[str, Any]:
@@ -49,11 +75,8 @@ def safe_file_merge(target_file: str, new_content: str, insert_position: str = "
         backup_file = target_file + backup_suffix
         shutil.copy2(target_file, backup_file)
         
-        # 读取原始内容
-        with open(target_file, 'r', encoding='utf-8', errors='ignore') as f:
-            original_content = f.read()
-        
-        if skip_if_present and new_content and new_content in original_content:
+        encoding = "utf-8"
+        if skip_if_present and new_content and _stream_contains(target_file, new_content, encoding):
             return {
                 "success": True,
                 "action": "skipped",
@@ -64,40 +87,83 @@ def safe_file_merge(target_file: str, new_content: str, insert_position: str = "
         
         # 根据插入位置处理
         if insert_position == "beginning":
-            merged_content = new_content + "\n\n" + original_content
+            tmp_file = target_file + ".tmp"
+            with open(tmp_file, "w", encoding=encoding) as dst:
+                if new_content:
+                    dst.write(new_content)
+                if not new_content.endswith("\n"):
+                    dst.write("\n")
+                dst.write("\n")
+                for line in _iter_lines(target_file, encoding):
+                    dst.write(line)
+            os.replace(tmp_file, target_file)
         elif insert_position == "end":
-            merged_content = original_content + "\n\n" + new_content
+            tmp_file = target_file + ".tmp"
+            with open(tmp_file, "w", encoding=encoding) as dst:
+                for line in _iter_lines(target_file, encoding):
+                    dst.write(line)
+                dst.write("\n")
+                dst.write("\n")
+                if new_content:
+                    dst.write(new_content)
+            os.replace(tmp_file, target_file)
         elif insert_position == "after_last_class":
-            # 查找最后一个类定义的结束位置
-            lines = original_content.split('\n')
-            last_class_end = len(lines)
-            
-            # 简单查找最后一个"}"的位置（C#类结束）
-            for i in range(len(lines) - 1, -1, -1):
-                if lines[i].strip() == "}":
-                    last_class_end = i + 1
-                    break
-            
-            # 在最后一个类之后插入
-            before = '\n'.join(lines[:last_class_end])
-            after = '\n'.join(lines[last_class_end:])
-            merged_content = before + "\n\n" + new_content + "\n" + after
+            last_class_end = 0
+            total_lines = 0
+            for line in _iter_lines(target_file, encoding):
+                total_lines += 1
+                if line.strip() == "}":
+                    last_class_end = total_lines
+            if last_class_end == 0:
+                last_class_end = total_lines
+            tmp_file = target_file + ".tmp"
+            with open(tmp_file, "w", encoding=encoding) as dst:
+                line_num = 0
+                for line in _iter_lines(target_file, encoding):
+                    line_num += 1
+                    dst.write(line)
+                    if line_num == last_class_end:
+                        dst.write("\n")
+                        dst.write("\n")
+                        if new_content:
+                            dst.write(new_content)
+                        dst.write("\n")
+                if total_lines == 0:
+                    dst.write("\n")
+                    dst.write("\n")
+                    if new_content:
+                        dst.write(new_content)
+                    dst.write("\n")
+            os.replace(tmp_file, target_file)
             
         elif insert_position.startswith("after_line:"):
             try:
                 line_num = int(insert_position.split(":")[1])
-                lines = original_content.split('\n')
-                
-                if line_num < 0 or line_num > len(lines):
+                total_lines = 0
+                for _ in _iter_lines(target_file, encoding):
+                    total_lines += 1
+                if line_num < 0 or line_num > total_lines:
                     return {
                         "success": False,
-                        "error": f"行号 {line_num} 超出范围 (1-{len(lines)})"
+                        "error": f"行号 {line_num} 超出范围 (1-{total_lines})"
                     }
-                
-                before = '\n'.join(lines[:line_num])
-                after = '\n'.join(lines[line_num:])
-                merged_content = before + "\n" + new_content + "\n" + after
-                
+                tmp_file = target_file + ".tmp"
+                with open(tmp_file, "w", encoding=encoding) as dst:
+                    current = 0
+                    for line in _iter_lines(target_file, encoding):
+                        current += 1
+                        dst.write(line)
+                        if current == line_num:
+                            dst.write("\n")
+                            if new_content:
+                                dst.write(new_content)
+                            dst.write("\n")
+                    if line_num == 0:
+                        dst.write("\n")
+                        if new_content:
+                            dst.write(new_content)
+                        dst.write("\n")
+                os.replace(tmp_file, target_file)
             except ValueError:
                 return {
                     "success": False,
@@ -109,63 +175,90 @@ def safe_file_merge(target_file: str, new_content: str, insert_position: str = "
                     "success": False,
                     "error": "after_pattern 需要提供 anchor_pattern"
                 }
-            lines = original_content.split('\n')
-            matches = [i for i, line in enumerate(lines) if re.search(anchor_pattern, line)]
-            if not matches:
+            anchor_re = re.compile(anchor_pattern)
+            matches = 0
+            match_line = 0
+            line_num = 0
+            for line in _iter_lines(target_file, encoding):
+                line_num += 1
+                if anchor_re.search(line):
+                    matches += 1
+                    if match_line == 0:
+                        match_line = line_num
+            if matches == 0:
                 return {
                     "success": False,
                     "error": "未找到锚点匹配行",
                     "anchor_pattern": anchor_pattern
                 }
-            if require_unique and len(matches) != 1:
+            if require_unique and matches != 1:
                 return {
                     "success": False,
                     "error": "锚点匹配行不唯一",
                     "anchor_pattern": anchor_pattern,
-                    "match_count": len(matches)
+                    "match_count": matches
                 }
-            idx = matches[0]
-            before = '\n'.join(lines[:idx + 1])
-            after = '\n'.join(lines[idx + 1:])
-            merged_content = before + "\n" + new_content + "\n" + after
+            tmp_file = target_file + ".tmp"
+            with open(tmp_file, "w", encoding=encoding) as dst:
+                line_num = 0
+                for line in _iter_lines(target_file, encoding):
+                    line_num += 1
+                    dst.write(line)
+                    if line_num == match_line:
+                        dst.write("\n")
+                        if new_content:
+                            dst.write(new_content)
+                        dst.write("\n")
+            os.replace(tmp_file, target_file)
         elif insert_position == "before_pattern":
             if not anchor_pattern:
                 return {
                     "success": False,
                     "error": "before_pattern 需要提供 anchor_pattern"
                 }
-            lines = original_content.split('\n')
-            matches = [i for i, line in enumerate(lines) if re.search(anchor_pattern, line)]
-            if not matches:
+            anchor_re = re.compile(anchor_pattern)
+            matches = 0
+            match_line = 0
+            line_num = 0
+            for line in _iter_lines(target_file, encoding):
+                line_num += 1
+                if anchor_re.search(line):
+                    matches += 1
+                    if match_line == 0:
+                        match_line = line_num
+            if matches == 0:
                 return {
                     "success": False,
                     "error": "未找到锚点匹配行",
                     "anchor_pattern": anchor_pattern
                 }
-            if require_unique and len(matches) != 1:
+            if require_unique and matches != 1:
                 return {
                     "success": False,
                     "error": "锚点匹配行不唯一",
                     "anchor_pattern": anchor_pattern,
-                    "match_count": len(matches)
+                    "match_count": matches
                 }
-            idx = matches[0]
-            before = '\n'.join(lines[:idx])
-            after = '\n'.join(lines[idx:])
-            merged_content = before + "\n" + new_content + "\n" + after
+            tmp_file = target_file + ".tmp"
+            with open(tmp_file, "w", encoding=encoding) as dst:
+                current = 0
+                for line in _iter_lines(target_file, encoding):
+                    current += 1
+                    if current == match_line:
+                        dst.write("\n")
+                        if new_content:
+                            dst.write(new_content)
+                        dst.write("\n")
+                    dst.write(line)
+            os.replace(tmp_file, target_file)
         else:
             return {
                 "success": False,
                 "error": f"不支持的插入位置: {insert_position}"
             }
-        
-        # 写入合并后的内容
-        with open(target_file, 'w', encoding='utf-8') as f:
-            f.write(merged_content)
-        
-        # 计算变化
-        original_size = len(original_content)
-        merged_size = len(merged_content)
+
+        original_size = os.path.getsize(backup_file)
+        merged_size = os.path.getsize(target_file)
         added_size = merged_size - original_size
         if merged_size <= original_size:
             shutil.copy2(backup_file, target_file)
@@ -176,7 +269,7 @@ def safe_file_merge(target_file: str, new_content: str, insert_position: str = "
                 "original_size": original_size,
                 "merged_size": merged_size
             }
-        if ensure_present and new_content and new_content not in merged_content:
+        if ensure_present and new_content and not _stream_contains(target_file, new_content, encoding):
             shutil.copy2(backup_file, target_file)
             return {
                 "success": False,

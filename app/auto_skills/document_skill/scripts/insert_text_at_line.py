@@ -14,6 +14,58 @@ def _ensure_trailing_newline(text: str) -> str:
     return text if text.endswith("\n") else (text + "\n")
 
 
+def _stream_contains_normalized(file_path: str, needle: str, encoding: str) -> bool:
+    if not needle:
+        return False
+    tail = ""
+    needle_len = len(needle)
+    with open(file_path, "r", encoding=encoding, errors="ignore") as f:
+        while True:
+            chunk = f.read(65536)
+            if not chunk:
+                break
+            data = (tail + chunk).replace("\r\n", "\n").replace("\r", "\n")
+            if needle in data:
+                return True
+            if needle_len > 1:
+                tail = data[-(needle_len - 1):]
+            else:
+                tail = ""
+    return False
+
+
+def _detect_newline_style(file_path: str, encoding: str) -> str:
+    with open(file_path, "r", encoding=encoding, errors="ignore", newline="") as f:
+        chunk = f.read(8192)
+    if "\r\n" in chunk:
+        return "\r\n"
+    if "\n" in chunk:
+        return "\n"
+    return "\n"
+
+
+def _read_prefix_from_line(file_path: str, start_line: int, max_chars: int, encoding: str) -> str:
+    if max_chars <= 0:
+        return ""
+    collected = []
+    collected_len = 0
+    line_num = 0
+    with open(file_path, "r", encoding=encoding, errors="ignore", newline="") as f:
+        for line in f:
+            line_num += 1
+            if line_num < start_line:
+                continue
+            part = line.replace("\r\n", "\n").replace("\r", "\n")
+            remaining = max_chars - collected_len
+            if remaining <= 0:
+                break
+            collected.append(part[:remaining])
+            collected_len += len(collected[-1])
+            if collected_len >= max_chars:
+                break
+    return "".join(collected)
+
+
 @tool
 def insert_text_at_line(
     file_path: str,
@@ -57,34 +109,31 @@ def insert_text_at_line(
     if pos not in {"before", "after"}:
         return {"success": False, "error": 'position 仅支持 "before" 或 "after"'}
 
-    insert_text = _ensure_trailing_newline(_normalize_newlines(text))
-
     try:
-        with open(path, "r", encoding=encoding, errors="ignore") as f:
-            content = f.read()
-        normalized = _normalize_newlines(content)
-        lines = normalized.splitlines(True)
+        total_lines = 0
+        target_line_text = ""
+        with open(path, "r", encoding=encoding, errors="ignore", newline="") as f:
+            for line in f:
+                total_lines += 1
+                if total_lines == ln:
+                    target_line_text = line.rstrip("\r\n")
+
         normalized_insert = _normalize_newlines(text).strip()
-        if skip_if_present and normalized_insert and normalized_insert in normalized:
+        if skip_if_present and normalized_insert and _stream_contains_normalized(path, normalized_insert, encoding):
             return {
                 "success": True,
                 "file_path": path,
                 "skipped": True,
                 "reason": "内容已存在",
-                "old_total_lines": len(lines),
-                "new_total_lines": len(lines),
+                "old_total_lines": total_lines,
+                "new_total_lines": total_lines,
             }
 
-        total_lines = len(lines)
         if ln > total_lines + 1:
             ln = total_lines + 1
 
-        idx = ln - 1
-        if pos == "after" and ln <= total_lines:
-            idx = ln
-
         if expected_pattern and total_lines > 0 and ln <= total_lines:
-            line_text = lines[ln - 1].rstrip("\r\n")
+            line_text = target_line_text
             if not re.search(expected_pattern, line_text):
                 return {
                     "success": False,
@@ -94,24 +143,18 @@ def insert_text_at_line(
                     "line_number": ln,
                 }
 
-        if not lines:
-            lines = []
-            idx = 0
-
-        insert_text_value = insert_text
+        insert_text_value = _ensure_trailing_newline(_normalize_newlines(text))
         if dedupe_overlap and normalized_insert:
-            existing_text = normalized
-            if pos == "before":
-                if idx <= len(lines):
-                    existing_text = _normalize_newlines("".join(lines[idx:]))
-            elif pos == "after":
-                if idx <= len(lines):
-                    existing_text = _normalize_newlines("".join(lines[idx:]))
-            if existing_text:
-                max_overlap = min(len(normalized_insert), len(existing_text))
+            follow_start_line = ln if pos == "before" else ln + 1
+            if follow_start_line <= total_lines:
+                prefix = _read_prefix_from_line(path, follow_start_line, len(normalized_insert), encoding)
+            else:
+                prefix = ""
+            if prefix:
+                max_overlap = min(len(normalized_insert), len(prefix))
                 overlap_size = 0
                 for size in range(max_overlap, 0, -1):
-                    if normalized_insert.endswith(existing_text[:size]):
+                    if normalized_insert.endswith(prefix[:size]):
                         overlap_size = size
                         break
                 if overlap_size > 0 and overlap_size < len(normalized_insert):
@@ -128,13 +171,27 @@ def insert_text_at_line(
                         "new_total_lines": total_lines,
                     }
 
-        insert_lines = insert_text_value.splitlines(True)
-        new_lines = lines[:idx] + insert_lines + lines[idx:]
+        newline_style = _detect_newline_style(path, encoding)
+        insert_text_write = insert_text_value.replace("\n", newline_style)
+        insert_before_line = ln if pos == "before" else ln + 1
 
-        out = "".join(new_lines)
-        out = out.replace("\n", "\r\n")
-        with open(path, "w", encoding=encoding, newline="") as f:
-            f.write(out)
+        tmp_file = path + ".tmp"
+        inserted = False
+        with open(path, "r", encoding=encoding, errors="ignore", newline="") as src, open(tmp_file, "w", encoding=encoding, newline="") as dst:
+            line_num = 0
+            for line in src:
+                line_num += 1
+                if not inserted and line_num == insert_before_line:
+                    dst.write(insert_text_write)
+                    inserted = True
+                dst.write(line)
+            if not inserted:
+                dst.write(insert_text_write)
+                inserted = True
+
+        os.replace(tmp_file, path)
+        inserted_lines = _normalize_newlines(insert_text_value).count("\n")
+        new_total_lines = total_lines + inserted_lines
 
         return {
             "success": True,
@@ -142,8 +199,8 @@ def insert_text_at_line(
             "inserted_at_line": ln,
             "position": pos,
             "old_total_lines": total_lines,
-            "new_total_lines": len(new_lines),
-            "message": f"已插入到 {os.path.basename(path)} 第 {ln} 行（{pos}），当前共 {len(new_lines)} 行",
+            "new_total_lines": new_total_lines,
+            "message": f"已插入到 {os.path.basename(path)} 第 {ln} 行（{pos}），当前共 {new_total_lines} 行",
         }
     except Exception as e:
         return {"success": False, "error": f"插入失败: {str(e)}"}

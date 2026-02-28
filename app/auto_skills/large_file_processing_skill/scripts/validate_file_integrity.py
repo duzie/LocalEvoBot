@@ -107,7 +107,21 @@ def validate_file_integrity(file_path: str, file_type: str = "cs") -> Dict[str, 
         
         # Python文件验证
         elif file_type.lower() == "py":
-            # 检查缩进（简单的制表符/空格检查）
+            # 1. 严格语法检查 (AST Parse)
+            import ast
+            try:
+                ast.parse(content, filename=file_path)
+            except SyntaxError as e:
+                validation_results["issues"].append({
+                    "type": "syntax_error",
+                    "message": f"Python语法错误: {e.msg}",
+                    "line": e.lineno,
+                    "offset": e.offset,
+                    "text": e.text,
+                    "severity": "critical"
+                })
+
+            # 2. 检查缩进（简单的制表符/空格检查）
             tab_lines = sum(1 for line in lines if line.startswith('\t'))
             space_lines = sum(1 for line in lines if line.startswith(' '))
             
@@ -118,7 +132,7 @@ def validate_file_integrity(file_path: str, file_type: str = "cs") -> Dict[str, 
                     "suggestion": "统一使用空格或制表符"
                 })
             
-            # 检查函数定义
+            # 3. 检查函数定义
             function_pattern = r'def\s+\w+\s*\([^)]*\)\s*:'
             functions = re.findall(function_pattern, content)
             validation_results["checks"].append({
@@ -127,7 +141,7 @@ def validate_file_integrity(file_path: str, file_type: str = "cs") -> Dict[str, 
                 "status": "ok"
             })
             
-            # 检查类定义
+            # 4. 检查类定义
             class_pattern = r'class\s+\w+\s*\(?[^:]*\)?\s*:'
             classes = re.findall(class_pattern, content)
             validation_results["checks"].append({

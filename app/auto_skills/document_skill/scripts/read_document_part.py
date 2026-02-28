@@ -2,23 +2,24 @@ from langchain_core.tools import tool
 import os
 from typing import Optional, Dict, Any
 
-def _read_text_with_encoding(file_path: str, encoding: Optional[str]):
-    with open(file_path, "rb") as f:
-        raw = f.read()
+def _pick_encoding(file_path: str, encoding: Optional[str]):
     candidates = []
     if encoding:
         candidates.append(str(encoding).strip())
     candidates.extend(["utf-8-sig", "utf-8", "gb18030", "gbk", "cp936", "latin-1"])
     seen = set()
+    with open(file_path, "rb") as f:
+        sample = f.read(65536)
     for enc in candidates:
         if not enc or enc in seen:
             continue
         seen.add(enc)
         try:
-            return raw.decode(enc), enc
+            sample.decode(enc)
+            return enc, "strict"
         except Exception:
             continue
-    return raw.decode("utf-8", errors="replace"), "utf-8-replace"
+    return "utf-8", "replace"
 
 @tool
 def read_document_part(file_path: str, start_line: int = 0, end_line: Optional[int] = None, 
@@ -55,55 +56,61 @@ def read_document_part(file_path: str, start_line: int = 0, end_line: Optional[i
                 "stats": {}
             }
         
-        content_all, encoding_used = _read_text_with_encoding(file_path, encoding)
-        lines = content_all.splitlines(True)
-        
-        total_lines = len(lines)
-        
-        # 验证起始行号
+        encoding_used, error_mode = _pick_encoding(file_path, encoding)
         if start_line < 0:
             start_line = 0
-        elif start_line >= total_lines:
+        if end_line is not None and end_line < start_line:
+            return {
+                "success": False,
+                "error": f"结束行号 {end_line} 小于起始行号 {start_line}",
+                "content": "",
+                "stats": {}
+            }
+
+        total_lines = 0
+        selected_line_count = 0
+        collected = []
+        collected_chars = 0
+        truncated = False
+        with open(file_path, "r", encoding=encoding_used, errors=error_mode, newline="") as f:
+            for line in f:
+                line_index = total_lines
+                total_lines += 1
+                in_range = line_index >= start_line and (end_line is None or line_index <= end_line)
+                if in_range:
+                    selected_line_count += 1
+                    if not truncated:
+                        if collected_chars + len(line) <= max_chars:
+                            collected.append(line)
+                            collected_chars += len(line)
+                        else:
+                            remaining = max_chars - collected_chars
+                            if remaining > 0:
+                                collected.append(line[:remaining])
+                            collected.append("\n\n[内容已截断，超过最大字符限制]")
+                            truncated = True
+
+        if start_line >= total_lines:
             return {
                 "success": False,
                 "error": f"起始行号 {start_line} 超出文件范围 (总行数: {total_lines})",
                 "content": "",
                 "stats": {"total_lines": total_lines}
             }
-        
-        # 确定结束行号
+
         if end_line is None:
-            end_line = total_lines - 1
-        elif end_line >= total_lines:
-            end_line = total_lines - 1
-        
-        if end_line < start_line:
-            return {
-                "success": False,
-                "error": f"结束行号 {end_line} 小于起始行号 {start_line}",
-                "content": "",
-                "stats": {"total_lines": total_lines}
-            }
-        
-        # 截取指定行范围
-        selected_lines = lines[start_line:end_line + 1]
-        
-        # 合并为字符串
-        content = ''.join(selected_lines)
-        
-        # 检查字符数限制
-        if len(content) > max_chars:
-            content = content[:max_chars] + "\n\n[内容已截断，超过最大字符限制]"
-        
-        # 计算统计信息
-        selected_line_count = len(selected_lines)
+            end_line_effective = total_lines - 1
+        else:
+            end_line_effective = min(end_line, total_lines - 1)
+
+        content = "".join(collected)
         char_count = len(content)
         
         stats = {
             "total_lines": total_lines,
             "selected_lines": selected_line_count,
             "start_line": start_line,
-            "end_line": end_line,
+            "end_line": end_line_effective,
             "char_count": char_count,
             "max_chars": max_chars,
             "file_size": os.path.getsize(file_path),
@@ -115,7 +122,7 @@ def read_document_part(file_path: str, start_line: int = 0, end_line: Optional[i
             "success": True,
             "content": content,
             "stats": stats,
-            "message": f"成功读取 {selected_line_count} 行内容 (行 {start_line}-{end_line})"
+            "message": f"成功读取 {selected_line_count} 行内容 (行 {start_line}-{end_line_effective})"
         }
         
     except UnicodeDecodeError as e:

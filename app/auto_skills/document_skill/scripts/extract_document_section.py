@@ -2,23 +2,24 @@ from langchain_core.tools import tool
 import os
 from typing import Optional, Dict, Any
 
-def _read_text_with_encoding(file_path: str, encoding: str):
-    with open(file_path, "rb") as f:
-        raw = f.read()
+def _pick_encoding(file_path: str, encoding: str):
     candidates = []
     if encoding:
         candidates.append(str(encoding).strip())
     candidates.extend(["utf-8-sig", "utf-8", "gb18030", "gbk", "cp936", "latin-1"])
     seen = set()
+    with open(file_path, "rb") as f:
+        sample = f.read(65536)
     for enc in candidates:
         if not enc or enc in seen:
             continue
         seen.add(enc)
         try:
-            return raw.decode(enc), enc
+            sample.decode(enc)
+            return enc, "strict"
         except Exception:
             continue
-    return raw.decode("utf-8", errors="replace"), "utf-8-replace"
+    return "utf-8", "replace"
 
 @tool
 def extract_document_section(file_path: str, section_marker: str, 
@@ -56,18 +57,37 @@ def extract_document_section(file_path: str, section_marker: str,
                 "stats": {}
             }
         
-        content_all, encoding_used = _read_text_with_encoding(file_path, encoding)
-        lines = content_all.splitlines(True)
-        
-        total_lines = len(lines)
-        
-        # 查找章节标记
+        encoding_used, error_mode = _pick_encoding(file_path, encoding)
         section_start = -1
-        for i, line in enumerate(lines):
-            if section_marker in line:
-                section_start = i
-                break
-        
+        section_end = -1
+        extract_start = -1
+        extracted_lines = []
+        extracted_line_count = 0
+        collecting = False
+        total_lines = 0
+
+        with open(file_path, "r", encoding=encoding_used, errors=error_mode, newline="") as f:
+            for line in f:
+                line_index = total_lines
+                total_lines += 1
+                if section_start == -1:
+                    if section_marker in line:
+                        section_start = line_index
+                        extract_start = section_start if include_marker else section_start + 1
+                        if include_marker:
+                            extracted_lines.append(line)
+                            extracted_line_count += 1
+                        collecting = True
+                    continue
+
+                if collecting:
+                    if next_section_marker and next_section_marker in line:
+                        section_end = line_index - 1
+                        collecting = False
+                        continue
+                    extracted_lines.append(line)
+                    extracted_line_count += 1
+
         if section_start == -1:
             return {
                 "success": False,
@@ -75,21 +95,10 @@ def extract_document_section(file_path: str, section_marker: str,
                 "content": "",
                 "stats": {"total_lines": total_lines, "section_marker": section_marker}
             }
-        
-        # 确定提取结束位置
-        section_end = total_lines - 1  # 默认到文件末尾
-        
-        if next_section_marker:
-            # 查找下一章节标记
-            for i in range(section_start + 1, total_lines):
-                if next_section_marker in lines[i]:
-                    section_end = i - 1
-                    break
-        
-        # 调整起始位置（是否包含标记行）
-        extract_start = section_start if include_marker else section_start + 1
-        
-        # 确保起始位置不超过结束位置
+
+        if section_end == -1:
+            section_end = total_lines - 1
+
         if extract_start > section_end:
             return {
                 "success": False,
@@ -103,13 +112,8 @@ def extract_document_section(file_path: str, section_marker: str,
                     "extract_start": extract_start
                 }
             }
-        
-        # 提取内容
-        extracted_lines = lines[extract_start:section_end + 1]
-        content = ''.join(extracted_lines)
-        
-        # 计算统计信息
-        extracted_line_count = len(extracted_lines)
+
+        content = "".join(extracted_lines)
         
         stats = {
             "total_lines": total_lines,

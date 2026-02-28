@@ -57,20 +57,15 @@ STATE: CONTINUE
 """
     file_safety = """
 === 文件安全 ===
-1) 永远不要用 `save_document` 修改已存在文件；它只用于创建新文件。
-2) 修改文件前必须先备份：优先 `safe_file_backup`，必要时可 `restore_from_backup` 回滚。
-3) 大文件分块读取：超过上下文/字符限制时，必须用分块工具继续读取完整内容，再做合并/增量编辑，禁止“读到截断内容就直接覆盖写回”。
-4) 大文件改写优先使用 `safe_block_update`（裁剪未完整尾行 + 锚点替换/插入 + 校验 + 回滚），避免二次修改插错导致编译失败。
-5) 修改场景禁止用 `safe_file_merge` 追加式写入；仅限插入新增。
-6) 必须优先 `replace_block_between_anchors` 做区间替换，并提供 expected_old 进行内容校验；锚点失败才允许行号兜底，且兜底必须提供 expected_old。
-7) 使用 `insert_text_at_line` 必须提供 expected_pattern，目标行不匹配则禁止插入。
-8) 为避免重复写入，插入/替换需开启 skip_if_present。
-9) 若出现“部分重叠”场景，使用 insert_text_at_line 时开启 dedupe_overlap。
-10) 使用 `safe_file_merge` 插入函数定义时，必须使用 before_pattern 或 replace_block_between_anchors，禁止 after_pattern。
-11) replace_block_between_anchors 默认禁止行号兜底；只有在 expected_old 命中且明确允许时才能兜底。
-12) 每次修改完成后必须调用 `validate_file_integrity` 校验；失败则 `restore_from_backup` 回滚。
-13) 大文件创建/写入防截断：当你准备写入的内容较长（例如 > 9000 字符）时，禁止一次性生成后直接写入；必须分段写入（多次 safe_block_update/ safe_file_merge/insert_text_at_line），每段写完立刻用 get_document_stats/get_file_info 检查文件大小与行数是否与预期增长一致。
-14) 若使用 `save_document` 创建文件后发现文件大小/内容明显偏小（疑似对话裁剪导致写入不全），必须继续“二次补写”：重新从来源分段生成剩余内容，并以追加方式写入（safe_block_update 追加或 safe_file_merge 插入 end），直到文件完整。
+1) 已存在文件禁止用 `save_document` 覆盖；只用于新建。
+2) 修改前先备份，失败回滚：`safe_file_backup` / `restore_from_backup`。
+3) **Python 文件修改必须优先使用 `python_code_edit`**，它基于 AST 语法树，能自动处理缩进和语法检查，禁止使用正则表达式或全量覆盖修改 Python 代码。
+4) **JSON 文件修改必须优先使用 `json_file_edit`**，禁止使用正则替换。
+5) 其他文件改写优先 `safe_block_update` 或 `replace_block_between_anchors`，并提供 expected_old 校验；锚点失败才允许行号兜底。
+6) 插入/替换开启 skip_if_present；insert_text_at_line 需 expected_pattern，重叠开启 dedupe_overlap。
+6) `safe_file_merge` 仅做新增插入，函数定义必须 before_pattern 或区间替换，禁止 after_pattern。
+7) 修改后必须 `validate_file_integrity`，失败则回滚。
+8) 长内容写入必须分段，写完核对大小与行数，必要时补写。
 """
     desktop = """
 === 桌面自动化提示 ===
@@ -101,7 +96,7 @@ STATE: CONTINUE
         dyn += browser
     if any(n in ("inspect_environment", "install_packages", "scaffold_skill", "write_tool_code", "reload_skills", "promote_skill") for n in names):
         dyn += skillgen
-    if any(n in ("save_document", "read_document_part", "read_large_file_chunks", "safe_file_backup", "safe_file_merge", "incremental_file_edit", "validate_file_integrity", "restore_from_backup", "extract_code_class", "merge_classes_into_file", "insert_text_at_line") for n in names):
+    if any(n in ("save_document", "read_document_part", "read_large_file_chunks", "safe_file_backup", "safe_file_merge", "incremental_file_edit", "validate_file_integrity", "restore_from_backup", "extract_code_class", "merge_classes_into_file", "insert_text_at_line", "python_code_edit", "json_file_edit") for n in names):
         dyn += file_safety
     if any(n.startswith("uia_") or n.startswith("ocr_") or n.startswith("gui_") for n in names):
         dyn += desktop

@@ -5,6 +5,56 @@ import shutil
 from typing import Dict, Any
 
 
+def _stream_contains(file_path: str, needle: str, encoding: str) -> bool:
+    if not needle:
+        return False
+    tail = ""
+    needle_len = len(needle)
+    with open(file_path, "r", encoding=encoding, errors="ignore") as f:
+        while True:
+            chunk = f.read(65536)
+            if not chunk:
+                break
+            data = tail + chunk
+            if needle in data:
+                return True
+            if needle_len > 1:
+                tail = data[-(needle_len - 1):]
+            else:
+                tail = ""
+    return False
+
+
+def _update_contains_state(buffer: str, text: str, needle: str, found: bool) -> (str, bool):
+    if found or not needle:
+        return buffer, found
+    data = buffer + text
+    if needle in data:
+        return data[-(len(needle) - 1):] if len(needle) > 1 else "", True
+    if len(needle) > 1:
+        return data[-(len(needle) - 1):], False
+    return "", False
+
+
+def _stream_contains_in_range(file_path: str, start_line: int, end_line: int, needle: str, encoding: str) -> bool:
+    if not needle:
+        return False
+    buffer = ""
+    found = False
+    line_num = 0
+    with open(file_path, "r", encoding=encoding, errors="ignore") as f:
+        for line in f:
+            line_num += 1
+            if line_num < start_line:
+                continue
+            if line_num > end_line:
+                break
+            buffer, found = _update_contains_state(buffer, line, needle, found)
+            if found:
+                return True
+    return False
+
+
 @tool
 def replace_block_between_anchors(
     file_path: str,
@@ -34,11 +84,8 @@ def replace_block_between_anchors(
         if not os.path.isfile(file_path):
             return {"success": False, "error": f"路径不是文件: {file_path}"}
 
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            original = f.read()
-
-        replacement = ""
-        if skip_if_present and new_block and new_block in original:
+        encoding = "utf-8"
+        if skip_if_present and new_block and _stream_contains(file_path, new_block, encoding):
             return {
                 "success": True,
                 "message": "内容已存在，已跳过",
@@ -47,53 +94,93 @@ def replace_block_between_anchors(
                 "skipped": True
             }
         used_fallback = False
-        if start_pattern and end_pattern:
-            starts = [m for m in re.finditer(start_pattern, original)]
-            ends = [m for m in re.finditer(end_pattern, original)]
-            if starts and ends and (not require_unique or (len(starts) == 1 and len(ends) == 1)):
-                start = starts[0]
-                end = None
-                for m in ends:
-                    if m.start() >= start.end():
-                        end = m
-                        break
-                if end:
-                    if skip_if_present and new_block and new_block in original[start.end():end.start()]:
-                        return {
-                            "success": True,
-                            "message": "区间已包含内容，已跳过",
-                            "file_path": file_path,
-                            "used_fallback": False,
-                            "skipped": True
-                        }
-                    if expected_old and expected_old not in original[start.end():end.start()]:
-                        return {"success": False, "error": "锚点命中但内容校验失败", "used_fallback": False}
-                    before = original[:start.end()]
-                    after = original[end.start():]
-                    replacement = before + "\n" + (new_block or "") + "\n" + after
-            if not replacement and not allow_fallback:
+        start_matches = 0
+        end_matches = 0
+        found_start_line = 0
+        found_end_line = 0
+        total_lines = 0
+        segment_expected_found = False
+        segment_new_found = False
+        expected_buffer = ""
+        new_buffer = ""
+        start_re = re.compile(start_pattern) if start_pattern else None
+        end_re = re.compile(end_pattern) if end_pattern else None
+
+        with open(file_path, "r", encoding=encoding, errors="ignore") as f:
+            for line in f:
+                total_lines += 1
+                start_hit = bool(start_re.search(line)) if start_re else False
+                end_hit = bool(end_re.search(line)) if end_re else False
+                if start_hit:
+                    start_matches += 1
+                    if found_start_line == 0:
+                        found_start_line = total_lines
+                        if end_hit and found_end_line == 0:
+                            end_matches += 1
+                            found_end_line = total_lines
+                            continue
+                if end_hit:
+                    end_matches += 1
+                    if found_start_line > 0 and found_end_line == 0:
+                        found_end_line = total_lines
+                        continue
+                if found_start_line > 0 and found_end_line == 0 and total_lines != found_start_line and not end_hit:
+                    expected_buffer, segment_expected_found = _update_contains_state(
+                        expected_buffer, line, expected_old, segment_expected_found
+                    )
+                    new_buffer, segment_new_found = _update_contains_state(
+                        new_buffer, line, new_block, segment_new_found
+                    )
+
+        anchor_usable = (
+            found_start_line > 0
+            and found_end_line > 0
+            and (not require_unique or (start_matches == 1 and end_matches == 1))
+        )
+        
+        # 增加对锚点行号的校验 (如果用户提供了行号提示)
+        if anchor_usable and start_line > 0:
+            # 允许 5 行以内的偏差
+            if abs(found_start_line - start_line) > 5:
                 return {
                     "success": False,
-                    "error": "锚点未匹配" if not starts or not ends else "锚点不唯一",
-                    "start_matches": len(starts),
-                    "end_matches": len(ends)
+                    "error": f"锚点匹配行 ({found_start_line}) 与预期行 ({start_line}) 偏差过大 (>5行)，为安全起见已拒绝。请确认锚点是否正确或更新预期行号。",
+                    "found_line": found_start_line,
+                    "expected_line": start_line
                 }
-        if not replacement:
+
+        if anchor_usable:
+            if skip_if_present and new_block and segment_new_found:
+                return {
+                    "success": True,
+                    "message": "区间已包含内容，已跳过",
+                    "file_path": file_path,
+                    "used_fallback": False,
+                    "skipped": True
+                }
+            if expected_old and not segment_expected_found:
+                return {"success": False, "error": "锚点命中但内容校验失败", "used_fallback": False}
+        else:
+            if not allow_fallback:
+                return {
+                    "success": False,
+                    "error": "锚点未匹配" if start_matches == 0 or end_matches == 0 else "锚点不唯一",
+                    "start_matches": start_matches,
+                    "end_matches": end_matches
+                }
             if not (allow_fallback and start_line and end_line):
                 return {"success": False, "error": "锚点未匹配且未启用行号兜底"}
             if allow_fallback and not expected_old:
                 return {"success": False, "error": "行号兜底必须提供 expected_old"}
-            lines = original.splitlines(keepends=True)
-            total = len(lines)
             s = max(1, int(start_line))
             e = max(1, int(end_line))
             if s > e:
                 s, e = e, s
-            if s > total or e > total:
-                return {"success": False, "error": "行号范围超出文件长度", "total_lines": total}
-            if expected_old and expected_old not in "".join(lines[s - 1:e]):
-                return {"success": False, "error": "行号兜底内容校验失败", "total_lines": total}
-            if skip_if_present and new_block and new_block in "".join(lines[s - 1:e]):
+            if s > total_lines or e > total_lines:
+                return {"success": False, "error": "行号范围超出文件长度", "total_lines": total_lines}
+            if expected_old and not _stream_contains_in_range(file_path, s, e, expected_old, encoding):
+                return {"success": False, "error": "行号兜底内容校验失败", "total_lines": total_lines}
+            if skip_if_present and new_block and _stream_contains_in_range(file_path, s, e, new_block, encoding):
                 return {
                     "success": True,
                     "message": "区间已包含内容，已跳过",
@@ -101,36 +188,82 @@ def replace_block_between_anchors(
                     "used_fallback": True,
                     "skipped": True
                 }
-            before = "".join(lines[:s - 1])
-            after = "".join(lines[e:])
-            mid = (new_block or "")
-            if mid and not mid.endswith("\n"):
-                mid = mid + "\n"
-            replacement = before + mid + after
             used_fallback = True
 
         backup_file = file_path + backup_suffix
         shutil.copy2(file_path, backup_file)
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(replacement)
+        tmp_file = file_path + ".tmp"
+        inserted = False
+        if anchor_usable:
+            start_line_num = found_start_line
+            end_line_num = found_end_line
+            with open(file_path, "r", encoding=encoding, errors="ignore") as src, open(tmp_file, "w", encoding=encoding) as dst:
+                line_num = 0
+                for line in src:
+                    line_num += 1
+                    if line_num < start_line_num:
+                        dst.write(line)
+                        continue
+                    if line_num == start_line_num:
+                        dst.write(line)
+                        if new_block:
+                            dst.write(new_block)
+                            if not new_block.endswith("\n"):
+                                dst.write("\n")
+                        inserted = True if new_block else False
+                        continue
+                    if line_num < end_line_num:
+                        continue
+                    if line_num == end_line_num:
+                        dst.write(line)
+                        continue
+                    dst.write(line)
+        else:
+            s = max(1, int(start_line))
+            e = max(1, int(end_line))
+            if s > e:
+                s, e = e, s
+            with open(file_path, "r", encoding=encoding, errors="ignore") as src, open(tmp_file, "w", encoding=encoding) as dst:
+                line_num = 0
+                for line in src:
+                    line_num += 1
+                    if line_num < s:
+                        dst.write(line)
+                        continue
+                    if line_num == s:
+                        if new_block:
+                            dst.write(new_block)
+                            if not new_block.endswith("\n"):
+                                dst.write("\n")
+                            inserted = True
+                        continue
+                    if line_num <= e:
+                        continue
+                    dst.write(line)
 
-        if len(replacement) < len(original) and not new_block:
+        if ensure_present and new_block and not inserted:
+            shutil.copy2(backup_file, file_path)
+            if os.path.exists(tmp_file):
+                os.remove(tmp_file)
+            return {
+                "success": False,
+                "error": "替换内容校验失败，已回滚",
+                "backup_file": backup_file
+            }
+
+        os.replace(tmp_file, file_path)
+        new_size = os.path.getsize(file_path)
+        original_size = os.path.getsize(backup_file)
+
+        if new_size < original_size and not new_block:
             return {
                 "success": True,
                 "message": "已清空锚点区间内容",
                 "file_path": file_path,
                 "backup_file": backup_file,
-                "original_size": len(original),
-                "new_size": len(replacement),
+                "original_size": original_size,
+                "new_size": new_size,
                 "used_fallback": used_fallback
-            }
-
-        if ensure_present and new_block and new_block not in replacement:
-            shutil.copy2(backup_file, file_path)
-            return {
-                "success": False,
-                "error": "替换内容校验失败，已回滚",
-                "backup_file": backup_file
             }
 
         return {
@@ -138,8 +271,8 @@ def replace_block_between_anchors(
             "message": "已按锚点区间替换内容",
             "file_path": file_path,
             "backup_file": backup_file,
-            "original_size": len(original),
-            "new_size": len(replacement),
+            "original_size": original_size,
+            "new_size": new_size,
             "used_fallback": used_fallback
         }
     except Exception as e:

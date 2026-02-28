@@ -1,7 +1,7 @@
 # Usage
 
 ## Scope
-大文件安全处理技能，支持分块读取、增量编辑、备份恢复等功能
+大文件安全处理技能，支持分块读取、增量编辑、流式改写、原子替换与备份恢复等功能
 
 ## Tools
 - read_large_file_chunks
@@ -17,6 +17,7 @@
 - 修改场景优先区间替换：replace_block_between_anchors(..., expected_old="def foo")
 - 锚点失败才允许行号兜底：replace_block_between_anchors(..., allow_fallback=True, start_line=120, end_line=180, expected_old="def foo")
 - 大块替换增加内容校验：safe_block_update(..., expected_old="def foo")
+- 大文件编辑优先流式改写：safe_block_update(..., insert_mode="replace_between", expected_old="def foo")
 - 避免重复写入：replace_block_between_anchors(..., skip_if_present=True)
 - 全链路精确修改：replace_block_between_anchors(..., expected_old="def foo", skip_if_present=True, allow_fallback=False)
 - 在函数前插入新函数：safe_file_merge(..., insert_position="before_pattern", anchor_pattern="^def target_function\\(", skip_if_present=True)

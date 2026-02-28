@@ -7,7 +7,8 @@ safe_file_editing_skill
 1.0.0
 
 ## Description
-安全文件编辑技能，提供备份、增量编辑、代码提取和合并功能，避免文件覆盖问题
+安全文件编辑技能，提供备份、增量编辑、AST 精准替换、代码提取和合并功能，避免文件覆盖问题。
+特别针对 Python 文件提供语法感知的编辑能力。
 
 ## Entry
 app.auto_skills.safe_file_editing_skill.scripts
@@ -17,6 +18,8 @@ app.auto_skills.safe_file_editing_skill.scripts
 - incremental_file_edit
 - extract_code_class
 - merge_classes_into_file
+- python_code_edit (Recommended for Python)
+- json_file_edit (Recommended for JSON)
 
 ## Platforms
 - Windows
