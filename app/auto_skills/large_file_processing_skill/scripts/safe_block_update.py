@@ -204,16 +204,16 @@ def safe_block_update(
                         dst.write(line)
                         continue
                     if line_num == found_start_line and found_start_line == found_end_line and start_pattern == end_pattern:
-                    # 特殊情况：单行替换
-                    if new_block:
-                        dst.write(new_block)
-                        if not new_block.endswith("\n"):
-                            dst.write("\n")
-                    inserted = True if new_block else False
-                    continue
-                if line_num == found_start_line:
-                    dst.write(line)
-                    if new_block:
+                        # 特殊情况：单行替换
+                        if new_block:
+                            dst.write(new_block)
+                            if not new_block.endswith("\n"):
+                                dst.write("\n")
+                        inserted = True if new_block else False
+                        continue
+                    if line_num == found_start_line:
+                        dst.write(line)
+                        if new_block:
                             dst.write(new_block)
                             if not new_block.endswith("\n"):
                                 dst.write("\n")

@@ -731,10 +731,13 @@ def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", t
                         log_text = f"\n< Observation: {str(observation)}\n"
                         _append_role_log(role_name, log_text)
 
-            text = chunk.get("output")
             if text is None:
                 continue
             
+            # 确保 text 是字符串
+            if not isinstance(text, str):
+                text = str(text)
+                
             # 处理最终输出的增量更新
             # 注意：LangChain 的 stream output 有时是全量，有时是增量，取决于 LLM
             # 这里沿用原有逻辑，假设是全量覆盖或增量追加

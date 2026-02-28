@@ -21,6 +21,7 @@ app.auto_skills.safe_file_editing_skill.scripts
 - python_code_edit (Recommended for Python)
 - json_file_edit (Recommended for JSON)
 - simple_text_replace (Recommended for simple text/regex replacement)
+- validate_code_syntax (NEW! Check syntax for Python/JS/JSON)
 
 ## Platforms
 - Windows

@@ -64,9 +64,10 @@ STATE: CONTINUE
 5) 简单文本替换使用 `simple_text_replace`。
 6) 其他文件改写优先 `safe_block_update` 或 `replace_block_between_anchors`，并提供 expected_old 校验；锚点失败才允许行号兜底。
 7) 插入/替换开启 skip_if_present；insert_text_at_line 需 expected_pattern，重叠开启 dedupe_overlap。
-6) `safe_file_merge` 仅做新增插入，函数定义必须 before_pattern 或区间替换，禁止 after_pattern。
-7) 修改后必须 `validate_file_integrity`，失败则回滚。
-8) 长内容写入必须分段，写完核对大小与行数，必要时补写。
+8) **修改代码后必须运行 `validate_code_syntax` 检查语法** (Python/JS/JSON)。
+9) `safe_file_merge` 仅做新增插入，函数定义必须 before_pattern 或区间替换，禁止 after_pattern。
+10) 修改后必须 `validate_file_integrity`，失败则回滚。
+11) 长内容写入必须分段，写完核对大小与行数，必要时补写。
 """
     desktop = """
 === 桌面自动化提示 ===
@@ -97,7 +98,7 @@ STATE: CONTINUE
         dyn += browser
     if any(n in ("inspect_environment", "install_packages", "scaffold_skill", "write_tool_code", "reload_skills", "promote_skill") for n in names):
         dyn += skillgen
-    if any(n in ("save_document", "read_document_part", "read_large_file_chunks", "safe_file_backup", "safe_file_merge", "incremental_file_edit", "validate_file_integrity", "restore_from_backup", "extract_code_class", "merge_classes_into_file", "insert_text_at_line", "python_code_edit", "json_file_edit", "simple_text_replace") for n in names):
+    if any(n in ("save_document", "read_document_part", "read_large_file_chunks", "safe_file_backup", "safe_file_merge", "incremental_file_edit", "validate_file_integrity", "restore_from_backup", "extract_code_class", "merge_classes_into_file", "insert_text_at_line", "python_code_edit", "json_file_edit", "simple_text_replace", "validate_code_syntax") for n in names):
         dyn += file_safety
     if any(n.startswith("uia_") or n.startswith("ocr_") or n.startswith("gui_") for n in names):
         dyn += desktop
