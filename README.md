@@ -1,4 +1,4 @@
-# 我是小冬瓜 / 自进化本地自动化 Agent
+﻿# 我是小冬瓜 / 自进化本地自动化 Agent
 
 一个基于 LangChain 的智能电脑操作 Agent，不仅支持 Windows UI Automation、OCR、Web 自动化，更具备**自我进化能力**——能根据任务需求自动编写新技能、热加载并立即使用，无需重启。
 
@@ -76,7 +76,7 @@ LLM_PROVIDER=deepseek
 
 # Web 控制台（可选）
 WEB_HOST=0.0.0.0
-WEB_PORT=5010
+WEB_PORT=5011
 
 LOCAL_MODEL_PATH=...
 LOCAL_CTX_SIZE=4096
@@ -114,9 +114,9 @@ DOUBAO_VISION_MODEL_NAME=...
 python main.py
 ```
 
-运行后会同时启动 Web 控制台（默认端口 `5010`），浏览器打开：
-- `http://127.0.0.1:5010/audit-logs.html`（审计日志）
-- `http://127.0.0.1:5010/`
+运行后会同时启动 Web 控制台（默认端口 `5011`），浏览器打开：
+- `http://127.0.0.1:5011/audit-logs.html`（审计日志）
+- `http://127.0.0.1:5011/`
 
 在 Web 控制台中：
 - 可切换模型（下拉框）

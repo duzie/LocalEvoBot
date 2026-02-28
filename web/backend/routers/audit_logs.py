@@ -243,45 +243,6 @@ def list_audit_logs(
     finally:
         conn.close()
 
-@router.get("/{log_id}", response_model=AuditLogResponse)
-def get_audit_log(log_id: int):
-    """
-    获取单条审计日志详情
-    
-    - **log_id**: 日志 ID
-    """
-    db_path = get_audit_db_path()
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = dict_factory
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM audit_logs WHERE id = ?", (log_id,))
-        row = cur.fetchone()
-        
-        if not row:
-            raise HTTPException(status_code=404, detail="日志不存在")
-        
-        # 解析 JSON 字段
-        if row.get('request_data'):
-            try:
-                row['request_data'] = json.loads(row['request_data'])
-            except:
-                pass
-        if row.get('response_data'):
-            try:
-                row['response_data'] = json.loads(row['response_data'])
-            except:
-                pass
-        if row.get('extra_data'):
-            try:
-                row['extra_data'] = json.loads(row['extra_data'])
-            except:
-                pass
-        
-        return row
-    finally:
-        conn.close()
-
 @router.get("/stats")
 def get_audit_stats(
     start_time: Optional[str] = Query(None, description="开始时间"),
@@ -367,6 +328,45 @@ def get_audit_stats(
             "by_status": by_status,
             "by_user": by_user
         }
+    finally:
+        conn.close()
+
+@router.get("/{log_id}", response_model=AuditLogResponse)
+def get_audit_log(log_id: int):
+    """
+    获取单条审计日志详情
+    
+    - **log_id**: 日志 ID
+    """
+    db_path = get_audit_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = dict_factory
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM audit_logs WHERE id = ?", (log_id,))
+        row = cur.fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="日志不存在")
+        
+        # 解析 JSON 字段
+        if row.get('request_data'):
+            try:
+                row['request_data'] = json.loads(row['request_data'])
+            except:
+                pass
+        if row.get('response_data'):
+            try:
+                row['response_data'] = json.loads(row['response_data'])
+            except:
+                pass
+        if row.get('extra_data'):
+            try:
+                row['extra_data'] = json.loads(row['extra_data'])
+            except:
+                pass
+        
+        return row
     finally:
         conn.close()
 
