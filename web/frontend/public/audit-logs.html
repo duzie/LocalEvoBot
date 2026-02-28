@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>审计日志 - 小冬瓜智能助手</title>
+    <style>
+        :root {
+            --bg: #f5f7fb;
+            --card: #ffffff;
+            --border: #e5e7eb;
+            --muted: #6b7280;
+            --text: #0f172a;
+            --primary: #6366f1;
+            --primary2: #8b5cf6;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --radius: 14px;
+            --radius2: 10px;
+            --shadow: 0 8px 24px rgba(15,23,42,.08);
+            --mono: ui-monospace, Menlo, Monaco, Consolas, monospace;
+            --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+        }
+        
+        * { box-sizing: border-box; }
+        
+        body {
+            margin: 0;
+            font-family: var(--sans);
+            color: var(--text);
+            background: var(--bg);
+        }
+        
+        .app { max-width: 1400px; margin: 0 auto; padding: 16px; }
+        
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+            margin-bottom: 16px;
+        }
+        
+        .panelHeader {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        
+        .panelTitle {
+            font-size: 18px;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary2) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .btn {
+            height: 38px;
+            padding: 0 18px;
+            border-radius: var(--radius2);
+            border: 1px solid var(--border);
+            background: #fff;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        .btn.primary {
+            border-color: transparent;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary2) 100%);
+            color: #fff;
+        }
+        
+        .btn.danger {
+            border-color: #fecaca;
+            background: #fef2f2;
+            color: var(--danger);
+        }
+        
+        .btn.danger:hover {
+            background: #fee2e2;
+        }
+        
+        /* 筛选区域 */
+        .filterSection {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            background: #fafbfc;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+        }
+        
+        .filterGroup {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        
+        .filterLabel {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--muted);
+            text-transform: uppercase;
+        }
+        
+        .filterInput {
+            height: 38px;
+            padding: 0 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius2);
+            font-size: 14px;
+            background: #fff;
+            transition: all 0.2s;
+        }
+        
+        .filterInput:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+        
+        .filterActions {
+            display: flex;
+            gap: 8px;
+            align-items: flex-end;
+        }
+        
+        /* 统计卡片 */
+        .statsGrid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            padding: 20px;
+        }
+        
+        .statCard {
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            border: 1px solid var(--border);
+            border-radius: var(--radius2);
+            padding: 16px;
+            text-align: center;
+        }
+        
+        .statValue {
+            font-size: 32px;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary2) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 4px;
+        }
+        
+        .statLabel {
+            font-size: 13px;
+            color: var(--muted);
+            font-weight: 600;
+        }
+        
+        /* 表格 */
+        .tableContainer {
+            overflow-x: auto;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        
+        th {
+            background: #f8fafc;
+            padding: 12px 16px;
+            text-align: left;
+            font-weight: 700;
+            font-size: 12px;
+            color: var(--muted);
+            text-transform: uppercase;
+            border-bottom: 2px solid var(--border);
+            white-space: nowrap;
+        }
+        
+        td {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+        
+        tr:hover {
+            background: #f8fafc;
+        }
+        
+        /* 状态标签 */
+        .statusBadge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        
+        .statusBadge.success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        
+        .statusBadge.failed {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        .statusDot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+        
+        /* 工具名称 */
+        .toolName {
+            font-family: var(--mono);
+            font-size: 13px;
+            background: #f1f5f9;
+            padding: 4px 8px;
+            border-radius: 6px;
+            display: inline-block;
+        }
+        
+        /* 分页 */
+        .pagination {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            border-top: 1px solid var(--border);
+            background: #fafbfc;
+        }
+        
+        .paginationInfo {
+            font-size: 13px;
+            color: var(--muted);
+        }
+        
+        .paginationControls {
+            display: flex;
+            gap: 8px;
+        }
+        
+        /* 详情弹窗 */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal.active {
+            display: flex;
+        }
+        
+        .modalContent {
+            background: #fff;
+            border-radius: var(--radius);
+            max-width: 900px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        
+        .modalHeader {
+            padding: 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+        }
+        
+        .modalTitle {
+            font-size: 18px;
+            font-weight: 800;
+        }
+        
+        .modalClose {
+            width: 32px;
+            height: 32px;
+            border: none;
+            background: #fff;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+        
+        .modalClose:hover {
+            background: var(--danger);
+            color: #fff;
+        }
+        
+        .modalBody {
+            padding: 20px;
+        }
+        
+        .detailGrid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        
+        .detailItem {
+            background: #f8fafc;
+            padding: 12px;
+            border-radius: var(--radius2);
+            border: 1px solid var(--border);
+        }
+        
+        .detailLabel {
+            font-size: 12px;
+            color: var(--muted);
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+        
+        .detailValue {
+            font-size: 14px;
+            font-weight: 600;
+            word-break: break-all;
+        }
+        
+        .jsonBlock {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 16px;
+            border-radius: var(--radius2);
+            font-family: var(--mono);
+            font-size: 13px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        /* 加载状态 */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: var(--muted);
+        }
+        
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #e2e8f0;
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* 空状态 */
+        .emptyState {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--muted);
+        }
+        
+        .emptyIcon {
+            font-size: 64px;
+            margin-bottom: 16px;
+            opacity: 0.3;
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <div id="shell"></div>
+        
+        <!-- 统计卡片 -->
+        <section class="card">
+            <div class="panelHeader">
+                <div class="panelTitle">📊 审计日志概览</div>
+                <div>
+                    <button id="refreshBtn" class="btn primary" type="button">🔄 刷新</button>
+                    <button id="clearBtn" class="btn danger" type="button">🗑️ 清理旧日志</button>
+                </div>
+            </div>
+            <div class="statsGrid" id="statsGrid">
+                <div class="statCard">
+                    <div class="statValue" id="statTotal">-</div>
+                    <div class="statLabel">总日志数</div>
+                </div>
+                <div class="statCard">
+                    <div class="statValue" id="statSuccessRate">-</div>
+                    <div class="statLabel">成功率</div>
+                </div>
+                <div class="statCard">
+                    <div class="statValue" id="statToday">-</div>
+                    <div class="statLabel">今日日志</div>
+                </div>
+                <div class="statCard">
+                    <div class="statValue" id="statTools">-</div>
+                    <div class="statLabel">工具数量</div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- 筛选区域 -->
+        <section class="card">
+            <div class="panelHeader">
+                <div class="panelTitle">🔍 日志筛选</div>
+            </div>
+            <div class="filterSection">
+                <div class="filterGroup">
+                    <label class="filterLabel">开始时间</label>
+                    <input type="datetime-local" id="filterStartTime" class="filterInput">
+                </div>
+                <div class="filterGroup">
+                    <label class="filterLabel">结束时间</label>
+                    <input type="datetime-local" id="filterEndTime" class="filterInput">
+                </div>
+                <div class="filterGroup">
+                    <label class="filterLabel">操作类型</label>
+                    <select id="filterOperationType" class="filterInput">
+                        <option value="">全部</option>
+                        <option value="tool_call">工具调用</option>
+                        <option value="file_operation">文件操作</option>
+                        <option value="web_operation">网页操作</option>
+                        <option value="system_operation">系统操作</option>
+                    </select>
+                </div>
+                <div class="filterGroup">
+                    <label class="filterLabel">工具名称</label>
+                    <input type="text" id="filterToolName" class="filterInput" placeholder="输入工具名称">
+                </div>
+                <div class="filterGroup">
+                    <label class="filterLabel">状态</label>
+                    <select id="filterStatus" class="filterInput">
+                        <option value="">全部</option>
+                        <option value="success">成功</option>
+                        <option value="failed">失败</option>
+                    </select>
+                </div>
+                <div class="filterGroup">
+                    <label class="filterLabel">关键词</label>
+                    <input type="text" id="filterKeyword" class="filterInput" placeholder="全文搜索">
+                </div>
+                <div class="filterActions">
+                    <button id="searchBtn" class="btn primary" type="button">🔍 搜索</button>
+                    <button id="resetBtn" class="btn" type="button">↺ 重置</button>
+                </div>
+            </div>
+        </section>
+        
+        <!-- 日志列表 -->
+        <section class="card">
+            <div class="panelHeader">
+                <div class="panelTitle">📋 日志列表</div>
+            </div>
+            <div class="tableContainer">
+                <table id="logsTable">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>时间</th>
+                            <th>操作类型</th>
+                            <th>工具名称</th>
+                            <th>任务 ID</th>
+                            <th>状态</th>
+                            <th>耗时 (ms)</th>
+                            <th>用户</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logsTableBody">
+                        <tr>
+                            <td colspan="9" class="loading">
+                                <div class="spinner"></div>
+                                加载中...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="pagination" id="pagination">
+                <div class="paginationInfo" id="paginationInfo">共 0 条记录</div>
+                <div class="paginationControls">
+                    <button id="prevPageBtn" class="btn" type="button">⬅️ 上一页</button>
+                    <button id="nextPageBtn" class="btn" type="button">下一页 ➡️</button>
+                </div>
+            </div>
+        </section>
+    </div>
+    
+    <!-- 详情弹窗 -->
+    <div class="modal" id="detailModal">
+        <div class="modalContent">
+            <div class="modalHeader">
+                <div class="modalTitle">📝 日志详情</div>
+                <button class="modalClose" onclick="closeModal()">×</button>
+            </div>
+            <div class="modalBody" id="modalBody">
+                <!-- 详情内容 -->
+            </div>
+        </div>
+    </div>
+    
+    <script src="/shell.js"></script>
+    <script>renderShell({title:'审计日志'})</script>
+    
+    <script>
+        (function() {
+            // API 基础 URL
+            const API_BASE = '/api/audit-logs';
+            
+            // 当前分页状态
+            let currentPage = 1;
+            let currentPageSize = 50;
+            let currentFilters = {};
+            
+            // 工具函数
+            function el(id) { return document.getElementById(id); }
+            
+            function formatDateTime(isoString) {
+                if (!isoString) return '-';
+                const date = new Date(isoString);
+                return date.toLocaleString('zh-CN', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+            }
+            
+            function formatDuration(ms) {
+                if (ms === null || ms === undefined) return '-';
+                if (ms < 1000) return ms + 'ms';
+                return (ms / 1000).toFixed(2) + 's';
+            }
+            
+            // 加载统计数据
+            async function loadStats() {
+                try {
+                    const response = await fetch(API_BASE + '/stats');
+                    const data = await response.json();
+                    
+                    el('statTotal').textContent = data.total || 0;
+                    el('statSuccessRate').textContent = (data.success_rate || 0) + '%';
+                    el('statToday').textContent = data.total || 0; // 简化处理
+                    el('statTools').textContent = (data.by_operation_type || []).length;
+                } catch (error) {
+                    console.error('加载统计失败:', error);
+                }
+            }
+            
+            // 加载日志列表
+            async function loadLogs() {
+                const tbody = el('logsTableBody');
+                tbody.innerHTML = '<tr><td colspan="9" class="loading"><div class="spinner"></div>加载中...</td></tr>';
+                
+                const params = new URLSearchParams({
+                    page: currentPage,
+                    page_size: currentPageSize
+                });
+                
+                if (currentFilters.start_time) params.append('start_time', currentFilters.start_time);
+                if (currentFilters.end_time) params.append('end_time', currentFilters.end_time);
+                if (currentFilters.operation_type) params.append('operation_type', currentFilters.operation_type);
+                if (currentFilters.tool_name) params.append('tool_name', currentFilters.tool_name);
+                if (currentFilters.status) params.append('status', currentFilters.status);
+                if (currentFilters.keyword) params.append('keyword', currentFilters.keyword);
+                
+                try {
+                    const response = await fetch(API_BASE + '/list?' + params.toString());
+                    const data = await response.json();
+                    
+                    if (data.logs && data.logs.length > 0) {
+                        tbody.innerHTML = data.logs.map(log => `
+                            <tr>
+                                <td><strong>#${log.id}</strong></td>
+                                <td>${formatDateTime(log.timestamp)}</td>
+                                <td>${log.operation_type || '-'}</td>
+                                <td><span class="toolName">${log.tool_name || '-'}</span></td>
+                                <td>${log.task_id !== null ? '#' + log.task_id : '-'}</td>
+                                <td>
+                                    <span class="statusBadge ${log.status}">
+                                        <span class="statusDot"></span>
+                                        ${log.status === 'success' ? '✓ 成功' : '✗ 失败'}
+                                    </span>
+                                </td>
+                                <td>${formatDuration(log.duration_ms)}</td>
+                                <td>${log.user_name || log.user_id || '-'}</td>
+                                <td>
+                                    <button class="btn" onclick="showDetail(${log.id})">📄 详情</button>
+                                </td>
+                            </tr>
+                        `).join('');
+                    } else {
+                        tbody.innerHTML = '<tr><td colspan="9" class="emptyState"><div class="emptyIcon">📭</div>暂无日志数据</td></tr>';
+                    }
+                    
+                    // 更新分页信息
+                    el('paginationInfo').textContent = `共 ${data.total} 条记录，第 ${data.page}/${data.total_pages || 1} 页`;
+                    el('prevPageBtn').disabled = data.page <= 1;
+                    el('nextPageBtn').disabled = data.page >= data.total_pages;
+                    
+                } catch (error) {
+                    console.error('加载日志失败:', error);
+                    tbody.innerHTML = '<tr><td colspan="9" class="emptyState">加载失败，请刷新重试</td></tr>';
+                }
+            }
+            
+            // 显示详情
+            window.showDetail = async function(logId) {
+                const modal = el('detailModal');
+                const modalBody = el('modalBody');
+                modalBody.innerHTML = '<div class="loading"><div class="spinner"></div>加载中...</div>';
+                modal.classList.add('active');
+                
+                try {
+                    const response = await fetch(API_BASE + '/' + logId);
+                    const log = await response.json();
+                    
+                    modalBody.innerHTML = `
+                        <div class="detailGrid">
+                            <div class="detailItem">
+                                <div class="detailLabel">日志 ID</div>
+                                <div class="detailValue">#${log.id}</div>
+                            </div>
+                            <div class="detailItem">
+                                <div class="detailLabel">时间戳</div>
+                                <div class="detailValue">${formatDateTime(log.timestamp)}</div>
+                            </div>
+                            <div class="detailItem">
+                                <div class="detailLabel">操作类型</div>
+                                <div class="detailValue">${log.operation_type || '-'}</div>
+                            </div>
+                            <div class="detailItem">
+                                <div class="detailLabel">工具名称</div>
+                                <div class="detailValue">${log.tool_name || '-'}</div>
+                            </div>
+                            <div class="detailItem">
+                                <div class="detailLabel">任务 ID</div>
+                                <div class="detailValue">${log.task_id !== null ? '#' + log.task_id : '-'}</div>
+                            </div>
+                            <div class="detailItem">
+                                <div class="detailLabel">状态</div>
+                                <div class="detailValue">
+                                    <span class="statusBadge ${log.status}">
+                                        <span class="statusDot"></span>
+                                        ${log.status === 'success' ? '✓ 成功' : '✗ 失败'}
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="detailItem">
+                                <div class="detailLabel">执行耗时</div>
+                                <div class="detailValue">${formatDuration(log.duration_ms)}</div>
+                            </div>
+                            <div class="detailItem">
+                                <div class="detailLabel">用户</div>
+                                <div class="detailValue">${log.user_name || log.user_id || '-'}</div>
+                            </div>
+                        </div>
+                        
+                        ${log.request_data ? `
+                            <div class="detailItem" style="margin-bottom: 16px;">
+                                <div class="detailLabel">请求数据</div>
+                                <div class="jsonBlock">${JSON.stringify(log.request_data, null, 2)}</div>
+                            </div>
+                        ` : ''}
+                        
+                        ${log.response_data ? `
+                            <div class="detailItem" style="margin-bottom: 16px;">
+                                <div class="detailLabel">响应数据</div>
+                                <div class="jsonBlock">${JSON.stringify(log.response_data, null, 2)}</div>
+                            </div>
+                        ` : ''}
+                        
+                        ${log.error_message ? `
+                            <div class="detailItem" style="margin-bottom: 16px;">
+                                <div class="detailLabel">错误信息</div>
+                                <div class="jsonBlock" style="background: #fee2e2; color: #991b1b;">${log.error_message}</div>
+                            </div>
+                        ` : ''}
+                    `;
+                } catch (error) {
+                    console.error('加载详情失败:', error);
+                    modalBody.innerHTML = '<div class="emptyState">加载失败</div>';
+                }
+            };
+            
+            // 关闭弹窗
+            window.closeModal = function() {
+                el('detailModal').classList.remove('active');
+            };
+            
+            // 点击弹窗背景关闭
+            el('detailModal').addEventListener('click', function(e) {
+                if (e.target === this) closeModal();
+            });
+            
+            // 搜索
+            function doSearch() {
+                currentPage = 1;
+                currentFilters = {
+                    start_time: el('filterStartTime').value,
+                    end_time: el('filterEndTime').value,
+                    operation_type: el('filterOperationType').value,
+                    tool_name: el('filterToolName').value,
+                    status: el('filterStatus').value,
+                    keyword: el('filterKeyword').value
+                };
+                loadLogs();
+            }
+            
+            // 事件绑定
+            el('refreshBtn').addEventListener('click', function() {
+                loadStats();
+                loadLogs();
+            });
+            
+            el('searchBtn').addEventListener('click', doSearch);
+            
+            el('resetBtn').addEventListener('click', function() {
+                el('filterStartTime').value = '';
+                el('filterEndTime').value = '';
+                el('filterOperationType').value = '';
+                el('filterToolName').value = '';
+                el('filterStatus').value = '';
+                el('filterKeyword').value = '';
+                currentFilters = {};
+                currentPage = 1;
+                loadLogs();
+            });
+            
+            el('prevPageBtn').addEventListener('click', function() {
+                if (currentPage > 1) {
+                    currentPage--;
+                    loadLogs();
+                }
+            });
+            
+            el('nextPageBtn').addEventListener('click', function() {
+                currentPage++;
+                loadLogs();
+            });
+            
+            el('clearBtn').addEventListener('click', function() {
+                if (confirm('确定要清理 30 天前的日志吗？此操作不可恢复。')) {
+                    fetch(API_BASE + '/clear?older_than_days=30', { method: 'DELETE' })
+                        .then(res => res.json())
+                        .then(data => {
+                            alert('已清理 ' + data.deleted_count + ' 条日志');
+                            loadStats();
+                            loadLogs();
+                        })
+                        .catch(err => alert('清理失败：' + err));
+                }
+            });
+            
+            // 初始化
+            loadStats();
+            loadLogs();
+        })();
+    </script>
+</body>
+</html>

@@ -105,27 +105,105 @@ class StandardizedTool(BaseTool):
     scope: str
 
     def _run(self, *args, **kwargs):
+        import time
         payload = kwargs if kwargs else (args[0] if args else {})
         if not isinstance(payload, dict):
             payload = {"input": payload}
+        
+        start_time = time.time()
+        audit_logger = None
+        try:
+            from app.integrations.audit_logger import get_audit_logger
+            audit_logger = get_audit_logger()
+        except Exception:
+            pass
+        
         try:
             result = self.inner_tool.invoke(payload)
+            duration_ms = int((time.time() - start_time) * 1000)
+            
+            # 记录成功日志
+            if audit_logger:
+                try:
+                    audit_logger.log_tool_call(
+                        tool_name=self.name,
+                        request_data=payload,
+                        response_data=result if isinstance(result, dict) else {"result": str(result)},
+                        duration_ms=duration_ms
+                    )
+                except Exception:
+                    pass  # 审计日志失败不影响主流程
+            
         except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            
+            # 记录失败日志
+            if audit_logger:
+                try:
+                    audit_logger.log_tool_call(
+                        tool_name=self.name,
+                        request_data=payload,
+                        error=e,
+                        duration_ms=duration_ms
+                    )
+                except Exception:
+                    pass  # 审计日志失败不影响主流程
+            
             _emit_event(self.name, "error", scope=self.scope, error=str(e))
             return _error_payload("tool_exception", str(e), tool=self.name, scope=self.scope)
+        
         normalized = _normalize_result(result, self.name, self.scope)
         _emit_event(self.name, "invoke", scope=self.scope, ok=normalized.get("ok"))
         return normalized
 
     async def _arun(self, *args, **kwargs):
+        import time
         payload = kwargs if kwargs else (args[0] if args else {})
         if not isinstance(payload, dict):
             payload = {"input": payload}
+        
+        start_time = time.time()
+        audit_logger = None
+        try:
+            from app.integrations.audit_logger import get_audit_logger
+            audit_logger = get_audit_logger()
+        except Exception:
+            pass
+        
         try:
             result = await self.inner_tool.ainvoke(payload)
+            duration_ms = int((time.time() - start_time) * 1000)
+            
+            # 记录成功日志
+            if audit_logger:
+                try:
+                    audit_logger.log_tool_call(
+                        tool_name=self.name,
+                        request_data=payload,
+                        response_data=result if isinstance(result, dict) else {"result": str(result)},
+                        duration_ms=duration_ms
+                    )
+                except Exception:
+                    pass  # 审计日志失败不影响主流程
+            
         except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            
+            # 记录失败日志
+            if audit_logger:
+                try:
+                    audit_logger.log_tool_call(
+                        tool_name=self.name,
+                        request_data=payload,
+                        error=e,
+                        duration_ms=duration_ms
+                    )
+                except Exception:
+                    pass  # 审计日志失败不影响主流程
+            
             _emit_event(self.name, "error", scope=self.scope, error=str(e))
             return _error_payload("tool_exception", str(e), tool=self.name, scope=self.scope)
+        
         normalized = _normalize_result(result, self.name, self.scope)
         _emit_event(self.name, "invoke", scope=self.scope, ok=normalized.get("ok"))
         return normalized
@@ -176,7 +254,7 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
     Returns:
         List[BaseTool]: 加载到的所有 Tool 实例列表
     """
-    def _load_from_package(pkg_name: str) -> List[BaseTool]:
+    def _load_from_package(pkg_name: str, wrap_tools: bool = False) -> List[BaseTool]:
         tools = []
         if auto_package_name and pkg_name == auto_package_name:
             # 强制清理父包缓存，确保 pkgutil 能扫描到新目录
@@ -185,8 +263,6 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
             importlib.invalidate_caches()
         try:
             package = importlib.import_module(pkg_name)
-            # if auto_package_name and pkg_name == auto_package_name:
-            #      print(f"Registry: Loaded package {pkg_name} from {package.__file__ if hasattr(package, '__file__') else 'unknown'}")
         except ImportError as e:
             print(f"Warning: Could not import package {pkg_name}: {e}")
             return []
@@ -199,7 +275,6 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
             for _, module_name, is_pkg in pkgutil.iter_modules(package.__path__):
                 if not is_pkg:
                     continue
-                # print(f"Registry: Scanning potential skill {module_name}")
                 entry = None
                 for base_path in base_paths:
                     skill_md_path = os.path.join(base_path, module_name, "skill.md")
@@ -213,7 +288,6 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
                     packages_to_scan.append(f"{pkg_name}.{module_name}.scripts")
 
         for scripts_package in packages_to_scan:
-            # print(f"Registry: Processing scripts package {scripts_package}")
             if auto_package_name and pkg_name == auto_package_name:
                 prefixes = [scripts_package]
                 if scripts_package.endswith(".scripts"):
@@ -232,26 +306,25 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
                 continue
             
             if hasattr(scripts_module, "__path__"):
-                # print(f"Registry: Scanning modules in {scripts_package}")
                 for _, module_name, _ in pkgutil.iter_modules(scripts_module.__path__):
                     full_module_name = f"{scripts_package}.{module_name}"
-                    # print(f"Registry: Found script module {full_module_name}")
                     try:
                         module = importlib.import_module(full_module_name)
                         found_tools = 0
                         for name, obj in inspect.getmembers(module):
                             if isinstance(obj, BaseTool):
-                                tools.append(obj)
+                                tool = _wrap_auto_tool(obj, "skills") if wrap_tools else obj
+                                tools.append(tool)
                                 found_tools += 1
                             elif inspect.isclass(obj) and issubclass(obj, BaseTool) and obj is not BaseTool:
                                 try:
-                                    tools.append(obj())
+                                    instance = obj()
+                                    tool = _wrap_auto_tool(instance, "skills") if wrap_tools else instance
+                                    tools.append(tool)
                                     found_tools += 1
                                 except Exception:
                                     pass
                         if found_tools == 0:
-                            # print(f"Registry: Loaded {found_tools} tools from {full_module_name}")
-                        # else:
                             print(f"Registry: No tools found in {full_module_name}")
                     except Exception as e:
                         print(f"Registry Warning: Failed to load module {full_module_name}: {e}")
@@ -260,10 +333,13 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
                     module = importlib.import_module(scripts_package)
                     for name, obj in inspect.getmembers(module):
                         if isinstance(obj, BaseTool):
-                            tools.append(obj)
+                            tool = _wrap_auto_tool(obj, "skills") if wrap_tools else obj
+                            tools.append(tool)
                         elif inspect.isclass(obj) and issubclass(obj, BaseTool) and obj is not BaseTool:
                             try:
-                                tools.append(obj())
+                                instance = obj()
+                                tool = _wrap_auto_tool(instance, "skills") if wrap_tools else instance
+                                tools.append(tool)
                             except Exception:
                                 pass
                 except Exception:
@@ -271,9 +347,10 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
         return tools
 
     tools = []
-    tools.extend(_load_from_package(package_name))
+    # 包装普通 skills 中的工具
+    tools.extend(_load_from_package(package_name, wrap_tools=True))
     if auto_package_name and auto_package_name != package_name:
-        auto_tools = _load_from_package(auto_package_name)
+        auto_tools = _load_from_package(auto_package_name, wrap_tools=True)
         tools.extend([_wrap_auto_tool(t, "auto_skills") for t in auto_tools])
 
     # 去重 (根据 name)

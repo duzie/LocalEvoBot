@@ -17,6 +17,8 @@ if not (os.getenv("HF_HOME") or "").strip():
 
 from web.backend.routers import logs, chat, config, skills
 
+from web.backend.routers import audit_logs
+
 app = FastAPI(title="LangChain Agent Web Console")
 
 # CORS
@@ -50,6 +52,8 @@ app.include_router(logs.router, prefix="/api/logs", tags=["logs"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(config.router, prefix="/api/config", tags=["config"])
 app.include_router(skills.router, prefix="/api/skills", tags=["skills"])
+
+app.include_router(audit_logs.router, prefix="/api/audit-logs", tags=["audit-logs"])
 
 def _prewarm_experience_store():
     try:
