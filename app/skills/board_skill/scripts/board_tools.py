@@ -6,7 +6,7 @@ import re
 import time
 import hashlib
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 from typing import Dict, Any, List, Optional, Type
 from app.agent import create_llm
 from app.skills.registry import load_skills
@@ -552,9 +552,19 @@ def _collect_tools_for_skills(skill_names: List[str]) -> List[str]:
     return list(dict.fromkeys(all_tools))
 
 def _filter_tools(tools, allowlist: List[str]):
+    # 始终允许的基础系统工具
+    always_allowed = {
+        "search_short_term_memory", 
+        "inspect_environment", 
+        "get_current_time",
+        "save_document",
+        "read_document"
+    }
+    
     if not allowlist:
         return tools
-    allowed = set([t for t in allowlist if t])
+        
+    allowed = set([t for t in allowlist if t]) | always_allowed
     return [t for t in tools if getattr(t, "name", "") in allowed]
 
 def _build_role_prompt(role_name: str, role_prompt: str) -> str:
@@ -731,6 +741,7 @@ def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", t
                         log_text = f"\n< Observation: {str(observation)}\n"
                         _append_role_log(role_name, log_text)
 
+            text = chunk.get("output")
             if text is None:
                 continue
             
@@ -1114,6 +1125,13 @@ def add_board_workflow(name: str, steps: List[Dict[str, Any]]) -> Dict[str, Any]
         normalized = []
         for idx, step in enumerate(steps):
             data = step or {}
+            # 兼容 params 嵌套的情况
+            if "params" in data and isinstance(data["params"], dict):
+                params = data["params"]
+                for k, v in params.items():
+                    if k not in data:
+                        data[k] = v
+            
             title = str(data.get("title") or data.get("task_input") or f"步骤 {idx + 1}").strip()
             role_name = str(data.get("role_name") or data.get("owner") or "").strip()
             task_input = str(data.get("task_input") or data.get("input") or "").strip()
@@ -1806,46 +1824,61 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
                     task_id=int(payload.get("task_id") or 0)
                 )
                 futures[future] = meta
-            for future in as_completed(futures):
-                meta = futures[future]
-                payload = meta["task"]
-                try:
-                    result = future.result()
-                    task_id = payload.get("task_id")
-                    if task_id:
-                        append_board_task_output.invoke({
-                            "task_id": int(task_id),
-                            "output": result.get("output") or "",
-                            "output_type": "role_result"
-                        })
-                        task = _get_task_by_id(board_snapshot, int(task_id)) if board_snapshot else None
-                        current_status = _normalize_status((task or {}).get("status") or "")
-                        should_update = current_status != "已完成"
-                        desired_status = None
-                        if result.get("stopped"):
-                            desired_status = "待处理"
-                            stopped_found = True
-                        elif result.get("ok"):
-                            desired_status = payload.get("status_after") or status_after
-                        else:
-                            desired_status = "需返工"
-                        if desired_status and should_update:
-                            update_board_task.invoke({
+            
+            # 使用 wait 和超时机制，以便及时响应停止请求
+            while futures:
+                if shared.stop_requested:
+                    stopped_found = True
+                    # 取消所有剩余任务
+                    for f in futures:
+                        f.cancel()
+                    break
+
+                done, _ = wait(list(futures.keys()), return_when=FIRST_COMPLETED, timeout=0.5)
+                if not done:
+                    continue
+
+                for future in done:
+                    meta = futures[future]
+                    del futures[future]
+                    payload = meta["task"]
+                    try:
+                        result = future.result()
+                        task_id = payload.get("task_id")
+                        if task_id:
+                            append_board_task_output.invoke({
                                 "task_id": int(task_id),
-                                "status": desired_status
+                                "output": result.get("output") or "",
+                                "output_type": "role_result"
                             })
-                    if result.get("ok"):
-                        success_count += 1
-                        results.append({"ok": True, "index": meta["index"], "result": result})
-                    elif result.get("stopped"):
-                        results.append({"ok": False, "stopped": True, "index": meta["index"], "result": result})
-                    else:
+                            task = _get_task_by_id(board_snapshot, int(task_id)) if board_snapshot else None
+                            current_status = _normalize_status((task or {}).get("status") or "")
+                            should_update = current_status != "已完成"
+                            desired_status = None
+                            if result.get("stopped"):
+                                desired_status = "待处理"
+                                stopped_found = True
+                            elif result.get("ok"):
+                                desired_status = payload.get("status_after") or status_after
+                            else:
+                                desired_status = "需返工"
+                            if desired_status and should_update:
+                                update_board_task.invoke({
+                                    "task_id": int(task_id),
+                                    "status": desired_status
+                                })
+                        if result.get("ok"):
+                            success_count += 1
+                            results.append({"ok": True, "index": meta["index"], "result": result})
+                        elif result.get("stopped"):
+                            results.append({"ok": False, "stopped": True, "index": meta["index"], "result": result})
+                        else:
+                            error_count += 1
+                            results.append({"ok": False, "index": meta["index"], "result": result})
+                    except Exception as e:
                         error_count += 1
-                        results.append({"ok": False, "index": meta["index"], "result": result})
-                except Exception as e:
-                    error_count += 1
-                    shared.set_error(str(e))
-                    results.append({"ok": False, "index": meta["index"], "error": str(e), "task": payload})
+                        shared.set_error(str(e))
+                        results.append({"ok": False, "index": meta["index"], "error": str(e), "task": payload})
         if stopped_found or shared.stop_requested:
             shared.clear_stop()
             shared.set_status("stopped", "已停止", "")
