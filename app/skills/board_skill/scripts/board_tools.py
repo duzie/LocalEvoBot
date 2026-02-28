@@ -283,7 +283,7 @@ def _board_exists() -> bool:
 
 def _message_timeout_tick():
     try:
-        process_board_message_timeouts()
+        process_board_message_timeouts.invoke({})
     except Exception:
         return
 
@@ -291,7 +291,7 @@ heartbeat.register_task("board_message_timeouts", _message_timeout_tick, interva
 
 def _board_health_tick():
     try:
-        check_and_notify_board_health()
+        check_and_notify_board_health.invoke({})
     except Exception:
         return
 
@@ -299,7 +299,7 @@ heartbeat.register_task("board_health_check", _board_health_tick, interval=300, 
 
 def _workflow_tick():
     try:
-        process_board_workflows()
+        process_board_workflows.invoke({})
     except Exception:
         return
 
@@ -697,6 +697,9 @@ def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", t
         max_execution_time=effective_max_time
     )
     _append_role_event(role_name, "start", role=role_name, workdir=wd)
+    # 强制写入一条初始日志，确保日志文件创建，从而使前端能识别到该角色
+    _append_role_log(role_name, f"=== Agent {role_name} Started ===\nTask: {task_input}\nWorkdir: {wd}\n\n")
+    
     started_at = time.monotonic()
     raw_output = ""
     try:
@@ -709,11 +712,32 @@ def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", t
                 shared.set_status("stopped", "已停止", task_input)
                 _append_role_event(role_name, "stopped", role=role_name)
                 return _error_payload("stopped", "已停止", stopped=True, role=role_name, output=raw_output)
+            
             if not isinstance(chunk, dict):
                 continue
+                
+            # 捕获中间步骤（AgentAction）
+            if "actions" in chunk:
+                for action in chunk["actions"]:
+                    log_text = f"\n> Action: {action.tool}\n> Input: {action.tool_input}\n"
+                    _append_role_log(role_name, log_text)
+                    
+            # 捕获工具输出（Observation）
+            if "steps" in chunk:
+                for step in chunk["steps"]:
+                    # step 是 (AgentAction, observation) 元组
+                    if isinstance(step, (list, tuple)) and len(step) >= 2:
+                        observation = step[1]
+                        log_text = f"\n< Observation: {str(observation)}\n"
+                        _append_role_log(role_name, log_text)
+
             text = chunk.get("output")
             if text is None:
                 continue
+            
+            # 处理最终输出的增量更新
+            # 注意：LangChain 的 stream output 有时是全量，有时是增量，取决于 LLM
+            # 这里沿用原有逻辑，假设是全量覆盖或增量追加
             if text.startswith(raw_output):
                 delta = text[len(raw_output):]
                 raw_output = text
@@ -1511,7 +1535,7 @@ def check_and_notify_board_health(dead_threshold: int = 10, target: str = "admin
     board = _load_board_locked()
     if not board:
         return _error_payload("board_missing", "公告板尚未创建")
-    health = get_board_message_health()
+    health = get_board_message_health.invoke({})
     if not health.get("ok"):
         return health
     dead_count = int(health.get("dead_messages") or 0)
