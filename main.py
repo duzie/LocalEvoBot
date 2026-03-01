@@ -73,6 +73,8 @@ def _select_skill_allowlist(user_input: str) -> List[str]:
         skills.add("windows_task_skill")
     if has_any(["计算", "calculator", "算一下"]):
         skills.add("utility_skill")
+    if has_any(["音频", "录音", "转写", "听写", "语音", ".mp3", ".wav", ".m4a", ".flac"]):
+        skills.add("audio_transcribe_skill")
     return sorted(skills)
 
 def _wa_gateway_base_url():
@@ -533,12 +535,19 @@ def _load_recent_tool_traces(project_id: str, user_id: str, since_iso: str, limi
     if not os.path.exists(path):
         return ""
     safe_limit = max(1, min(int(limit or 12), 50))
+    since_dt = None
+    try:
+        if since_iso:
+            since_dt = datetime.fromisoformat(str(since_iso).replace("Z", "+00:00"))
+    except Exception:
+        since_dt = None
+
     conn = sqlite3.connect(path)
     try:
         cur = conn.cursor()
         rows = cur.execute(
-            "SELECT content FROM short_term_messages WHERE role = ? AND project_id = ? AND user_id = ? AND created_at >= ? ORDER BY id DESC LIMIT ?",
-            ("tool", project_id or "", user_id or "", since_iso or "", safe_limit),
+            "SELECT content FROM short_term_messages WHERE role = ? AND project_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?",
+            ("tool", project_id or "", user_id or "", 200),
         ).fetchall()
     except Exception:
         rows = []
@@ -554,8 +563,18 @@ def _load_recent_tool_traces(project_id: str, user_id: str, since_iso: str, limi
         try:
             payload = json.loads(text)
         except Exception:
-            items.append(text)
+            if since_dt is None:
+                items.append(text)
             continue
+        if since_dt is not None:
+            t_raw = payload.get("time")
+            if t_raw:
+                try:
+                    t_dt = datetime.fromisoformat(str(t_raw).replace("Z", "+00:00"))
+                    if t_dt < since_dt:
+                        continue
+                except Exception:
+                    pass
         event = payload.get("event") or ""
         tool = payload.get("tool") or payload.get("tool_name") or ""
         hint = ""
@@ -575,6 +594,8 @@ def _load_recent_tool_traces(project_id: str, user_id: str, since_iso: str, limi
             items.append(f"- {event} {tool}: {hint}")
         else:
             items.append(f"- {event} {tool}".strip())
+    if safe_limit and len(items) > safe_limit:
+        items = items[-safe_limit:]
     return "\n".join(items).strip()
 
 def parse_state(output: str):
@@ -1024,15 +1045,18 @@ def _format_template_for_prompt(template):
     return "\n".join(parts)
 
 def _get_task_experiences(user_input, project_id, user_id):
-    raw = get_operation_experience.invoke({
-        "query": user_input,
-        "n_results": 3,
-        "scope": "project",
-        "project_id": project_id,
-        "user_id": user_id,
-        "memory_type": "task"
-    })
-    results = _parse_template_results(raw) if isinstance(raw, str) else []
+    try:
+        raw = get_operation_experience.invoke({
+            "query": user_input,
+            "n_results": 3,
+            "scope": "project",
+            "project_id": project_id,
+            "user_id": user_id,
+            "memory_type": "task"
+        })
+        results = _parse_template_results(raw) if isinstance(raw, str) else []
+    except Exception:
+        results = []
     experiences = []
     for item in results:
         content = item.get("content")
@@ -1113,15 +1137,18 @@ def _template_matches_input(template, user_input):
 def _maybe_apply_template(user_input, project_id, user_id):
     if _should_skip_template(user_input):
         return user_input
-    raw = get_operation_experience.invoke({
-        "query": user_input,
-        "n_results": 3,
-        "scope": "project",
-        "project_id": project_id,
-        "user_id": user_id,
-        "memory_type": "task_template"
-    })
-    results = _parse_template_results(raw) if isinstance(raw, str) else []
+    try:
+        raw = get_operation_experience.invoke({
+            "query": user_input,
+            "n_results": 3,
+            "scope": "project",
+            "project_id": project_id,
+            "user_id": user_id,
+            "memory_type": "task_template"
+        })
+        results = _parse_template_results(raw) if isinstance(raw, str) else []
+    except Exception:
+        results = []
     template = _select_template(results)
     if not template:
         return user_input
@@ -1526,14 +1553,19 @@ def main():
                 if reload_requested:
                     try:
                         if tool_router_enabled and current_skill_allowlist:
-                            agent_executor = create_agent_executor(skill_allowlist=current_skill_allowlist)
+                            agent_executor = create_agent_executor(skill_allowlist=current_skill_allowlist, callbacks=tool_trace_callbacks)
                         else:
-                            agent_executor = create_agent_executor()
+                            agent_executor = create_agent_executor(callbacks=tool_trace_callbacks)
                         summary_llm = create_llm()
                         print("Agent: 已重载技能\n")
                         chat_history.append(("system", "系统消息：技能热加载已完成。"))
                         trace = _load_recent_tool_traces(project_id, user_id, step_started_at, limit=14)
                         trace_block = f"\n\n已发生的工具轨迹（不要重复）：\n{trace}" if trace else ""
+                        if trace:
+                            trace_text = trace
+                            if len(trace_text) > 5000:
+                                trace_text = trace_text[:5000] + "\n...(truncated)..."
+                            chat_history.append(("system", "系统消息：上一轮工具轨迹（不要重复）：\n" + trace_text))
                         auto_input = (
                             "系统消息：技能热加载已完成。请继续执行上一轮未完成的任务，不要重复创建已存在的技能/目录/文件。"
                             "如果你不确定新技能是否已创建成功，优先通过 inspect_environment 或检查目录确认；"

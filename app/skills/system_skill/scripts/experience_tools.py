@@ -77,6 +77,8 @@ def _init_short_term_db(date_key: str = None):
 
 def _init_components():
     global _VECTOR_STORE, _EMBEDDINGS
+    if _VECTOR_STORE is False:
+        return None
     if _VECTOR_STORE is not None:
         return _VECTOR_STORE
 
@@ -86,26 +88,30 @@ def _init_components():
     except ImportError as e:
         print(f"RAG Dependency Import Error: {e}")
         return None # Should handle gracefully or let it fail at runtime if deps missing
-
-    if _EMBEDDINGS is None:
-        # Use lightweight local model
-        _EMBEDDINGS = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-
-    db_path = _get_db_path()
-    _VECTOR_STORE = Chroma(
-        persist_directory=db_path,
-        embedding_function=_EMBEDDINGS,
-        collection_name="agent_experiences"
-    )
-    
-    # Auto-migration check
     try:
-        if len(_VECTOR_STORE.get()['ids']) == 0 and os.path.exists(_get_json_path()):
-            _migrate_from_json()
-    except Exception as e:
-        print(f"DB Init/Migration warning: {e}")
+        if _EMBEDDINGS is None:
+            _EMBEDDINGS = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
-    return _VECTOR_STORE
+        db_path = _get_db_path()
+        _VECTOR_STORE = Chroma(
+            persist_directory=db_path,
+            embedding_function=_EMBEDDINGS,
+            collection_name="agent_experiences"
+        )
+
+        try:
+            data = _VECTOR_STORE.get()
+            ids = data.get("ids") if isinstance(data, dict) else None
+            if ids is not None and len(ids) == 0 and os.path.exists(_get_json_path()):
+                _migrate_from_json()
+        except Exception as e:
+            print(f"DB Init/Migration warning: {e}")
+
+        return _VECTOR_STORE
+    except Exception as e:
+        _VECTOR_STORE = False
+        print(f"RAG init failed, fallback to JSON store: {e}")
+        return None
 
 def _load_json_store():
     path = _get_json_path()

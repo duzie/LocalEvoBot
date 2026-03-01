@@ -61,8 +61,23 @@ def _prewarm_experience_store():
         if project_root not in sys.path:
             sys.path.append(project_root)
         t0 = time.time()
+        local_only = _truthy_env("RAG_PREWARM_LOCAL_ONLY", "1")
+        old_env = None
+        if local_only:
+            old_env = {
+                "HF_HUB_OFFLINE": os.getenv("HF_HUB_OFFLINE"),
+                "TRANSFORMERS_OFFLINE": os.getenv("TRANSFORMERS_OFFLINE"),
+            }
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            os.environ["TRANSFORMERS_OFFLINE"] = "1"
         from app.skills.system_skill.scripts import experience_tools
         experience_tools._init_components()
+        if old_env is not None:
+            for k, v in old_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
         dt_ms = int((time.time() - t0) * 1000)
         print(f"RAG warmup done ({dt_ms}ms)")
     except Exception as e:

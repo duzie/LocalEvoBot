@@ -551,15 +551,37 @@ def _collect_tools_for_skills(skill_names: List[str]) -> List[str]:
                 all_tools.extend(_split_tools_from_skill_md(md_path))
     return list(dict.fromkeys(all_tools))
 
-def _filter_tools(tools, allowlist: List[str]):
-    # 始终允许的基础系统工具
-    always_allowed = {
-        "search_short_term_memory", 
-        "inspect_environment", 
+def _allow_all_tools_for_subagents() -> bool:
+    v = os.getenv("BOARD_SUBAGENT_ALL_TOOLS")
+    s = str(v).strip().lower() if v is not None else ""
+    return s not in {"", "0", "false", "no", "off"}
+
+def _always_allowed_tools() -> set:
+    return {
+        "search_short_term_memory",
+        "inspect_environment",
         "get_current_time",
         "save_document",
-        "read_document"
+        "read_document_part",
+        "search_document",
     }
+
+def _infer_skills_allowlist(task_input: str) -> List[str]:
+    text = str(task_input or "").lower()
+    skills = {"system_skill", "board_skill"}
+    if any(k in text for k in ["ppt", "演示", "幻灯", "powerpoint"]):
+        skills.add("ppt_gen_skill")
+    if any(k in text for k in ["音频", "录音", "转写", "听写", "语音", ".mp3", ".wav", ".m4a", ".flac"]):
+        skills.add("audio_transcribe_skill")
+    if any(k in text for k in ["读取", "read", "打开文件", "查找", "search", ".py", ".md", ".txt"]):
+        skills.add("document_skill")
+    return sorted(skills)
+
+def _filter_tools(tools, allowlist: List[str]):
+    always_allowed = _always_allowed_tools()
+    
+    if _allow_all_tools_for_subagents():
+        return tools
     
     if not allowlist:
         return tools
@@ -688,6 +710,13 @@ def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", t
         tools = [_wrap_tool_with_workdir(t, wd) for t in tools]
     allow = tools_allowlist or []
     allow.extend(_collect_tools_for_skills(skills_allowlist or []))
+    if not _allow_all_tools_for_subagents():
+        always_allowed = _always_allowed_tools()
+        allow_clean = [t for t in (allow or []) if t]
+        looks_like_only_base = bool(allow) and (not allow_clean or all(t in always_allowed for t in allow_clean))
+        if looks_like_only_base:
+            inferred = _infer_skills_allowlist(task_input)
+            allow.extend(_collect_tools_for_skills(inferred))
     tools = _filter_tools(tools, allow)
     prompt_extra = _build_role_prompt(role_name, role_prompt)
     prompt = get_agent_prompt(tools, prompt_extra if prompt_extra else None)
