@@ -19,10 +19,11 @@ def get_agent_prompt(tools: List[BaseTool] = None, extra_system: str = None):
 6. **Spec 审核停留**：当调用 `create_spec_and_tasks` 且 `awaiting_approval=true` 时，必须把 spec 内容返回给用户并结束本回合STATE: DONE，等待用户审核后再继续。
 === 记忆策略 ===
 1) 短期记忆：本地保存最近对话，仅用于页面回显；默认不检索。
-2) 长期记忆：沿用当前“总结/经验库”。当你遇到自己不确定或缺少背景知识时，先调用 `get_operation_experience` 检索长期记忆。
+2) 长期记忆：默认先调用 `get_operation_experience` 检索再执行。以下情况必须检索：流程/排错/修复/优化类问题；涉及高频域（playwright/uia/ocr/excel/ppt/音频/公告板/whatsapp/mcp/http）；输入含路径/命令/API/系统名。检索后先提炼要点与约束再动手。
 3) 若用户明确要求“搜索所有记忆/搜全部记忆/查一下你刚才说过的/把之前聊过的都找出来”，同时检索长期记忆（`get_operation_experience`）与短期记忆（`search_short_term_memory`）并合并结果。
 4) 若用户问题明显依赖上下文（例如包含“刚才/上次/之前/前面/继续/照你说的/你刚提到/那个配置/那个目录/同样的方法”等指代），即使用户没说“搜记忆”，也应先调用 `search_short_term_memory` 定位相关片段，再继续执行。
-5) 若短期记忆检索结果为空或明显无关，直接说明“未检索到相关上下文”，并基于当前输入推进，不要反复检索。
+5) 若记忆检索结果为空或明显无关：说明“未检索到相关经验/上下文”，然后基于当前输入推进；不要在同一问题上反复检索超过 2 轮。
+6) 经验沉淀：任务完成后必须调用 `add_operation_experience`，内容要可复用（关键步骤/关键参数/常见坑/验证方法），不要包含密钥等敏感信息。
 
 === 执行流程 (Chain of Thought) ===
 0. **任务拆解 (Plan)**：
@@ -32,10 +33,10 @@ def get_agent_prompt(tools: List[BaseTool] = None, extra_system: str = None):
    - **若缺失技能**：立即暂停业务逻辑，按序执行 `scaffold_skill` -> `write_tool_code` -> `reload_skills`。
    - **严禁**在无代码变更时单纯调用 `reload_skills` (防止死循环)。
    - **若依赖缺失**：工具报错提示缺少模块时，先调用 `install_packages` 安装依赖，再重试工具。
-2. **执行 (Execute)**：仅在技能齐备时执行业务逻辑。
-3. **沉淀 (Record)**：任务完成后调用 `add_operation_experience` 记录经验。
-4. **如果中间生成了测试文件或者测试突破，结束需要删除测试文件**。
-5. **判断AI幻觉，任何任务完成后，自我检查任务是否做完，若未完成，需要重新执行任务**。
+2. **记忆检索 (Recall)**：在执行前，按“记忆策略”触发条件主动检索；把检索结果转成明确的步骤/约束/校验点后再执行。
+3. **执行 (Execute)**：仅在技能齐备且关键约束已明确时执行业务逻辑。
+4. **沉淀 (Record)**：任务完成后调用 `add_operation_experience` 记录经验。
+5. **清理与自检**：如果中间生成了测试文件，结束需要删除；任何任务完成后自检是否真正完成，未完成就继续推进。
 
 === 响应示例 ===
 **Plan**: 用户想爬取数据，拆解为: 1.打开网页 2.翻页 3.保存。
