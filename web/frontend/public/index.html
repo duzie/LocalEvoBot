@@ -150,7 +150,7 @@
     <script>
         (function(){
             function el(id){return document.getElementById(id)}
-            var state = {chatConnected:false,logConnected:false,chatWs:null,logWs:null,modelCurrent:'doubao',modelOptions:[],lastAgentBubble:null,lastAgentContent:'',auxCapture:false,isSending:false,isRunning:false,stopPending:false,confirmTimer:null,confirmCountdown:null,roleLogs:[],roleLogSelected:''}
+            var state = {chatConnected:false,logConnected:false,chatWs:null,logWs:null,modelCurrent:'doubao',modelOptions:[],lastAgentBubble:null,lastAgentContent:'',lastPrintedMsg:'',auxCapture:false,isSending:false,isRunning:false,stopPending:false,confirmTimer:null,confirmCountdown:null,roleLogs:[],roleLogSelected:''}
 
             function setOnline(online){
                 var dot = el('statusDot')
@@ -461,8 +461,14 @@
                         appendAuxMessage(msg.replace(/\r/g, ''))
                         return
                     }
+                    var newMsg = msg.replace(/\r/g, '')
+                    // 去重检查：只跳过完全相同的消息（防止网络重试导致重复）
+                    if (state.lastPrintedMsg && state.lastPrintedMsg === newMsg){
+                        return
+                    }
+                    state.lastPrintedMsg = newMsg
                     var near = isNearBottom(el('chatList'))
-                    state.lastAgentContent = (state.lastAgentContent || '') + msg
+                    state.lastAgentContent = (state.lastAgentContent || '') + newMsg
                     renderAgentBubble(state.lastAgentBubble, state.lastAgentContent)
                     if (near) el('chatList').scrollTop = el('chatList').scrollHeight
                     return
