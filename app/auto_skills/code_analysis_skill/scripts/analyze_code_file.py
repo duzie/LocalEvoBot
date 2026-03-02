@@ -1,7 +1,8 @@
 from langchain_core.tools import tool
 import os
+import ast
 import re
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 
 @tool
 def analyze_code_file(file_path: str, file_type: Optional[str] = None) -> Dict[str, Any]:
@@ -10,7 +11,7 @@ def analyze_code_file(file_path: str, file_type: Optional[str] = None) -> Dict[s
     
     Args:
         file_path: 代码文件路径
-        file_type: 文件类型：cs, aspx, ashx, js等
+        file_type: 文件类型：py, cs, aspx, ashx, js等
         
     Returns:
         包含分析结果的字典
@@ -22,7 +23,9 @@ def analyze_code_file(file_path: str, file_type: Optional[str] = None) -> Dict[s
         # 如果未指定文件类型，从扩展名推断
         if file_type is None:
             ext = os.path.splitext(file_path)[1].lower()
-            if ext == '.cs':
+            if ext == '.py':
+                file_type = 'py'
+            elif ext == '.cs':
                 file_type = 'cs'
             elif ext == '.aspx':
                 file_type = 'aspx'
@@ -49,12 +52,15 @@ def analyze_code_file(file_path: str, file_type: Optional[str] = None) -> Dict[s
             "methods": [],
             "api_endpoints": [],
             "imports": [],
+            "global_variables": [],
             "comments": [],
             "summary": ""
         }
         
         # 根据文件类型进行不同分析
-        if file_type == 'cs':
+        if file_type == 'py':
+            result.update(_analyze_python_file(content))
+        elif file_type == 'cs':
             result.update(_analyze_csharp_file(content))
         elif file_type == 'aspx':
             result.update(_analyze_aspx_file(content))
@@ -68,7 +74,11 @@ def analyze_code_file(file_path: str, file_type: Optional[str] = None) -> Dict[s
         # 提取API端点
         api_endpoints = _extract_api_endpoints_from_content(content, file_type)
         if api_endpoints:
-            result["api_endpoints"] = api_endpoints
+            # 如果已有api_endpoints (如从Python装饰器提取的)，则合并
+            existing_endpoints = set(result.get("api_endpoints", []))
+            for ep in api_endpoints:
+                if ep not in existing_endpoints:
+                    result["api_endpoints"].append(ep)
         
         # 生成摘要
         result["summary"] = _generate_summary(result)
@@ -77,6 +87,113 @@ def analyze_code_file(file_path: str, file_type: Optional[str] = None) -> Dict[s
         
     except Exception as e:
         return {"success": False, "error": str(e), "file_path": file_path}
+
+def _analyze_python_file(content: str) -> Dict[str, Any]:
+    """
+    使用 AST 分析 Python 文件
+    """
+    result = {
+        "classes": [],
+        "methods": [], # 顶层函数
+        "imports": [],
+        "global_variables": [],
+        "api_endpoints": [] # 特别提取 FastAPI/Flask 路由
+    }
+    
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return result # 解析失败返回空结果
+        
+    # 辅助函数：提取函数信息
+    def extract_func_info(node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> str:
+        args = []
+        for arg in node.args.args:
+            arg_str = arg.arg
+            if arg.annotation:
+                # 简单尝试获取类型注解的源码表示
+                try:
+                    arg_str += f": {ast.unparse(arg.annotation)}"
+                except:
+                    pass
+            args.append(arg_str)
+        
+        # 处理 kwargs, varargs
+        if node.args.vararg:
+            args.append(f"*{node.args.vararg.arg}")
+        if node.args.kwarg:
+            args.append(f"**{node.args.kwarg.arg}")
+            
+        returns = ""
+        if node.returns:
+            try:
+                returns = f" -> {ast.unparse(node.returns)}"
+            except:
+                pass
+                
+        decorators = [f"@{ast.unparse(d)}" for d in node.decorator_list]
+        decorator_str = " ".join(decorators) + " " if decorators else ""
+        
+        return f"{decorator_str}def {node.name}({', '.join(args)}){returns}"
+
+    # 遍历节点
+    for node in ast.iter_fields(tree):
+        # 处理 Imports
+        # ast.iter_fields 返回的是字段名和值的元组，我们需要遍历 tree.body
+        pass
+
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            try:
+                result["imports"].append(ast.unparse(node))
+            except:
+                pass
+                
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            result["methods"].append(extract_func_info(node))
+            
+            # 尝试提取 API 路由 (FastAPI/Flask)
+            for decorator in node.decorator_list:
+                try:
+                    dec_src = ast.unparse(decorator)
+                    # 简单匹配常见的路由模式
+                    if any(x in dec_src for x in ['.get', '.post', '.put', '.delete', '.route', 'router.']):
+                        result["api_endpoints"].append(f"{dec_src} -> {node.name}")
+                except:
+                    pass
+                    
+        elif isinstance(node, ast.ClassDef):
+            bases = []
+            for base in node.bases:
+                try:
+                    bases.append(ast.unparse(base))
+                except:
+                    pass
+            base_str = f"({', '.join(bases)})" if bases else ""
+            
+            class_info = f"class {node.name}{base_str}"
+            methods = []
+            
+            # 提取类方法
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    methods.append(extract_func_info(item))
+            
+            if methods:
+                class_info += ":\n    " + "\n    ".join(methods)
+                
+            result["classes"].append(class_info)
+            
+        elif isinstance(node, ast.Assign):
+            # 提取全局变量赋值
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    result["global_variables"].append(target.id)
+        elif isinstance(node, ast.AnnAssign):
+             if isinstance(node.target, ast.Name):
+                result["global_variables"].append(node.target.id)
+                
+    return result
 
 def _analyze_csharp_file(content: str) -> Dict[str, Any]:
     """分析C#文件"""

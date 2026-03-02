@@ -82,7 +82,8 @@ PYTHON_EDIT_RULES = """
 === Python 代码编辑 ===
 1) **Python 文件修改必须优先使用 `python_code_edit`**，它基于 AST 语法树，能自动处理缩进和语法检查。
 2) 禁止使用正则表达式或全量覆盖修改 Python 代码。
-3) 修改后必须运行 `validate_code_syntax` 检查语法。
+3) **Linter 检查**：`python_code_edit` 会自动运行 Linter。如果返回警告（如未定义变量），**必须立即修复**，不要忽略。
+4) 修改后必须运行 `validate_code_syntax` 检查语法。
 """
 
 # --- JSON 编辑 ---
@@ -144,14 +145,22 @@ DESKTOP_RULES = """
 # --- 代码分析 ---
 CODE_ANALYSIS_RULES = """
 === 代码分析流程 ===
-1) 只要进入代码/项目分析，必须先调用 get_project_skeleton 获取/生成骨架缓存。
-2) 再根据用户输入做精确匹配（关键词 + 语义），锁定候选文件。
-3) 只深读最核心的 1~3 处代码，形成调用链与行为理解。
-4) 在核心阅读基础上给结论/风险/建议，避免泛泛总结。
-5) 目录模块地图需要本地缓存：
+1) **编辑前必读**：在准备修改任何代码文件前，**必须先调用 `analyze_code_file`** 获取准确的函数签名、类定义和依赖关系。禁止凭猜测或记忆修改函数参数。
+2) 只要进入代码/项目分析，必须先调用 get_project_skeleton 获取/生成骨架缓存。
+3) 再根据用户输入做精确匹配（关键词 + 语义），锁定候选文件。
+4) 只深读最核心的 1~3 处代码，形成调用链与行为理解。
+5) 在核心阅读基础上给结论/风险/建议，避免泛泛总结。
+6) 目录模块地图需要本地缓存：
    - 缓存路径：app/data/project_skeleton/<hash>.json
    - 读缓存优先；缺失或用户要求重建时再更新
-6) 若加载了 project_skeleton_skill，优先使用 get_project_skeleton 的缓存流程与输出格式。
+7) 若加载了 project_skeleton_skill，优先使用 get_project_skeleton 的缓存流程与输出格式。
+"""
+
+# --- Linter 规则 ---
+LINTER_RULES = """
+=== 代码质量控制 (Linter) ===
+1) **主动检查**：在完成代码修改后，如果觉得有风险，主动调用 `run_linter` 检查文件。
+2) **修复原则**：对于 Linter 报错（如 F821 Undefined name），必须修复，确保代码可运行。
 """
 
 # --- 多 Agent 协作 ---
@@ -233,6 +242,10 @@ def _load_rules_for_tools(tool_names: List[str]) -> str:
     if any(n in analysis_tools for n in tool_names):
         rules.append(CODE_ANALYSIS_RULES)
     
+    # Linter (新增)
+    if any(n in ("run_linter",) for n in tool_names):
+        rules.append(LINTER_RULES)
+        
     # 多 Agent 协作
     if any(n in ("run_role_agent", "run_role_agents_parallel") for n in tool_names):
         rules.append(BOARD_RULES)

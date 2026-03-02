@@ -44,6 +44,10 @@ def _get_node_source_range(content: str, node):
     
     return start_byte, end_byte
 
+import subprocess
+import sys
+import json
+
 @tool
 def python_code_edit(
     file_path: str,
@@ -143,13 +147,43 @@ def python_code_edit(
             
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(new_content)
+        
+        # 8. 运行轻量级 Linter 检查 (Ruff)
+        linter_warnings = []
+        try:
+            # 尝试调用 ruff
+            cmd = [sys.executable, "-m", "ruff", "check", file_path, "--output-format", "json", "--select", "E,F,W"]
+            result_proc = subprocess.run(cmd, capture_output=True, text=True)
+            if result_proc.stdout:
+                try:
+                    errors = json.loads(result_proc.stdout)
+                    for err in errors:
+                        # 只关注替换区域附近的错误，或者严重的语法/未定义错误
+                        err_line = err.get("location", {}).get("row", 0)
+                        # 简单起见，返回所有错误，让 Agent 自己判断
+                        linter_warnings.append({
+                            "line": err_line,
+                            "message": err.get("message", ""),
+                            "code": err.get("code", "")
+                        })
+                except:
+                    pass
+        except Exception:
+            pass
             
-        return {
+        result = {
             "success": True, 
             "message": f"成功替换 {name}",
             "original_range": [start, end],
             "new_length": len(new_code)
         }
+        
+        if linter_warnings:
+            result["linter_warnings"] = linter_warnings
+            result["message"] += f" (注意: Linter 发现 {len(linter_warnings)} 个潜在问题，请检查是否引入了错误)"
+            
+        return result
+
         
     except Exception as e:
         return {"success": False, "error": f"执行出错: {str(e)}"}

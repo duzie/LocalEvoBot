@@ -112,46 +112,123 @@ def _error_payload(code: str, message: str, **fields) -> Dict[str, Any]:
         payload[str(k)] = v
     return payload
 
+import ast
+import re
+
+def _extract_symbols_from_file(file_path: str) -> Dict[str, List[str]]:
+    """提取文件中的关键符号（类、函数、变量）"""
+    symbols = {"classes": [], "functions": [], "variables": []}
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        
+        ext = os.path.splitext(file_path)[1].lower()
+        
+        if ext == '.py':
+            try:
+                tree = ast.parse(content)
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ClassDef):
+                        symbols["classes"].append(node.name)
+                    elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        # 只提取顶层函数或类方法，忽略内部函数
+                        symbols["functions"].append(node.name)
+                    elif isinstance(node, ast.Assign):
+                        for target in node.targets:
+                            if isinstance(target, ast.Name):
+                                # 全局变量通常大写
+                                if target.id.isupper():
+                                    symbols["variables"].append(target.id)
+            except:
+                pass
+                
+        elif ext in ['.js', '.ts', '.jsx', '.tsx']:
+            # 简单正则提取 JS/TS 符号
+            symbols["classes"].extend(re.findall(r'class\s+(\w+)', content))
+            symbols["functions"].extend(re.findall(r'function\s+(\w+)', content))
+            symbols["functions"].extend(re.findall(r'const\s+(\w+)\s*=\s*\(', content)) # arrow functions
+            symbols["variables"].extend(re.findall(r'export\s+const\s+(\w+)', content))
+
+        elif ext == '.cs':
+            symbols["classes"].extend(re.findall(r'class\s+(\w+)', content))
+            symbols["functions"].extend(re.findall(r'(?:public|private|protected|internal)\s+(?:static\s+)?(?:[\w\.<>\[\]]+\s+)?(\w+)\s*\(', content))
+
+    except Exception:
+        pass
+        
+    # 去重并限制数量
+    return {k: sorted(list(set(v)))[:20] for k, v in symbols.items()}
+
 def _build_skeleton(root_path: str, max_depth: int, include_hidden: bool, max_entries: int):
     root_path = os.path.abspath(root_path)
     entries: List[Dict[str, Any]] = []
     top_dirs: List[str] = []
     entrypoints: List[str] = []
-    entrypoint_names = {
-        "main.py",
-        "app.py",
-        "requirements.txt",
-        "pyproject.toml",
-        "package.json",
-        "README.md",
+    
+    # 关键文件模式
+    important_patterns = {
+        'main.py', 'app.py', 'index.js', 'server.js', 'Program.cs', 'Startup.cs',
+        'requirements.txt', 'package.json', 'go.mod', 'Cargo.toml', 'pom.xml',
+        'README.md', 'Dockerfile', 'docker-compose.yml'
     }
-    extra_entrypoints = {
-        os.path.join("gateway", "index.js"),
-        os.path.join("web", "backend", "main.py"),
-        os.path.join("web", "frontend", "public", "index.html"),
-    }
+    
+    # 遍历
     for current, dirs, files in os.walk(root_path):
-        rel = os.path.relpath(current, root_path)
-        depth = 0 if rel == "." else rel.count(os.sep) + 1
+        rel_dir = os.path.relpath(current, root_path)
+        if rel_dir == ".":
+            rel_dir = ""
+            
+        # 深度检查
+        depth = 0 if not rel_dir else rel_dir.count(os.sep) + 1
         if depth > max_depth:
+            # 仍然要清空 dirs 以阻止 os.walk 深入
             dirs[:] = []
             continue
+            
+        # 隐藏文件过滤
         if not include_hidden:
             dirs[:] = [d for d in dirs if not d.startswith(".")]
             files = [f for f in files if not f.startswith(".")]
+            
+        # 记录顶层目录
         if depth == 0:
-            top_dirs.extend([d for d in dirs if d not in top_dirs])
-        for d in dirs:
-            entries.append({"path": os.path.join(rel, d).replace("\\", "/"), "type": "dir", "depth": depth})
-            if len(entries) >= max_entries:
-                return entries, top_dirs, entrypoints
+            top_dirs.extend(dirs)
+            
+        # 处理文件
         for f in files:
-            rel_path = os.path.join(rel, f).replace("\\", "/")
-            entries.append({"path": rel_path, "type": "file", "depth": depth})
-            if f in entrypoint_names or rel_path in extra_entrypoints:
+            file_path = os.path.join(current, f)
+            rel_path = os.path.join(rel_dir, f).replace("\\", "/")
+            
+            # 判断是否重要
+            is_important = f in important_patterns or \
+                           rel_path.endswith('/__init__.py') or \
+                           'api' in rel_path.lower() or \
+                           'model' in rel_path.lower() or \
+                           'service' in rel_path.lower() or \
+                           'controller' in rel_path.lower()
+                           
+            entry = {
+                "path": rel_path,
+                "type": "file",
+                "depth": depth,
+                "size": os.path.getsize(file_path)
+            }
+            
+            # 如果是重要文件或代码文件，提取符号
+            ext = os.path.splitext(f)[1].lower()
+            if is_important or ext in ['.py', '.js', '.ts', '.cs', '.java', '.go', '.rs']:
+                symbols = _extract_symbols_from_file(file_path)
+                if any(symbols.values()):
+                    entry["symbols"] = symbols
+            
+            entries.append(entry)
+            
+            if is_important:
                 entrypoints.append(rel_path)
+                
             if len(entries) >= max_entries:
                 return entries, top_dirs, entrypoints
+                
     return entries, top_dirs, entrypoints
 
 @tool
