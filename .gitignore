@@ -11,6 +11,7 @@ venv/
 *.txt
 /app/data
 *.png
+*.bak
 moltbook_documentation_saved.pptx
 moltbook_skill_documentation.md
 moltbook_documentation_no_images.pptx
