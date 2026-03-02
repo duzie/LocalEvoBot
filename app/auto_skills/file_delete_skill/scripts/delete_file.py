@@ -1,22 +1,37 @@
+import json
 from langchain_core.tools import tool
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 
 @tool
-def delete_file(file_path: Optional[str] = None, file_paths: Optional[List[str]] = None) -> Dict[str, Any]:
+def delete_file(file_path: Optional[str] = None, file_paths: Optional[Union[List[str], str]] = None) -> Dict[str, Any]:
     """
     删除指定文件或文件列表。
 
     Args:
         file_path: 单个文件路径
-        file_paths: 文件路径列表
+        file_paths: 文件路径列表 (支持 List[str] 或 JSON 字符串)
     """
     targets: List[str] = []
     if file_path:
         targets.append(file_path)
+    
     if file_paths:
-        targets.extend([p for p in file_paths if p])
+        if isinstance(file_paths, str):
+            try:
+                # 尝试解析 JSON 字符串
+                parsed = json.loads(file_paths)
+                if isinstance(parsed, list):
+                    targets.extend([str(p) for p in parsed if p])
+                else:
+                    # 如果不是列表，当做单个路径
+                    targets.append(file_paths)
+            except json.JSONDecodeError:
+                # 解析失败，当做单个路径
+                targets.append(file_paths)
+        elif isinstance(file_paths, list):
+            targets.extend([str(p) for p in file_paths if p])
 
     if not targets:
         return {
