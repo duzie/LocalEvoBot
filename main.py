@@ -13,6 +13,7 @@ import subprocess
 import shutil
 import atexit
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import List, Set
 from web.backend.main import start as start_web_server
@@ -1252,6 +1253,30 @@ def _summarize_text(llm, transcript_text, existing_summary=None, summary_kind="�
     new_summary = getattr(resp, "content", "") or str(resp)
     return new_summary.strip()
 
+class AsyncSummaryContext:
+    def __init__(self):
+        self.executor = ThreadPoolExecutor(max_workers=1)
+        self.future = None
+        self.summarizing_messages = []
+
+_SUMMARY_CTX = AsyncSummaryContext()
+
+def _do_summarize_task(llm, older_messages, current_long, current_stage, max_stage_chars):
+    transcript = _format_history_for_summary(older_messages)
+    new_stage = _summarize_text(llm, transcript, current_stage, "阶段")
+    new_long = current_long
+
+    if new_long:
+        if len(new_stage) > max_stage_chars:
+            new_long = _summarize_text(llm, new_stage, new_long, "长期")
+            new_stage = None
+    else:
+        if len(new_stage) > max_stage_chars:
+            new_long = _summarize_text(llm, new_stage, None, "长期")
+            new_stage = None
+            
+    return new_long, new_stage
+
 def maybe_summarize_history(chat_history, llm, max_recent_turns=8, max_stage_chars=1200, max_total_chars=70000, max_message_chars=12000):
     summaries, non_summary = _extract_summaries(chat_history)
     long_summary = summaries.get("long")
@@ -1277,6 +1302,47 @@ def maybe_summarize_history(chat_history, llm, max_recent_turns=8, max_stage_cha
             clipped = list(reversed(keep))
         return clipped
 
+    # Check for completed async summary
+    if _SUMMARY_CTX.future and _SUMMARY_CTX.future.done():
+        try:
+            new_long, new_stage = _SUMMARY_CTX.future.result()
+            # Update local summaries with new ones
+            long_summary = new_long
+            stage_summary = new_stage
+            
+            # Remove summarized messages from non_summary if they match prefix
+            # We iterate and remove messages that are identical to what we summarized
+            idx = 0
+            limit = len(_SUMMARY_CTX.summarizing_messages)
+            while idx < limit and non_summary:
+                # Compare roles and content (content might be None)
+                msg_to_remove = _SUMMARY_CTX.summarizing_messages[idx]
+                current_msg = non_summary[0]
+                
+                # Check equality carefully
+                if msg_to_remove == current_msg:
+                    non_summary.pop(0)
+                    idx += 1
+                else:
+                    # Mismatch found (maybe messages were dropped or modified), stop removing
+                    break
+            
+            print(f">>> 系统: 后台总结完成，已归档 {idx} 条消息")
+        except Exception as e:
+            print(f">>> 系统: 后台总结失败: {e}")
+        finally:
+            _SUMMARY_CTX.future = None
+            _SUMMARY_CTX.summarizing_messages = []
+
+    # If summary is running, just return current state (clipped)
+    if _SUMMARY_CTX.future:
+        history = []
+        if long_summary:
+            history.append(("system", f"对话摘要（长期）：\n{long_summary}"))
+        if stage_summary:
+            history.append(("system", f"对话摘要（阶段）：\n{stage_summary}"))
+        return _clip_history(history + non_summary)
+
     chunk_size = max_recent_turns * 2
     if len(non_summary) <= chunk_size:
         history = []
@@ -1286,27 +1352,30 @@ def maybe_summarize_history(chat_history, llm, max_recent_turns=8, max_stage_cha
             history.append(("system", f"对话摘要（阶段）：\n{stage_summary}"))
         return _clip_history(history + non_summary)
 
+    # Start new async summary
     older = non_summary[:-chunk_size]
     recent = non_summary[-chunk_size:]
+    
+    print(f">>> 系统: 启动后台总结，处理 {len(older)} 条消息...")
+    _SUMMARY_CTX.summarizing_messages = list(older) # Copy list
+    _SUMMARY_CTX.future = _SUMMARY_CTX.executor.submit(
+        _do_summarize_task, 
+        llm, 
+        older, 
+        long_summary, 
+        stage_summary, 
+        max_stage_chars
+    )
 
-    transcript = _format_history_for_summary(older)
-    stage_summary = _summarize_text(llm, transcript, stage_summary, "阶段")
-
-    if long_summary:
-        if len(stage_summary) > max_stage_chars:
-            long_summary = _summarize_text(llm, stage_summary, long_summary, "长期")
-            stage_summary = None
-    else:
-        if len(stage_summary) > max_stage_chars:
-            long_summary = _summarize_text(llm, stage_summary, None, "长期")
-            stage_summary = None
-
+    # Return current state (clipped), including the messages being summarized 
+    # (they will be removed next time)
     history = []
     if long_summary:
         history.append(("system", f"对话摘要（长期）：\n{long_summary}"))
     if stage_summary:
         history.append(("system", f"对话摘要（阶段）：\n{stage_summary}"))
-    return _clip_history(history + recent)
+    
+    return _clip_history(history + non_summary)
 
 def enable_dpi_awareness():
     if platform.system() != "Windows":
