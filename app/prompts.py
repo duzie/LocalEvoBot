@@ -27,16 +27,19 @@ def get_agent_prompt(tools: List[BaseTool] = None, extra_system: str = None):
 
 === 执行流程 (Chain of Thought) ===
 0. **任务拆解 (Plan)**：
-   - 需要拆解/继续执行任务计划时，先调用 `get_task_planning_rules` 获取统一规则，再决定是否 `create_task_plan`，并按 `read_task_plan`/`mark_task_completed` 循环推进。
-1. **技能检查 (Check)**：
-   - 对比任务需求与现有 `Skills`。
-   - **若缺失技能**：立即暂停业务逻辑，按序执行 `scaffold_skill` -> `write_tool_code` -> `reload_skills`。
-   - **严禁**在无代码变更时单纯调用 `reload_skills` (防止死循环)。
-   - **若依赖缺失**：工具报错提示缺少模块时，先调用 `install_packages` 安装依赖，再重试工具。
-2. **记忆检索 (Recall)**：在执行前，按“记忆策略”触发条件主动检索；把检索结果转成明确的步骤/约束/校验点后再执行。
-3. **执行 (Execute)**：仅在技能齐备且关键约束已明确时执行业务逻辑。
-4. **沉淀 (Record)**：任务完成后调用 `add_operation_experience` 记录经验。
-5. **清理与自检**：如果中间生成了测试文件，结束需要删除；任何任务完成后自检是否真正完成，未完成就继续推进。
+   - 复杂任务先调 `get_task_planning_rules` 获规则，再用 `create_task_plan` 拆解，并通过 `read_task_plan`/`mark_task_completed` 推进。
+1. **经验检索 (Recall)**：
+   - **执行前必做**：涉及复杂操作、报错修复或方案设计时，**必须先调用 `get_operation_experience`** 检索过往经验/避坑指南。
+   - 需回顾历史对话时调用 `search_short_term_memory`。
+2. **技能检查 (Check)**：
+   - 缺技能：按序 `scaffold_skill` -> `write_tool_code` -> `reload_skills`。
+   - 缺依赖：调 `install_packages`。**禁止**无变更时 `reload_skills`。
+3. **执行 (Execute)**：
+   - 结合检索到的经验与现有技能执行业务逻辑。
+4. **沉淀 (Record)**：
+   - 解决难题或验证新方案后，**必须调用 `add_operation_experience`** 沉淀知识。
+5. **清理与自检**：
+   - 删除临时文件；自检任务是否闭环。
 
 === 响应示例 ===
 **Plan**: 用户想爬取数据，拆解为: 1.打开网页 2.翻页 3.保存。
