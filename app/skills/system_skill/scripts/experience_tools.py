@@ -86,7 +86,12 @@ def _init_short_term_db(date_key: str = None):
 
 def _init_components():
     global _VECTOR_STORE, _EMBEDDINGS
-    if _VECTOR_STORE is False:
+    if _VECTOR_STORE is False: # Keep check for False if we want to support permanent disablement, but initialization error should likely not be permanent False unless desired. 
+        # Actually, let's keep False as "attempted and failed, don't retry" signal, but ensure the exception handler sets it to False properly if that is the intent.
+        # The user reported "_type" error, which usually comes from Pydantic/Chroma validation if something is wrong.
+        # The error message "RAG init failed, fallback to JSON store: '_type'" suggests 'e' is a KeyError: '_type' or similar during Chroma init.
+        # This often happens if the persist directory exists but is corrupted or incompatible.
+        # Let's add a try-except around Chroma init specifically to handle corruption.
         return None
     if _VECTOR_STORE is not None:
         return _VECTOR_STORE
@@ -96,17 +101,40 @@ def _init_components():
         from langchain_huggingface import HuggingFaceEmbeddings
     except ImportError as e:
         print(f"RAG Dependency Import Error: {e}")
-        return None # Should handle gracefully or let it fail at runtime if deps missing
+        return None 
     try:
         if _EMBEDDINGS is None:
             _EMBEDDINGS = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
         db_path = _get_db_path()
-        _VECTOR_STORE = Chroma(
-            persist_directory=db_path,
-            embedding_function=_EMBEDDINGS,
-            collection_name="agent_experiences"
-        )
+        try:
+            _VECTOR_STORE = Chroma(
+                persist_directory=db_path,
+                embedding_function=_EMBEDDINGS,
+                collection_name="agent_experiences"
+            )
+        except Exception as e:
+            if "_type" in str(e) or "sqlite" in str(e).lower():
+                print(f"RAG DB Corrupted, attempting reset: {e}")
+                import shutil
+                import time
+                if os.path.exists(db_path):
+                    for i in range(3):
+                        try:
+                            shutil.rmtree(db_path)
+                            break
+                        except Exception as rm_err:
+                            if i == 2:
+                                print(f"Failed to remove corrupted DB after retries: {rm_err}")
+                                raise rm_err
+                            time.sleep(1)
+                _VECTOR_STORE = Chroma(
+                    persist_directory=db_path,
+                    embedding_function=_EMBEDDINGS,
+                    collection_name="agent_experiences"
+                )
+            else:
+                raise e
 
         try:
             data = _VECTOR_STORE.get()
@@ -118,7 +146,7 @@ def _init_components():
 
         return _VECTOR_STORE
     except Exception as e:
-        _VECTOR_STORE = False
+        _VECTOR_STORE = None # Set to None instead of False to allow retries or graceful degradation
         print(f"RAG init failed, fallback to JSON store: {e}")
         return None
 
