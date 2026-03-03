@@ -21,7 +21,7 @@ app.skills.board_skill.scripts
 - append_board_task_output: 追加任务产物
 - list_board_tasks: 任务筛选
 - create_board_tasks_from_spec: Spec 生成任务
-- create_spec_and_tasks: 自动生成 Spec 与任务
+- create_spec_and_tasks: 自动生成 Spec 与任务（p0_features 为空时自动 LLM 拆解任务）
 - approve_spec: 审批 Spec 并可选执行
 - add_board_workflow: 创建工作流
 - list_board_workflows: 查询工作流

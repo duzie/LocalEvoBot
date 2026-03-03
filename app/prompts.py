@@ -172,10 +172,16 @@ LINTER_RULES = """
 # --- 多 Agent 协作 ---
 BOARD_RULES = """
 === 多 Agent 协作（公告板）===
-1) 只要调用 run_role_agent / run_role_agents_parallel，必须显式给出 workdir 或 output_dir，并与用户指定的"工作目录/目标目录"一致；禁止让子 Agent 默认落到当前项目目录。
-2) 子 Agent 运行终端命令（run_shell_command）时，除非明确需要其他目录，否则一律传 cwd=workdir（或 cwd=output_dir），保证相对路径稳定。
-3) 文件产物（代码/脚本/数据/截图）统一写到 workdir（或 output_dir）下，避免散落到项目目录。
-4) 若用户未指定工作目录：优先使用环境变量 AGENT_WORKDIR（若存在）；否则使用公告板默认输出目录。
+1) **自动触发阈值**：当任务满足以下任一条件时，**必须**使用多 Agent 协作（`create_board` -> `add_board_role` -> `create_spec_and_tasks`）：
+   - **步骤数 > 5**：任务拆解后步骤超过 5 步。
+   - **多角色需求**：明确需要前端、后端、测试等不同角色配合。
+   - **跨领域/复杂项目**：涉及全栈开发、大型重构、或用户明确要求“做一个系统/项目”。
+2) **单 Agent 场景**：简单的代码修改、Bug 修复、单一脚本编写、查询类任务，**禁止**滥用多 Agent，直接执行即可。
+3) **协作规范**：
+   - 只要调用 run_role_agent / run_role_agents_parallel，必须显式给出 workdir 或 output_dir。
+   - 子 Agent 运行终端命令时，除非明确需要其他目录，否则一律传 cwd=workdir。
+   - 文件产物统一写到 workdir 下。
+   - 若用户未指定工作目录：优先使用环境变量 AGENT_WORKDIR。
 """
 
 # =============================================================================
@@ -252,10 +258,6 @@ def _load_rules_for_tools(tool_names: List[str]) -> str:
     if any(n in ("run_linter",) for n in tool_names):
         rules.append(LINTER_RULES)
         
-    # 多 Agent 协作
-    if any(n in ("run_role_agent", "run_role_agents_parallel") for n in tool_names):
-        rules.append(BOARD_RULES)
-    
     return "\n".join(rules)
 
 
@@ -276,7 +278,7 @@ def get_agent_prompt(tools: List[BaseTool] = None, extra_system: str = None):
         ChatPromptTemplate: LangChain 提示词模板
     """
     # 始终加载的核心部分
-    base_prompt = CORE_PRINCIPLES + MEMORY_STRATEGY + EXECUTION_FLOW + RESPONSE_EXAMPLE
+    base_prompt = CORE_PRINCIPLES + MEMORY_STRATEGY + EXECUTION_FLOW + BOARD_RULES + RESPONSE_EXAMPLE
     
     # 动态加载模块规则
     tool_names = _get_tool_names(tools)

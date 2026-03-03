@@ -1559,7 +1559,7 @@ def main():
                     "chat_history": chat_history
                 }):
                     if shared.stop_requested:
-                        shared.clear_stop()
+                        # shared.clear_stop() # 不要清除，外层需要感知
                         shared.set_status("stopped", "已停止", auto_input)
                         print(">>> 系统: 状态=已停止")
                         stopped_found = True

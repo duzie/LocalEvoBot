@@ -6,7 +6,7 @@ import re
 import time
 import hashlib
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, List, Optional, Type
 from app.agent import create_llm
 from app.skills.registry import load_skills
@@ -1028,12 +1028,32 @@ def create_board_tasks_from_spec(spec_id: str, spec_summary: str, p0_features: L
     return _update_board_locked(_update)
 
 @tool
-def create_spec_and_tasks(summary: str, p0_features: List[Dict[str, Any]], owner: str = "spec_agent", goal: str = "", user_scenario: str = "", steps: List[str] = None, success_outcome: str = "", constraints: List[str] = None, auto_start: bool = False, max_workers: int = 3) -> Dict[str, Any]:
+def create_spec_and_tasks(summary: str, p0_features: List[Dict[str, Any]] = None, owner: str = "spec_agent", goal: str = "", user_scenario: str = "", steps: List[str] = None, success_outcome: str = "", constraints: List[str] = None, auto_start: bool = False, max_workers: int = 3) -> Dict[str, Any]:
     """
     自动生成精简 Spec 并创建任务，可选自动执行。
+    
+    Args:
+        summary: 任务描述
+        p0_features: P0 功能列表（可选，为空时自动拆解任务）
+        owner: 负责人
+        goal: 目标
+        user_scenario: 用户场景
+        steps: 步骤列表
+        success_outcome: 成功结果
+        constraints: 约束条件
+        auto_start: 是否自动开始执行
+        max_workers: 最大并发数
     """
     if not str(summary or "").strip():
         return _error_payload("summary_empty", "summary 不能为空")
+    
+    # 如果 p0_features 为空，自动调用 LLM 拆解任务
+    if not p0_features:
+        decompose_result = _auto_decompose_task(summary)
+        if not decompose_result.get("ok"):
+            return decompose_result
+        p0_features = decompose_result.get("p0_features", [])
+    
     spec_id = f"SPEC-{int(time.time())}"
     content = _render_simple_spec(
         spec_id=spec_id,
@@ -1094,7 +1114,8 @@ def create_spec_and_tasks(summary: str, p0_features: List[Dict[str, Any]], owner
         "spec_content": content,
         "tasks": result.get("tasks") or [],
         "auto_start": bool(auto_start),
-        "awaiting_approval": not bool(auto_start)
+        "awaiting_approval": not bool(auto_start),
+        "auto_decomposed": not bool(p0_features)
     }
 
 @tool
@@ -1719,7 +1740,7 @@ def run_role_agent(role_name: str, task_input: str, role_prompt: str = "", tools
         current_status = _normalize_status((task or {}).get("status") or "")
         should_update = current_status != "已完成"
         if result.get("stopped"):
-            shared.clear_stop()
+            # shared.clear_stop() # 不要清除
             if should_update:
                 update_board_task.invoke({"task_id": task_id, "status": "待处理"})
         elif result.get("ok"):
@@ -1909,7 +1930,7 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
                         shared.set_error(str(e))
                         results.append({"ok": False, "index": meta["index"], "error": str(e), "task": payload})
         if stopped_found or shared.stop_requested:
-            shared.clear_stop()
+            # shared.clear_stop() # 不要清除，让上层感知
             shared.set_status("stopped", "已停止", "")
             break
         pending = blocked
@@ -1923,3 +1944,166 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
         "stopped": stopped_found,
         "results": results
     }
+
+
+
+
+def _auto_decompose_task(summary: str) -> Dict[str, Any]:
+    """
+    使用 LLM 自动拆解任务，生成 p0_features 列表。
+    
+    Args:
+        summary: 任务描述
+        
+    Returns:
+        包含 p0_features 的字典，格式：{"ok": True, "p0_features": [...]}
+        或错误信息：{"ok": False, "error": "..."}
+    """
+    if not str(summary or "").strip():
+        return _error_payload("summary_empty", "任务描述不能为空")
+    
+    # 预定义角色列表
+    available_roles = [
+        "产品分析师",
+        "开发工程师",
+        "测试工程师",
+        "数据分析师",
+        "运维工程师",
+        "技术文档工程师",
+        "UI/UX 设计师",
+        "执行工程师"
+    ]
+    
+    roles_str = "、".join(available_roles)
+    
+    prompt = f"""你是一个专业的任务拆解专家。请分析以下任务，将其拆解成多个可并行的子任务。
+
+任务描述：
+{summary}
+
+请为每个子任务指定：
+1. title: 任务标题（简洁描述，20 字以内）
+2. owner: 负责人角色（从以下角色中选择最合适的：{roles_str}）
+3. acceptance: 验收标准（具体可验证的成果）
+4. deps: 依赖的任务 ID 列表（如果没有依赖，填空数组 []）
+
+返回 JSON 数组格式，例如：
+[
+    {{
+        "title": "需求分析与 PRD 文档",
+        "owner": "产品分析师",
+        "acceptance": "完成 PRD 文档，包含用户故事、功能列表和验收标准",
+        "deps": []
+    }},
+    {{
+        "title": "数据库设计",
+        "owner": "开发工程师",
+        "acceptance": "完成数据库表结构设计，包含 ER 图和建表 SQL",
+        "deps": [1]
+    }},
+    {{
+        "title": "后端 API 开发",
+        "owner": "开发工程师",
+        "acceptance": "完成 RESTful API 开发，通过单元测试",
+        "deps": [2]
+    }}
+]
+
+要求：
+1. 子任务数量根据任务复杂度决定（简单任务 2-3 个，复杂任务 5-8 个）
+2. 合理分配角色，不要所有任务都分配给同一个角色
+3. 正确识别任务依赖关系（如：开发依赖设计，测试依赖开发）
+4. 验收标准要具体可验证
+
+只返回 JSON 数组，不要包含其他文字说明。"""
+
+    try:
+        # 调用 LLM（使用 run_role_agent 的简化方式）
+        from app.skills.board_skill.scripts.board_tools import _invoke_llm_simple
+        
+        response_text = _invoke_llm_simple(prompt, max_tokens=2000)
+        
+        if not response_text:
+            return _error_payload("llm_empty_response", "LLM 返回为空")
+        
+        # 尝试解析 JSON
+        import json
+        import re
+        
+        # 提取 JSON 数组（处理可能的 Markdown 格式）
+        json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
+        if json_match:
+            json_str = json_match.group()
+        else:
+            json_str = response_text
+        
+        p0_features = json.loads(json_str)
+        
+        if not isinstance(p0_features, list):
+            return _error_payload("invalid_format", "LLM 返回的不是数组格式")
+        
+        # 验证每个任务的格式
+        validated_features = []
+        for i, feature in enumerate(p0_features):
+            if not isinstance(feature, dict):
+                continue
+            
+            title = feature.get("title", f"任务{i+1}")
+            owner = feature.get("owner", "执行工程师")
+            acceptance = feature.get("acceptance", "完成任务")
+            deps = feature.get("deps", [])
+            
+            # 验证角色是否合法
+            if owner not in available_roles:
+                owner = "执行工程师"
+            
+            # 验证 deps 是否为数字列表
+            if not isinstance(deps, list):
+                deps = []
+            else:
+                deps = [int(d) for d in deps if isinstance(d, (int, float))]
+            
+            validated_features.append({
+                "title": str(title),
+                "owner": str(owner),
+                "acceptance": str(acceptance),
+                "deps": deps
+            })
+        
+        if not validated_features:
+            return _error_payload("no_valid_features", "未生成有效的子任务")
+        
+        return {"ok": True, "p0_features": validated_features}
+        
+    except json.JSONDecodeError as e:
+        return _error_payload("json_parse_error", f"JSON 解析失败：{str(e)}")
+    except Exception as e:
+        return _error_payload("decompose_error", f"任务拆解失败：{str(e)}")
+
+
+def _invoke_llm_simple(prompt: str, max_tokens: int = 2000) -> str:
+    """
+    简化版 LLM 调用函数。
+    
+    Args:
+        prompt: 提示词
+        max_tokens: 最大 token 数
+        
+    Returns:
+        LLM 返回的文本
+    """
+    try:
+        # 尝试使用 run_role_agent 调用 LLM
+        result = run_role_agent.invoke({
+            "role_name": "执行工程师",
+            "task_input": prompt,
+            "role_prompt": "你是一个专业的 AI 助手，直接回答用户的问题。",
+            "max_iterations": 1,
+            "max_execution_time": 60
+        })
+        
+        if result.get("ok"):
+            return result.get("output", "")
+        return ""
+    except Exception:
+        return ""
