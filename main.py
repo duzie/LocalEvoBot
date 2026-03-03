@@ -9,6 +9,7 @@ import json
 import sqlite3
 import urllib.request
 import urllib.error
+import glob
 import subprocess
 import shutil
 import atexit
@@ -25,6 +26,7 @@ os.environ.setdefault("HUGGINGFACE_HUB_ENDPOINT", "https://hf-mirror.com")
 from app.agent import create_agent_executor, create_llm
 from app.skills.system_skill.scripts.experience_tools import add_operation_experience, get_operation_experience
 from langchain.callbacks.base import BaseCallbackHandler
+from dotenv import dotenv_values
 
 RELOAD_SIGNAL = "__RELOAD_SKILLS__"
 SET_MODEL_PREFIX = "__SET_MODEL__:"
@@ -324,9 +326,6 @@ def _add_short_term_message(role: str, content: str, project_id: str, user_id: s
     text = str(content or "").strip()
     if not text:
         return
-    r = str(role or "").strip()
-    if r in {"user", "assistant", "system"} and len(text) > 20000:
-        text = text[:20000] + "\n...(truncated for storage)..."
     created_at = datetime.now().astimezone().isoformat()
     date_key = created_at[:10].replace("-", "")
     _init_short_term_db(date_key)
@@ -335,23 +334,90 @@ def _add_short_term_message(role: str, content: str, project_id: str, user_id: s
     try:
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO short_term_messages(role, content, created_at, project_id, user_id) VALUES (?, ?, ?, ?, ?)",
-            (r, text, created_at, project_id or "", user_id or ""),
-        )
-        cur.execute(
-            "INSERT INTO short_term_messages_fts(content, role, created_at, project_id, user_id) VALUES (?, ?, ?, ?, ?)",
-            (text, r, created_at, project_id or "", user_id or ""),
+            """
+            INSERT INTO short_term_messages (role, content, created_at, project_id, user_id)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (role, text, created_at, project_id, user_id),
         )
         conn.commit()
+        _append_short_term_markdown(role, text, created_at, project_id, user_id, date_key)
     finally:
         conn.close()
-    _append_short_term_markdown(role, text, created_at, project_id or "", user_id or "", date_key)
+
+
+def _load_short_term_messages(project_id: str, user_id: str, limit: int = 60):
+    """从数据库加载历史记录"""
+    # 获取环境路径和项目ID
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    env = dotenv_values(env_path) if os.path.exists(env_path) else {}
+    base_dir = os.path.dirname(env_path)
+    resolved_project_id = os.path.basename(base_dir)
+    resolved_user_id = (os.getenv("LOCAL_USER_ID") or env.get("LOCAL_USER_ID") or "local_user").strip().strip("'\"")
+    
+    safe_limit = max(1, min(int(limit or 60), 200))
+    
+    # 获取所有可能的数据库路径
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(base_dir, "app", "data")
+    os.makedirs(data_dir, exist_ok=True)
+    db_paths = sorted(glob.glob(os.path.join(data_dir, "short_term_memory_*.sqlite3")))
+    legacy_path = os.path.join(data_dir, "short_term_memory.sqlite3")
+    if os.path.exists(legacy_path):
+        db_paths.append(legacy_path)
+    
+    if not db_paths:
+        _init_short_term_db()
+        db_paths = [_get_short_term_db_path()]
+    
+    items = []
+    
+    # 修改查询逻辑，使其能够匹配数据库中user_id为空的记录
+    sql = """SELECT role, content, created_at 
+             FROM short_term_messages 
+             WHERE project_id = ? 
+             AND (user_id = ? OR user_id IS NULL OR user_id = '') 
+             ORDER BY id DESC LIMIT ?"""
+    
+    for path in db_paths:
+        conn = sqlite3.connect(path)
+        try:
+            cur = conn.cursor()
+            rows = cur.execute(sql, (resolved_project_id, resolved_user_id, safe_limit)).fetchall()
+            for r in rows:
+                items.append({"role": r[0], "content": r[1], "created_at": r[2]})
+        finally:
+            conn.close()
+    
+    # 按时间排序并限制数量
+    items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    items = items[:safe_limit]
+    items.reverse()
+    
+    # 转换为 chat_history 格式 ((role, content), ...)
+    # 仅保留 LangChain chat_history 可安全消费的角色，避免 tool 消息缺少 tool_call_id 导致校验异常
+    chat_history = []
+    for item in items:
+        role = str(item.get("role") or "").strip().lower()
+        content = str(item.get("content") or "")
+        if role in ("user", "assistant", "system"):
+            chat_history.append((role, content))
+            continue
+        if role == "tool":
+            chat_history.append(("system", f"[历史工具轨迹]\n{content}"))
+            continue
+        if role:
+            chat_history.append(("system", f"[历史消息:{role}]\n{content}"))
+    return chat_history
+
 
 
 class ShortTermToolTraceHandler(BaseCallbackHandler):
     def __init__(self, project_id: str, user_id: str, max_len: int = 2000):
         self.project_id = project_id or ""
         self.user_id = user_id or ""
+
+
         self.max_len = max_len
         self._starts = {}
 
@@ -1466,7 +1532,13 @@ def main():
     print("输入 'exit' 或 'quit' 退出。")
     print("也可以通过 Web 控制台发送指令。\n")
 
-    chat_history = []
+    # 初始化历史记录
+    try:
+        chat_history = _load_short_term_messages(project_id, user_id, limit=60)
+        print(f">>> 系统: 已加载 {len(chat_history)} 条历史记录")
+    except Exception as e:
+        print(f">>> 系统: 加载历史记录失败: {e}")
+        chat_history = []
     max_auto_steps = 60
     tool_router_enabled = _env_flag("TOOL_ROUTER_ENABLED", False)
     current_skill_allowlist = None
@@ -1494,7 +1566,7 @@ def main():
                         agent_executor = create_agent_executor(skill_allowlist=current_skill_allowlist, callbacks=tool_trace_callbacks)
                     else:
                         agent_executor = create_agent_executor(callbacks=tool_trace_callbacks)
-                    chat_history = []
+
                     print(f">>> 系统: 已切换模型为 {provider}\n")
                 except Exception as e:
                     os.environ["LLM_PROVIDER"] = previous_provider
