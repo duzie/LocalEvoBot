@@ -1553,6 +1553,7 @@ def main():
                 step_started_at = datetime.now(timezone.utc).isoformat()
                 shared.set_status("running", "执行中", auto_input)
                 print(">>> 系统: 状态=执行中")
+                stopped_found = False
                 for chunk in agent_executor.stream({
                     "input": auto_input,
                     "chat_history": chat_history
@@ -1561,6 +1562,7 @@ def main():
                         shared.clear_stop()
                         shared.set_status("stopped", "已停止", auto_input)
                         print(">>> 系统: 状态=已停止")
+                        stopped_found = True
                         break
                     if not isinstance(chunk, dict):
                         continue
@@ -1593,10 +1595,12 @@ def main():
                 if buffer and not buffer.strip().upper().startswith("STATE:"):
                     print(buffer, end="", flush=True)
                 print("\n")
-                if shared.stop_requested:
+
+                if stopped_found or shared.stop_requested:
                     shared.clear_stop()
                     shared.set_status("idle", "空闲")
                     print(">>> 系统: 状态=空闲")
+                    break
 
                 output = raw_output
                 output, reload_requested = strip_reload_signal(output)
