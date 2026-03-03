@@ -18,6 +18,10 @@ _network_logs = []
 _network_log_limit = 500
 _network_capture_page = None
 
+# 为了让 registry 识别工具，需要导出这些函数
+# 虽然这些是内部函数，但 registry.py 的扫描逻辑可能比较激进
+__all__ = [] 
+
 
 def _get_playwright_module():
     try:

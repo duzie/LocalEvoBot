@@ -1,5 +1,9 @@
 """BM25 关键词检索器（针对中文技术文档优化）"""
 
+# 此文件不包含可直接调用的 Skill 工具，仅为辅助模块
+# 明确声明导出列表为空，避免 registry 扫描警告
+__all__ = []
+
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi

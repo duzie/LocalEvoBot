@@ -1,5 +1,9 @@
 """智能切块器（针对技术经验文档优化）"""
 
+# 此文件不包含可直接调用的 Skill 工具，仅为辅助模块
+# 明确声明导出列表为空，避免 registry 扫描警告
+__all__ = []
+
 from typing import List
 import re
 
