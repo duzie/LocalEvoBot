@@ -353,21 +353,45 @@
                         break
                     }
                 }
+                
+                // 查找 "Finished chain" 的位置
+                var finishedChainIndex = -1
+                for (var i = 0; i < lines.length; i++){
+                    if (lines[i].indexOf('Finished chain') !== -1){
+                        finishedChainIndex = i
+                        break
+                    }
+                }
+                
+
                 var mainLines = []
                 var detailLines = []
                 var lastDetail = false
+                
                 for (var i = 0; i < lines.length; i++){
                     var line = lines[i]
                     var trimmed = line.trim()
+                    
+                    // 默认先判断是否为 detail 行
                     var detail = isDetailLine(line)
+                    
+                    // 如果存在 "Finished chain"，则之前的所有内容（包括 Finished chain 本身）都强制视为 detail
+                    if (finishedChainIndex >= 0 && i <= finishedChainIndex) {
+                        detail = true
+                    }
+                    
+                    // 原有的 STATE: 逻辑保持（通常 Finished chain 在 STATE 之前或附近，如果 STATE 在更后面，也应视为 detail）
                     if (stateIndex >= 0 && i <= stateIndex){
                         detail = true
                     }
+                    
+                    // 延续性判断：如果上一行是 detail，且当前行看起来是 JSON/代码块的延续，也视为 detail
                     if (!detail && lastDetail){
                         if (trimmed === '' || trimmed.indexOf('{') === 0 || trimmed.indexOf('[') === 0 || trimmed.indexOf('}') === 0 || trimmed.indexOf(']') === 0){
                             detail = true
                         }
                     }
+                    
                     if (detail){
                         detailLines.push(line)
                         lastDetail = true

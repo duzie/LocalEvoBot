@@ -2,6 +2,9 @@ from langchain_core.tools import tool
 import os
 import json
 import shutil
+import gc
+import threading
+import time
 from datetime import datetime, timezone
 import sqlite3
 import glob
@@ -18,6 +21,8 @@ _VECTOR_STORE = None
 _EMBEDDINGS = None
 _OVERWRITE_TEXT_SIMILARITY = float(os.getenv("MEMORY_OVERWRITE_TEXT_SIMILARITY", "0.9"))
 _OVERWRITE_DISTANCE_THRESHOLD = float(os.getenv("MEMORY_OVERWRITE_DISTANCE", "0.2"))
+_INIT_LOCK = threading.Lock()
+_DB_PATH_OVERRIDE = ""
 
 from langchain.retrievers import EnsembleRetriever
 from .bm25_retriever import TechnicalBM25Retriever
@@ -29,10 +34,9 @@ _hybrid_retriever_cache = None
 
 
 def _get_db_path():
-    # Path: app/data/experience_db
-    # This file: app/skills/system_skill/scripts/experience_tools.py
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
-    return os.path.join(base_dir, "app", "data", "experience_db")
+    default_path = os.path.join(base_dir, "app", "data", "experience_db")
+    return _DB_PATH_OVERRIDE or default_path
 
 def _get_json_path():
     return os.path.join(os.path.dirname(__file__), "experience_store.json")
@@ -85,70 +89,86 @@ def _init_short_term_db(date_key: str = None):
         conn.close()
 
 def _init_components():
-    global _VECTOR_STORE, _EMBEDDINGS
-    if _VECTOR_STORE is False: # Keep check for False if we want to support permanent disablement, but initialization error should likely not be permanent False unless desired. 
-        # Actually, let's keep False as "attempted and failed, don't retry" signal, but ensure the exception handler sets it to False properly if that is the intent.
-        # The user reported "_type" error, which usually comes from Pydantic/Chroma validation if something is wrong.
-        # The error message "RAG init failed, fallback to JSON store: '_type'" suggests 'e' is a KeyError: '_type' or similar during Chroma init.
-        # This often happens if the persist directory exists but is corrupted or incompatible.
-        # Let's add a try-except around Chroma init specifically to handle corruption.
+    global _VECTOR_STORE, _EMBEDDINGS, _DB_PATH_OVERRIDE
+    if _VECTOR_STORE is False:
         return None
     if _VECTOR_STORE is not None:
         return _VECTOR_STORE
 
-    try:
-        from langchain_chroma import Chroma
-        from langchain_huggingface import HuggingFaceEmbeddings
-    except ImportError as e:
-        print(f"RAG Dependency Import Error: {e}")
-        return None 
-    try:
-        if _EMBEDDINGS is None:
-            _EMBEDDINGS = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    with _INIT_LOCK:
+        if _VECTOR_STORE is False:
+            return None
+        if _VECTOR_STORE is not None:
+            return _VECTOR_STORE
 
-        db_path = _get_db_path()
         try:
-            _VECTOR_STORE = Chroma(
-                persist_directory=db_path,
-                embedding_function=_EMBEDDINGS,
-                collection_name="agent_experiences"
-            )
-        except Exception as e:
-            if "_type" in str(e) or "sqlite" in str(e).lower():
-                print(f"RAG DB Corrupted, attempting reset: {e}")
-                import shutil
-                import time
-                if os.path.exists(db_path):
-                    for i in range(3):
-                        try:
-                            shutil.rmtree(db_path)
-                            break
-                        except Exception as rm_err:
-                            if i == 2:
-                                print(f"Failed to remove corrupted DB after retries: {rm_err}")
-                                raise rm_err
-                            time.sleep(1)
+            from langchain_chroma import Chroma
+            from langchain_huggingface import HuggingFaceEmbeddings
+        except ImportError as e:
+            print(f"RAG Dependency Import Error: {e}")
+            _VECTOR_STORE = False
+            return None
+
+        try:
+            if _EMBEDDINGS is None:
+                _EMBEDDINGS = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+
+            db_path = _get_db_path()
+            try:
                 _VECTOR_STORE = Chroma(
                     persist_directory=db_path,
                     embedding_function=_EMBEDDINGS,
                     collection_name="agent_experiences"
                 )
-            else:
-                raise e
+            except Exception as e:
+                if "_type" in str(e) or "sqlite" in str(e).lower():
+                    print(f"RAG DB Corrupted, attempting reset: {e}")
+                    _VECTOR_STORE = None
+                    gc.collect()
+                    if os.path.exists(db_path):
+                        removed = False
+                        for _ in range(5):
+                            try:
+                                shutil.rmtree(db_path)
+                                removed = True
+                                break
+                            except Exception:
+                                time.sleep(0.6)
+                        if not removed and os.path.exists(db_path):
+                            quarantine_path = db_path + "_broken_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+                            renamed = False
+                            try:
+                                os.replace(db_path, quarantine_path)
+                                renamed = True
+                            except Exception:
+                                renamed = False
+                            if not renamed:
+                                _DB_PATH_OVERRIDE = db_path + "_active_" + str(os.getpid())
+                                os.makedirs(_DB_PATH_OVERRIDE, exist_ok=True)
+                                db_path = _DB_PATH_OVERRIDE
+                            else:
+                                db_path = _get_db_path()
+                    _VECTOR_STORE = Chroma(
+                        persist_directory=db_path,
+                        embedding_function=_EMBEDDINGS,
+                        collection_name="agent_experiences"
+                    )
+                else:
+                    raise e
 
-        try:
-            data = _VECTOR_STORE.get()
-            ids = data.get("ids") if isinstance(data, dict) else None
-            if ids is not None and len(ids) == 0 and os.path.exists(_get_json_path()):
-                _migrate_from_json()
+            try:
+                data = _VECTOR_STORE.get()
+                ids = data.get("ids") if isinstance(data, dict) else None
+                if ids is not None and len(ids) == 0 and os.path.exists(_get_json_path()):
+                    _migrate_from_json()
+            except Exception as e:
+                print(f"DB Init/Migration warning: {e}")
+
+            return _VECTOR_STORE
         except Exception as e:
-            print(f"DB Init/Migration warning: {e}")
-
-        return _VECTOR_STORE
-    except Exception as e:
-        _VECTOR_STORE = None # Set to None instead of False to allow retries or graceful degradation
-        print(f"RAG init failed, fallback to JSON store: {e}")
-        return None
+            _VECTOR_STORE = False
+            print(f"RAG init failed, fallback to JSON store: {e}")
+            return None
 
 def _load_json_store():
     path = _get_json_path()
