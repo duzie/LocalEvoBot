@@ -19,6 +19,15 @@ _EMBEDDINGS = None
 _OVERWRITE_TEXT_SIMILARITY = float(os.getenv("MEMORY_OVERWRITE_TEXT_SIMILARITY", "0.9"))
 _OVERWRITE_DISTANCE_THRESHOLD = float(os.getenv("MEMORY_OVERWRITE_DISTANCE", "0.2"))
 
+from langchain.retrievers import EnsembleRetriever
+from .bm25_retriever import TechnicalBM25Retriever
+from .chunking import smart_chunk_experience
+
+# BM25 混合检索器缓存
+_bm25_retriever_cache = None
+_hybrid_retriever_cache = None
+
+
 def _get_db_path():
     # Path: app/data/experience_db
     # This file: app/skills/system_skill/scripts/experience_tools.py
@@ -191,6 +200,47 @@ def _keyword_match(text: str, terms: list):
             return False
     return True
 
+
+def invalidate_retriever_cache():
+    """使检索器缓存失效"""
+    global _bm25_retriever_cache, _hybrid_retriever_cache
+    _bm25_retriever_cache = None
+    _hybrid_retriever_cache = None
+
+
+def _init_hybrid_retriever():
+    """初始化 BM25 + 向量混合检索器"""
+    global _hybrid_retriever_cache
+    
+    if _hybrid_retriever_cache is not None:
+        return _hybrid_retriever_cache
+    
+    vector_store = _init_components()
+    if vector_store is None:
+        return None
+    
+    try:
+        # 获取所有文档用于 BM25 索引
+        all_docs = vector_store.similarity_search("", k=1000)
+    except Exception:
+        return vector_store.as_retriever(search_kwargs={"k": 5})
+    
+    if not all_docs:
+        return vector_store.as_retriever(search_kwargs={"k": 5})
+    
+    # 创建 BM25 检索器
+    bm25_retriever = TechnicalBM25Retriever.from_documents(all_docs, k=10)
+    vector_retriever = vector_store.as_retriever(search_kwargs={"k": 10})
+    
+    # 创建混合检索器（RRF 融合）
+    hybrid_retriever = EnsembleRetriever(
+        retrievers=[bm25_retriever, vector_retriever],
+        weights=[0.5, 0.5]
+    )
+    
+    _hybrid_retriever_cache = hybrid_retriever
+    return hybrid_retriever
+
 def _migrate_from_json():
     from langchain_core.documents import Document
     json_path = _get_json_path()
@@ -277,9 +327,11 @@ def add_operation_experience(system_name: str, content: str, tags: list = None, 
             metadata["id"] = meta.get("id") or metadata["id"]
             items[best_idx] = {"content": content, "metadata": metadata, "page_content": page_content}
             _write_json_store(items)
-            return "已覆盖相似经验。"
+            invalidate_retriever_cache()
+        return "已覆盖相似经验。"
         item = {"content": content, "metadata": metadata, "page_content": page_content}
         _append_json_store(item)
+        invalidate_retriever_cache()
         return "已存入本地经验库。"
     from langchain_core.documents import Document
     similar_id = None
@@ -327,8 +379,10 @@ def add_operation_experience(system_name: str, content: str, tags: list = None, 
             store._collection.update(ids=[similar_id], documents=[page_content], metadatas=[metadata])
         except Exception:
             store._collection.upsert(ids=[similar_id], documents=[page_content], metadatas=[metadata])
+        invalidate_retriever_cache()
         return "已覆盖相似经验。"
     store.add_documents([Document(page_content=page_content, metadata=metadata)])
+    invalidate_retriever_cache()
     return "已存入向量知识库。"
 
 def list_operation_experiences(query: str = None, system_filter: str = None, scope: str = None, project_id: str = None, user_id: str = None, memory_type: str = None, tags: list = None, limit: int = 200, offset: int = 0):
@@ -478,15 +532,18 @@ def list_operation_experiences(query: str = None, system_filter: str = None, sco
 @tool
 def get_operation_experience(query: str, system_filter: str = None, n_results: int = 3, scope: str = None, project_id: str = None, user_id: str = None, memory_type: str = None, tags: list = None):
     """
-    语义检索操作经验。
+    语义检索操作经验（支持 BM25 + 向量混合检索）。
     
     Args:
         query: 问题描述或关键词 (如 "Playwright 报错")
         system_filter: (可选) 限定系统名称
         n_results: 返回数量
     """
-    store = _init_components()
-    if not store:
+    # 使用混合检索器
+    retriever = _init_hybrid_retriever()
+    
+    if retriever is None:
+        # 降级到 list_operation_experiences
         items = list_operation_experiences(
             query=query,
             system_filter=system_filter,
@@ -500,48 +557,78 @@ def get_operation_experience(query: str, system_filter: str = None, n_results: i
         )
         return json.dumps(items, ensure_ascii=False, indent=2)
     
-    filter_dict = {}
-    if system_filter:
-        filter_dict["system"] = system_filter
-    if scope:
-        filter_dict["scope"] = scope
-    if project_id:
-        filter_dict["project_id"] = project_id
-    if user_id:
-        filter_dict["user_id"] = user_id
-    if memory_type:
-        filter_dict["memory_type"] = memory_type
-    where = None
-    if filter_dict:
-        clauses = []
-        for k, v in filter_dict.items():
-            if v is None or v == "":
-                continue
-            clauses.append({k: {"$eq": v}})
-        if clauses:
-            where = {"$and": clauses} if len(clauses) > 1 else clauses[0]
-    results = store.similarity_search(query, k=n_results, filter=where)
+    try:
+        docs = retriever.invoke(query)
+    except Exception as e:
+        # 降级到纯向量检索
+        vector_store = _init_components()
+        if vector_store:
+            filter_dict = {}
+            if system_filter:
+                filter_dict["system"] = system_filter
+            if scope:
+                filter_dict["scope"] = scope
+            if project_id:
+                filter_dict["project_id"] = project_id
+            if user_id:
+                filter_dict["user_id"] = user_id
+            if memory_type:
+                filter_dict["memory_type"] = memory_type
+            where = None
+            if filter_dict:
+                clauses = []
+                for k, v in filter_dict.items():
+                    if v is None or v == "":
+                        continue
+                    clauses.append({k: {"$eq": v}})
+                if clauses:
+                    where = {"$and": clauses} if len(clauses) > 1 else clauses[0]
+            docs = vector_store.similarity_search(query, k=n_results, filter=where)
+        else:
+            return json.dumps([], ensure_ascii=False, indent=2)
     
-    if not results: return "知识库中未找到相关经验。"
+    if not docs:
+        return json.dumps([], ensure_ascii=False, indent=2)
     
+    # 后处理和过滤
     tag_filters = tags if isinstance(tags, list) else []
-    formatted = []
-    for doc in results:
+    filtered_results = []
+    for doc in docs:
+        meta = doc.metadata
+        if system_filter and meta.get("system") != system_filter:
+            continue
+        if scope and meta.get("scope") != scope:
+            continue
+        if project_id and meta.get("project_id") != project_id:
+            continue
+        if user_id and meta.get("user_id") != user_id:
+            continue
+        if memory_type and meta.get("memory_type") != memory_type:
+            continue
+        
         if tag_filters:
-            doc_tags = doc.metadata.get("tags_list") or []
-            doc_tags_str = doc.metadata.get("tags") or ""
+            doc_tags = meta.get("tags_list") or []
+            doc_tags_str = meta.get("tags") or ""
             if not all(tag in doc_tags or tag in doc_tags_str for tag in tag_filters):
                 continue
-        formatted.append({
-            "content": doc.metadata.get("original_content"),
-            "system": doc.metadata.get("system"),
-            "tags": doc.metadata.get("tags"),
-            "scope": doc.metadata.get("scope"),
-            "project_id": doc.metadata.get("project_id"),
-            "user_id": doc.metadata.get("user_id"),
-            "memory_type": doc.metadata.get("memory_type")
-        })
-    return json.dumps(formatted, ensure_ascii=False, indent=2)
+        
+        result = {
+            "content": meta.get("original_content") or doc.page_content,
+            "system": meta.get("system", "unknown"),
+            "tags": meta.get("tags"),
+            "scope": meta.get("scope"),
+            "project_id": meta.get("project_id"),
+            "user_id": meta.get("user_id"),
+            "memory_type": meta.get("memory_type"),
+            "url": meta.get("url", ""),
+            "created_at": meta.get("created_at", ""),
+        }
+        filtered_results.append(result)
+        
+        if len(filtered_results) >= n_results:
+            break
+    
+    return json.dumps(filtered_results, ensure_ascii=False, indent=2)
 
 @tool
 def compress_operation_experience():
