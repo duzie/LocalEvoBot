@@ -76,18 +76,23 @@ def get_agent_prompt(tools: List[BaseTool] = None, extra_system: str = None):
 STATE: CONTINUE
 """
     
-    dyn = _load_rules_for_tools(tools or [])
+    # 将硬编码的 system_message 改为使用 dynamic_rules 变量
+    # 注意：LangChain 的 SystemMessage 模板支持 {variable} 形式的占位符
+    # 但我们需要确保这个变量在 invoke 时被传入
     
-    system_message = base
-    if dyn:
-        system_message += "\n" + dyn
-        
-    if extra_system:
-        system_message = system_message + "\n" + str(extra_system)
+    # 获取硬编码的规则（兼容旧逻辑）
+    hardcoded_rules = ""
+    names = [t.name if hasattr(t, "name") else "" for t in (tools or [])]
+    
+    # 所有的规则现在都已经迁移到了各个 Skill 的 rules.md 文件中
+    # 我们保留这个空字符串和 names 列表，以防未来有特殊的硬编码需求
+    # 但目前我们应该完全依赖 dynamic_rules 加载的 rules.md
 
+    # 使用 partial 绑定动态函数，使其在每次 invoke 时调用
+    # 动态加载的 rules.md 会与硬编码规则合并
     return ChatPromptTemplate.from_messages([
-        ("system", system_message),
+        ("system", base + hardcoded_rules + "\n{dynamic_rules}" + ("\n" + str(extra_system) if extra_system else "")),
         MessagesPlaceholder(variable_name="chat_history", optional=True),
         ("user", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad"),
-    ])
+    ]).partial(dynamic_rules=lambda: _load_rules_for_tools(tools or []))
