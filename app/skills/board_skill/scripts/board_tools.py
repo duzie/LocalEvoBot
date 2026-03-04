@@ -708,8 +708,29 @@ def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", t
         wd = os.path.abspath(wd)
     if wd:
         tools = [_wrap_tool_with_workdir(t, wd) for t in tools]
+        
+    # 读取全局配置
+    env_skill_allowlist = os.getenv("AGENT_SKILL_ALLOWLIST", "").strip()
+    global_allowed_skills = set()
+    if env_skill_allowlist:
+        for s in env_skill_allowlist.split(","):
+            s = s.strip()
+            if s:
+                global_allowed_skills.add(s)
+                
+    # 合并全局配置与子 Agent 传入的配置
+    # 如果子 Agent 没有明确指定 skills_allowlist，则尝试继承全局配置
+    # 如果指定了，则取并集？或者以子 Agent 指定为准？
+    # 鉴于 run_role_agent 通常由主 Agent 调用，主 Agent 应该有权决定子 Agent 用什么
+    # 但如果主 Agent 没传，默认行为应该是“用所有”还是“用全局允许的”？
+    # 为了安全，默认应该是继承全局配置
+    final_skills_allowlist = set(skills_allowlist) if skills_allowlist else set()
+    if not final_skills_allowlist and global_allowed_skills:
+        final_skills_allowlist = global_allowed_skills
+    
     allow = tools_allowlist or []
-    allow.extend(_collect_tools_for_skills(skills_allowlist or []))
+    allow.extend(_collect_tools_for_skills(list(final_skills_allowlist)))
+    
     if not _allow_all_tools_for_subagents():
         always_allowed = _always_allowed_tools()
         allow_clean = [t for t in (allow or []) if t]

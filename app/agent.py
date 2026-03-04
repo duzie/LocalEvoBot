@@ -330,6 +330,15 @@ def create_llm():
 
     raise ValueError(f"不支持的 LLM_PROVIDER: {provider}")
 
+def _read_str_env(key: str, default: str = "") -> str:
+    try:
+        value = os.getenv(key)
+        if value is None:
+            return str(default)
+        return str(value).strip()
+    except Exception:
+        return str(default)
+
 def create_agent_executor(tool_allowlist: List[str] = None, skill_allowlist: List[str] = None, callbacks: List = None):
     """
     创建并配置 Agent Executor
@@ -344,10 +353,33 @@ def create_agent_executor(tool_allowlist: List[str] = None, skill_allowlist: Lis
         tools.extend(mcp_tools)
     total_tools = len(tools)
     allowed_names = None
+    
+    # 从环境变量读取全局 skill_allowlist 配置
+    env_skill_allowlist = _read_str_env("AGENT_SKILL_ALLOWLIST", "")
+    global_allowed_skills = set()
+    if env_skill_allowlist:
+        for s in env_skill_allowlist.split(","):
+            s = s.strip()
+            if s:
+                global_allowed_skills.add(s)
+                
+    # 合并传入的 skill_allowlist (优先级更高)
+    final_skill_allowlist = set(skill_allowlist) if skill_allowlist else set()
+    if not final_skill_allowlist and global_allowed_skills:
+        final_skill_allowlist = global_allowed_skills
+    elif final_skill_allowlist and global_allowed_skills:
+        # 如果两者都存在，取交集？还是并集？通常是传入的参数作为 override
+        # 但这里语义是 "allowlist"，所以应该是交集更安全（或者取参数覆盖）
+        # 假设参数是用来进一步收窄范围的
+        # 但如果是子 agent，可能需要继承全局配置
+        # 这里简化处理：如果参数传了，以参数为准；否则用全局
+        pass
+
     if tool_allowlist:
         allowed_names = set([t for t in tool_allowlist if t])
-    elif skill_allowlist:
-        allowed_names = _collect_tools_for_skills(skill_allowlist)
+    elif final_skill_allowlist:
+        allowed_names = _collect_tools_for_skills(list(final_skill_allowlist))
+    
     if allowed_names:
         tools = [t for t in tools if getattr(t, "name", "") in allowed_names]
         print(f"已加载 {total_tools} 个 Tools，启用 {len(tools)} 个 Tools")
