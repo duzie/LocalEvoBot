@@ -24,7 +24,6 @@ router = APIRouter()
 
 class ChatMessage(BaseModel):
     message: str
-    history: list = []
 
 class ModelSelect(BaseModel):
     provider: str
@@ -113,19 +112,7 @@ async def send_message(chat: ChatMessage):
     if not chat.message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
     
-    # 如果有历史记录，可以在这里进行处理
-    # 将历史记录和当前消息一起放入输入队列
-    if chat.history:
-        # 可以将历史记录作为上下文处理
-        # 这里我们只是简单地将它们一起传递
-        combined_message = {
-            "current_message": chat.message,
-            "history": chat.history
-        }
-        shared.put_input(json.dumps(combined_message, ensure_ascii=False))
-    else:
-        shared.put_input(chat.message)
-    
+    shared.put_input(chat.message)
     # Echo back to chat history (optional, or handle in frontend)
     return {"status": "sent"}
 
@@ -535,8 +522,6 @@ async def stop_current():
     return {"status": "stop_requested"}
 
 @router.get("/history")
-@router.get("/history")
-@router.get("/history")
 async def get_history(limit: int = 60):
     env_path = _get_env_path()
     env = dotenv_values(env_path) if os.path.exists(env_path) else {}
@@ -549,14 +534,7 @@ async def get_history(limit: int = 60):
         _init_short_term_db()
         db_paths = [_get_short_term_db_path()]
     items = []
-    
-    # 修改查询逻辑，使其能够匹配数据库中user_id为空的记录
-    sql = """SELECT role, content, created_at 
-             FROM short_term_messages 
-             WHERE project_id = ? 
-             AND (user_id = ? OR user_id IS NULL OR user_id = '') 
-             ORDER BY id DESC LIMIT ?"""
-    
+    sql = "SELECT role, content, created_at FROM short_term_messages WHERE project_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?"
     for path in db_paths:
         conn = sqlite3.connect(path)
         try:
