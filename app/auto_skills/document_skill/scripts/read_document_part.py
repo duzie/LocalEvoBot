@@ -27,11 +27,15 @@ def read_document_part(file_path: str, start_line: int = 0, end_line: Optional[i
     """
     读取文档的部分内容，支持按行数、字符数或百分比截取
     
+    WARNING: 如果文件内容过大，会被强制截断。
+    对于大型文件分析任务，强烈建议使用 `deep_analysis_skill` 中的 `read_files_to_analysis_index` 工具，
+    它可以将文件存入旁路索引，避免 Token 爆炸和信息丢失。
+    
     Args:
         file_path: 文档文件路径
         start_line: 起始行号（从0开始）
         end_line: 结束行号（包含），如果为None则读取到文件末尾
-        max_chars: 最大字符数限制
+        max_chars: 最大字符数限制 (默认 5000)
         encoding: 文件编码
     
     Returns:
@@ -55,7 +59,14 @@ def read_document_part(file_path: str, start_line: int = 0, end_line: Optional[i
                 "content": "",
                 "stats": {}
             }
-        
+            
+        # 预检文件大小
+        file_size = os.path.getsize(file_path)
+        # 如果文件大于 20KB 且未指定行号范围，建议使用 deep_analysis_skill
+        if file_size > 20000 and (end_line is None or (end_line - start_line) > 500):
+            # 虽然我们仍然执行读取（为了兼容性），但在返回消息中加入强烈建议
+            pass
+
         encoding_used, error_mode = _pick_encoding(file_path, encoding)
         if start_line < 0:
             start_line = 0
@@ -118,11 +129,15 @@ def read_document_part(file_path: str, start_line: int = 0, end_line: Optional[i
             "encoding": encoding_used
         }
         
+        msg = f"成功读取 {selected_line_count} 行内容 (行 {start_line}-{end_line_effective})"
+        if truncated:
+             msg += " [注意: 内容已截断，如需完整分析大文件，请使用 deep_analysis_skill]"
+             
         return {
             "success": True,
             "content": content,
             "stats": stats,
-            "message": f"成功读取 {selected_line_count} 行内容 (行 {start_line}-{end_line_effective})"
+            "message": msg
         }
         
     except UnicodeDecodeError as e:

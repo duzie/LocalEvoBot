@@ -76,6 +76,8 @@ def _select_skill_allowlist(user_input: str) -> List[str]:
         skills.add("utility_skill")
     if has_any(["音频", "录音", "转写", "听写", "语音", ".mp3", ".wav", ".m4a", ".flac"]):
         skills.add("audio_transcribe_skill")
+    if has_any(["分析", "analyze", "analysis", "代码", "code", "项目", "project", "scan", "skeleton", "index", "索引"]):
+        skills.add("deep_analysis_skill")
     return sorted(skills)
 
 def _wa_gateway_base_url():
@@ -355,6 +357,14 @@ class ShortTermToolTraceHandler(BaseCallbackHandler):
         self.max_len = max_len
         self._starts = {}
 
+    def _make_excerpt(self, text, max_head: int = 240, max_tail: int = 120):
+        raw = str(text or "").strip()
+        if not raw:
+            return ""
+        if len(raw) <= (max_head + max_tail + 20):
+            return raw
+        return raw[:max_head].rstrip() + "\n...\n" + raw[-max_tail:].lstrip()
+
     def _try_parse_json(self, value):
         if not isinstance(value, str):
             return None
@@ -387,17 +397,22 @@ class ShortTermToolTraceHandler(BaseCallbackHandler):
         line_count = None
         if content is not None:
             line_count = len(str(content).splitlines())
+        summary = {"file": file_path}
+        try:
+            summary["name"] = os.path.basename(str(file_path))
+        except Exception:
+            pass
+        if tool_name in {"read_document_part", "extract_document_section"} and content is not None:
+            excerpt = self._make_excerpt(content)
+            if excerpt:
+                summary["content_excerpt"] = excerpt
+                summary["content_chars"] = len(str(content))
         if line_number is not None:
             start_line = int(line_number)
             end_line = int(line_number)
         if start_line is None and end_line is None and line_count:
             start_line = 1
             end_line = line_count
-        summary = {"file": file_path}
-        try:
-            summary["name"] = os.path.basename(str(file_path))
-        except Exception:
-            pass
         if start_line is not None:
             if end_line is not None:
                 summary["lines"] = f"{int(start_line)}-{int(end_line)}"
@@ -585,12 +600,18 @@ def _load_recent_tool_traces(project_id: str, user_id: str, since_iso: str, limi
                 f = detail.get("file") or ""
                 lines = detail.get("lines") or ""
                 truncated = detail.get("truncated")
+                excerpt = detail.get("content_excerpt") or ""
                 if f:
                     hint = f"{os.path.basename(str(f))}"
                     if lines:
                         hint += f":{lines}"
                     if truncated:
                         hint += " (truncated)"
+                    if excerpt:
+                        compact_excerpt = " ".join(str(excerpt).split())
+                        if len(compact_excerpt) > 220:
+                            compact_excerpt = compact_excerpt[:220].rstrip() + "…"
+                        hint += f' | excerpt="{compact_excerpt}"'
         if hint:
             items.append(f"- {event} {tool}: {hint}")
         else:
@@ -1354,7 +1375,6 @@ def maybe_summarize_history(chat_history, llm, max_recent_turns=8, max_stage_cha
 
     # Start new async summary
     older = non_summary[:-chunk_size]
-    recent = non_summary[-chunk_size:]
     
     print(f">>> 系统: 启动后台总结，处理 {len(older)} 条消息...")
     _SUMMARY_CTX.summarizing_messages = list(older) # Copy list
@@ -1706,7 +1726,9 @@ def main():
                 trace_block = f"\n\n本轮已发生的工具轨迹（不要重复）：\n{trace}" if trace else ""
                 auto_input = (
                     "继续执行，基于当前屏幕状态完成任务。"
-                    "如果需要继续处理大文件/长文件，优先基于上面的工具轨迹决定下一步（例如从下一段/下一块继续读取），不要从头重复读取。\n"
+                    "如果需要继续处理大文件/长文件，优先基于上面的工具轨迹决定下一步（例如从下一段/下一块继续读取），不要从头重复读取。"
+                    "如果任务是多文件/项目级逻辑分析，优先使用 deep_analysis_skill：先 read_files_to_analysis_index 建立索引，再 query_analysis_index 做跨文件关联分析。"
+                    "若轨迹只有文件与行号但缺少足够内容证据，必须再次调用读取工具，不得假设已读内容。\n"
                     f"{trace_block}"
                 )
                 if step == max_auto_steps - 1:

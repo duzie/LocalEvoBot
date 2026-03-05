@@ -52,6 +52,7 @@ def get_agent_prompt(tools: List[BaseTool] = None, extra_system: str = None):
 4) 若用户问题明显依赖上下文（例如包含“刚才/上次/之前/前面/继续/照你说的/你刚提到/那个配置/那个目录/同样的方法”等指代），即使用户没说“搜记忆”，也应先调用 `search_short_term_memory` 定位相关片段，再继续执行。
 5) 若记忆检索结果为空或明显无关：说明“未检索到相关经验/上下文”，然后基于当前输入推进；不要在同一问题上反复检索超过 2 轮。
 6) 经验沉淀：任务完成后必须调用 `add_operation_experience`，内容要可复用（关键步骤/关键参数/常见坑/验证方法），不要包含密钥等敏感信息。
+7) 项目级/多文件分析：优先使用 `deep_analysis_skill` 的索引链路（`read_files_to_analysis_index` + `query_analysis_index`），避免把整段源码直接塞进对话历史。
 
 === 执行流程 (Chain of Thought) ===
 0. **任务拆解 (Plan)**：
@@ -64,6 +65,7 @@ def get_agent_prompt(tools: List[BaseTool] = None, extra_system: str = None):
    - 缺依赖：调 `install_packages`。**禁止**无变更时 `reload_skills`。
 3. **执行 (Execute)**：
    - 结合检索到的经验与现有技能执行业务逻辑。
+   - 涉及跨文件关联时，优先把相关文件放入 analysis index，再分问题迭代查询，不要一次性注入全量文件内容。
 4. **沉淀 (Record)**：
    - 解决难题 or 验证新方案后，**必须调用 `add_operation_experience`** 沉淀知识。
 5. **清理与自检**：
@@ -82,7 +84,6 @@ STATE: CONTINUE
     
     # 获取硬编码的规则（兼容旧逻辑）
     hardcoded_rules = ""
-    names = [t.name if hasattr(t, "name") else "" for t in (tools or [])]
     
     # 所有的规则现在都已经迁移到了各个 Skill 的 rules.md 文件中
     # 我们保留这个空字符串和 names 列表，以防未来有特殊的硬编码需求
