@@ -1576,6 +1576,20 @@ def main():
             user_input = shared.get_input()
             user_input = user_input.strip()
             wa_ctx, user_input = _extract_whatsapp_input(user_input)
+
+            # 处理来自 Web 的标准消息协议
+            if user_input.startswith("__CHAT_MSG__:"):
+                try:
+                    chat_payload = json.loads(user_input[len("__CHAT_MSG__:") :])
+                    user_input = chat_payload.get("text", "")
+                    if chat_payload.get("new_session"):
+                        chat_history = []
+                        print(">>> 系统: [新会话] 已清空上下文记忆")
+                    # 未来如果需要支持从前端恢复会话上下文，可以在这里处理 history 字段
+                    # elif chat_payload.get("history"):
+                    #     ...
+                except Exception as e:
+                    print(f">>> 系统: 解析消息协议失败: {e}")
             
             if user_input.startswith(SET_MODEL_PREFIX):
                 provider = user_input[len(SET_MODEL_PREFIX):].strip().lower()

@@ -25,6 +25,7 @@ router = APIRouter()
 class ChatMessage(BaseModel):
     message: str
     history: list = []
+    new_session: bool = False
 
 class ModelSelect(BaseModel):
     provider: str
@@ -113,18 +114,13 @@ async def send_message(chat: ChatMessage):
     if not chat.message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
     
-    # 如果有历史记录，可以在这里进行处理
-    # 将历史记录和当前消息一起放入输入队列
-    if chat.history:
-        # 可以将历史记录作为上下文处理
-        # 这里我们只是简单地将它们一起传递
-        combined_message = {
-            "current_message": chat.message,
-            "history": chat.history
-        }
-        shared.put_input(json.dumps(combined_message, ensure_ascii=False))
-    else:
-        shared.put_input(chat.message)
+    # 构造标准化的消息协议，由 main.py 统一解析
+    payload = {
+        "text": chat.message,
+        "history": chat.history or [],
+        "new_session": chat.new_session
+    }
+    shared.put_input("__CHAT_MSG__:" + json.dumps(payload, ensure_ascii=False))
     
     # Echo back to chat history (optional, or handle in frontend)
     return {"status": "sent"}

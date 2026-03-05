@@ -605,7 +605,10 @@
                 setSending(true)
                 
                 // 构建请求体，包含历史记录（如果不是新会话）
-                var requestBody = { message: text }
+                var requestBody = { 
+                    message: text,
+                    new_session: state.isNewSession 
+                }
                 if (!state.isNewSession && state.sessionHistory && state.sessionHistory.length > 0) {
                     // 只取最近的8轮对话（16条消息）
                     var recentHistory = state.sessionHistory.slice(-16)
@@ -629,6 +632,8 @@
                         content: text,
                         created_at: new Date().toISOString()
                     })
+                    // 标记会话已开始
+                    state.isNewSession = false
                     setSending(false)
                     setRunning(true)
                 }).catch(function(e){
