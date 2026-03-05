@@ -1,21 +1,28 @@
----
-name: "deep_analysis_skill"
-description: "深度代码分析技能，用于防止上下文（Context Window）爆炸。适用于分析大型项目或多文件。支持三阶段工作流：（1）扫描项目骨架，（2）读取文件到索引（而非直接进入 ChatHistory），（3）查询索引以获取聚合结论。"
----
+# Skill
 
-# 深度分析技能 (Deep Analysis Skill)
+## Name
+deep_analysis_skill
 
-本技能提供了一种内存高效的方式来分析大型代码库。它避免了直接将文件内容读取到 ChatHistory（这会消耗大量 Token 并导致前文丢失），而是允许你：
+## Version
+1.0.0
 
-1.  **扫描项目结构**：了解存在哪些文件。
-2.  **读取文件到索引**：将相关文件内容存入临时的“分析索引”（旁路记忆）。
-3.  **查询索引**：基于索引中的文件内容回答问题。
-4.  **清理索引**：任务完成后释放资源。
+## Description
+深度代码分析技能，用于防止上下文窗口爆炸，支持多文件与项目级关联分析。
 
-## 工具列表
+## Entry
+app.skills.deep_analysis_skill.scripts
 
-- **get_project_skeleton_analysis**: 扫描项目根目录，返回目录树和文件签名（类/函数）。请首先使用此工具来定位相关文件。
-- **read_files_to_analysis_index**: 读取指定文件并将其内容存入临时分析索引。返回已读取内容的结构化摘要（Import/类/函数），但**不返回**完整代码内容（以节省 Token）。
-- **query_analysis_index**: 针对分析索引中的文件提出具体问题。系统会在后台使用存储的文件内容来回答问题，并返回聚合后的结论。
-- **get_analysis_index_status**: 返回分析索引的当前状态，包括已索引的文件列表和总大小。
-- **clear_analysis_index**: 清空当前的分析索引以释放资源或开始新的分析任务。
+## Tools
+- get_project_skeleton_analysis: 扫描项目骨架并提取符号，定位候选文件
+- read_files_to_analysis_index: 将文件内容写入分析索引，避免全文进入会话历史
+- get_analysis_index_status: 查询索引状态、文件数量和总体规模
+- query_analysis_index: 基于索引做聚合分析，返回跨文件关系与证据
+- clear_analysis_index: 清空索引，释放资源并开始新会话
+
+## Platforms
+- Windows
+- Linux
+- macOS
+
+## References
+- rules.md
