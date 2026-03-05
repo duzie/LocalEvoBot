@@ -1,7 +1,4 @@
 from langchain_core.tools import tool
-from docx import Document
-from docx.shared import Pt
-from docx.oxml.ns import qn
 import os
 
 @tool
@@ -18,6 +15,16 @@ def modify_word_docx(file_path: str, font_changes: dict = None, add_content: str
         dict: 操作结果
     """
     try:
+        try:
+            from docx import Document
+            from docx.shared import Pt
+            from docx.oxml.ns import qn
+        except Exception:
+            return {
+                "success": False,
+                "error": "缺少依赖 python-docx，请先安装后再使用该工具",
+                "solution": "pip install python-docx"
+            }
         # 检查文件是否存在
         if not os.path.exists(file_path):
             return {"success": False, "error": f"文件不存在: {file_path}"}
@@ -56,7 +63,8 @@ def modify_word_docx(file_path: str, font_changes: dict = None, add_content: str
             doc.add_paragraph(add_content)
         
         # 保存文档
-        backup_path = file_path.replace('.docx', '_backup.docx')
+        root, ext = os.path.splitext(file_path)
+        backup_path = f"{root}_backup{ext or '.docx'}"
         original_doc = Document(file_path)  # 重新加载原始文档以保存备份
         original_doc.save(backup_path)  # 保存备份
         

@@ -204,93 +204,93 @@ def replace_block_between_anchors(
             used_fallback = True
 
         backup_file = file_path + backup_suffix
-    shutil.copy2(file_path, backup_file)
-    tmp_file = file_path + ".tmp"
-    inserted = False
-    
-    # 增加 include_anchors 参数的处理逻辑（虽然目前签名未暴露，但可以通过 new_block 智能推断）
-    # 如果 new_block 明显包含了 start_pattern 或 end_pattern，我们应该更加谨慎
-    # 但由于工具约定是 replace_BETWEEN，我们严格遵守只替换中间内容
-    # 用户的问题在于他可能构造了包含锚点的 new_block，导致重复
-    # 修复逻辑：检测 new_block 是否包含 start/end pattern，如果是，则发出警告或尝试智能处理？
-    # 不，工具应该保持简单。我们只修复单行替换时的重复写入问题。
+        shutil.copy2(file_path, backup_file)
+        tmp_file = file_path + ".tmp"
+        inserted = False
+        
+        # 增加 include_anchors 参数的处理逻辑（虽然目前签名未暴露，但可以通过 new_block 智能推断）
+        # 如果 new_block 明显包含了 start_pattern 或 end_pattern，我们应该更加谨慎
+        # 但由于工具约定是 replace_BETWEEN，我们严格遵守只替换中间内容
+        # 用户的问题在于他可能构造了包含锚点的 new_block，导致重复
+        # 修复逻辑：检测 new_block 是否包含 start/end pattern，如果是，则发出警告或尝试智能处理？
+        # 不，工具应该保持简单。我们只修复单行替换时的重复写入问题。
 
-    if anchor_usable:
-        start_line_num = found_start_line
-        end_line_num = found_end_line
-        with open(file_path, "r", encoding=encoding, errors="ignore") as src, open(tmp_file, "w", encoding=encoding) as dst:
-            line_num = 0
-            for line in src:
-                line_num += 1
-                if line_num < start_line_num:
+        if anchor_usable:
+            start_line_num = found_start_line
+            end_line_num = found_end_line
+            with open(file_path, "r", encoding=encoding, errors="ignore") as src, open(tmp_file, "w", encoding=encoding) as dst:
+                line_num = 0
+                for line in src:
+                    line_num += 1
+                    if line_num < start_line_num:
+                        dst.write(line)
+                        continue
+                    
+                    # 特殊情况：单行替换 (start_line == end_line)
+                    if line_num == start_line_num and start_line_num == end_line_num:
+                        # 如果 start_pattern == end_pattern (例如 --- 到 ---)
+                        if start_pattern == end_pattern:
+                            # 此时这一行既是头也是尾。
+                            # 原逻辑：
+                            # dst.write(new_block)
+                            # inserted = True
+                            # 这会直接把 new_block 替换掉这一行（锚点行）。
+                            # 但 replace_BETWEEN 的定义应该是保留锚点？
+                            # 对于单行且锚点相同的情况，通常意味着这一行是分隔符。
+                            # 如果用户想在两个分隔符之间插入，那应该有两个分隔符行。
+                            # 如果只有一个分隔符行，那 "between" 是无定义的。
+                            # 但如果用户确实想替换这一行（比如把 --- 换成 ===），那这变成了 replace_line。
+                            
+                            # 观察用户案例：d:\国际新闻摘要.md
+                            # --- (line 76)
+                            # --- (line 77)
+                            # *本文档... (line 78) -> end_pattern
+                            
+                            # 用户调用：start='---', end='*本文档...'
+                            # start 匹配 line 76 (或 77)
+                            # end 匹配 line 78
+                            # 这是一个多行区间。
+                            
+                            # 问题在于：new_block 包含了 '---'。
+                            # 写入逻辑：
+                            # 1. 写 start_line (line 76) -> '---'
+                            # 2. 写 new_block -> '---\n\n*本文档...'
+                            # 3. ...
+                            # 结果：
+                            # ---
+                            # ---
+                            # *本文档...
+                            
+                            # 确实重复了。
+                            pass
+
+                        # 恢复正常逻辑
+                        dst.write(line) # 保留 start_line
+                        if new_block:
+                            dst.write(new_block)
+                            if not new_block.endswith("\n"):
+                                dst.write("\n")
+                        inserted = True if new_block else False
+                        continue
+
+                    if line_num == start_line_num:
+                        dst.write(line) # 保留 start_line
+                        if new_block:
+                            dst.write(new_block)
+                            if not new_block.endswith("\n"):
+                                dst.write("\n")
+                        inserted = True if new_block else False
+                        continue
+                    
+                    if line_num < end_line_num:
+                        # 中间行被跳过（被替换）
+                        continue
+                    
+                    if line_num == end_line_num:
+                        dst.write(line) # 保留 end_line
+                        continue
+                    
                     dst.write(line)
-                    continue
-                
-                # 特殊情况：单行替换 (start_line == end_line)
-                if line_num == start_line_num and start_line_num == end_line_num:
-                    # 如果 start_pattern == end_pattern (例如 --- 到 ---)
-                    if start_pattern == end_pattern:
-                        # 此时这一行既是头也是尾。
-                        # 原逻辑：
-                        # dst.write(new_block)
-                        # inserted = True
-                        # 这会直接把 new_block 替换掉这一行（锚点行）。
-                        # 但 replace_BETWEEN 的定义应该是保留锚点？
-                        # 对于单行且锚点相同的情况，通常意味着这一行是分隔符。
-                        # 如果用户想在两个分隔符之间插入，那应该有两个分隔符行。
-                        # 如果只有一个分隔符行，那 "between" 是无定义的。
-                        # 但如果用户确实想替换这一行（比如把 --- 换成 ===），那这变成了 replace_line。
-                        
-                        # 观察用户案例：d:\国际新闻摘要.md
-                        # --- (line 76)
-                        # --- (line 77)
-                        # *本文档... (line 78) -> end_pattern
-                        
-                        # 用户调用：start='---', end='*本文档...'
-                        # start 匹配 line 76 (或 77)
-                        # end 匹配 line 78
-                        # 这是一个多行区间。
-                        
-                        # 问题在于：new_block 包含了 '---'。
-                        # 写入逻辑：
-                        # 1. 写 start_line (line 76) -> '---'
-                        # 2. 写 new_block -> '---\n\n*本文档...'
-                        # 3. ...
-                        # 结果：
-                        # ---
-                        # ---
-                        # *本文档...
-                        
-                        # 确实重复了。
-                        pass
-
-                    # 恢复正常逻辑
-                    dst.write(line) # 保留 start_line
-                    if new_block:
-                        dst.write(new_block)
-                        if not new_block.endswith("\n"):
-                            dst.write("\n")
-                    inserted = True if new_block else False
-                    continue
-
-                if line_num == start_line_num:
-                    dst.write(line) # 保留 start_line
-                    if new_block:
-                        dst.write(new_block)
-                        if not new_block.endswith("\n"):
-                            dst.write("\n")
-                    inserted = True if new_block else False
-                    continue
-                
-                if line_num < end_line_num:
-                    # 中间行被跳过（被替换）
-                    continue
-                
-                if line_num == end_line_num:
-                    dst.write(line) # 保留 end_line
-                    continue
-                
-                dst.write(line)
         else:
             s = max(1, int(start_line))
             e = max(1, int(end_line))
