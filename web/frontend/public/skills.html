@@ -66,6 +66,7 @@
                     <button id="clearSelectionBtn" class="btn" type="button">清空选择</button>
                     <button id="createSkillBtn" class="btn primary" type="button">新增技能</button>
                     <button id="exportBtn" class="btn primary" type="button">导出Agent</button>
+                    <button id="configBtn" class="btn" type="button">全局配置</button>
                     <button id="refreshBtn" class="btn" type="button">刷新</button>
                     <button id="reloadBtn" class="btn primary" type="button">重载技能</button>
                 </div>
@@ -100,6 +101,223 @@
             </div>
         </div>
     </div>
+
+    <!-- 技能配置遮罩层 -->
+    <div id="configMask" class="modalMask">
+        <div class="modal" style="width: 800px; max-height: 80vh;">
+            <div class="modalHeader">
+                <div class="panelTitle">技能配置</div>
+                <button id="configCloseBtn" class="btn" type="button">关闭</button>
+            </div>
+            <div class="modalBody">
+                <div class="row" style="margin-bottom:10px;">
+                    <div class="detailTitle">启用技能列表 (skill_allowlist)</div>
+                    <div class="empty">请勾选需要启用的 Skill。不勾选任何 Skill 时，默认加载所有 Skill。</div>
+                </div>
+                <div class="row" style="margin-bottom:10px;">
+                    <button id="configSelectAllBtn" class="btn small" type="button">全选</button>
+                    <button id="configClearBtn" class="btn small" type="button">清空</button>
+                </div>
+                <div id="configSkillList" class="configGrid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; max-height: 500px; overflow-y: auto; padding: 4px;">
+                    <!-- 动态生成 Checkbox -->
+                </div>
+                <div class="row" style="margin-top:20px;justify-content:flex-end;">
+                    <button id="saveConfigBtn" class="btn primary" type="button">保存配置</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        var el = function(id){return document.getElementById(id)}
+        var state = {
+            skills: [],
+            filtered: [],
+            selectedKeys: {}, // {skill_id: true}
+            activeSkill: null,
+            loadability: null,
+            config: {} // 保存全局配置
+        }
+
+        // ... (省略部分代码)
+
+        function loadConfig() {
+            // 先尝试获取技能列表，确保数据存在
+            var skillsPromise = state.skills && state.skills.length > 0 
+                ? Promise.resolve() 
+                : fetch('/api/skills').then(r=>r.json()).then(data => {
+                    state.skills = data.skills || [];
+                });
+
+            skillsPromise.then(() => {
+                return fetch('/api/config/ui');
+            }).then(r=>r.json()).then(data => {
+                state.config = data.env || {};
+                var allowlistStr = state.config['AGENT_SKILL_ALLOWLIST'] || '';
+                var allowedSet = new Set();
+                if (allowlistStr) {
+                    allowlistStr.split(',').forEach(s => allowedSet.add(s.trim()));
+                }
+                
+                // 渲染 Checkbox 列表
+                var container = el('configSkillList');
+                container.innerHTML = '';
+                
+                // 确保有技能数据
+                var skillsToRender = state.skills || [];
+                if (!skillsToRender.length) {
+                    var empty = document.createElement('div');
+                    empty.className = 'empty';
+                    empty.textContent = '暂无技能数据，请先刷新页面';
+                    container.appendChild(empty);
+                    return;
+                }
+                
+                skillsToRender.forEach(skill => {
+                    // 模仿 buildSkillItem 的结构
+                    var wrap = document.createElement('div');
+                    // 如果被选中（在 allowlist 中，或者 allowlist 为空），添加 active 类
+                    // 注意：这里逻辑稍微复杂一点。
+                    // 1. 如果 allowlistStr 为空 -> 默认全选 -> checked=true -> active
+                    // 2. 如果 allowlistStr 不为空 -> 检查是否在 set 中 -> checked -> active
+                    var isChecked = !allowlistStr || allowedSet.has(skill.name);
+                    
+                    wrap.className = 'skillItem' + (isChecked ? ' active' : '');
+                    wrap.style.margin = '0'; // grid 布局不需要 margin
+                    
+                    var row = document.createElement('div');
+                    row.className = 'skillRow';
+                    
+                    var checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.className = 'check';
+                    checkbox.value = skill.name;
+                    checkbox.checked = isChecked;
+                    
+                    // 点击 Checkbox 更新样式
+                    checkbox.onclick = function(e) {
+                        e.stopPropagation();
+                        if (checkbox.checked) {
+                            wrap.classList.add('active');
+                        } else {
+                            wrap.classList.remove('active');
+                        }
+                    };
+                    
+                    var title = document.createElement('div');
+                    title.className = 'skillName';
+                    title.textContent = skill.name;
+                    title.title = skill.description || skill.name;
+                    
+                    row.appendChild(checkbox);
+                    row.appendChild(title);
+                    
+                    var meta = document.createElement('div');
+                    meta.className = 'skillMeta';
+                    
+                    var pillScope = document.createElement('span');
+                    pillScope.className = 'pill';
+                    pillScope.textContent = skill.scope === 'skills' ? '核心' : '自动';
+                    
+                    var pillTools = document.createElement('span');
+                    pillTools.className = 'pill';
+                    pillTools.textContent = '工具 ' + (skill.tools ? skill.tools.length : 0);
+                    
+                    meta.appendChild(pillScope);
+                    meta.appendChild(pillTools);
+                    
+                    wrap.appendChild(row);
+                    wrap.appendChild(meta);
+                    
+                    // 点击整个卡片切换 Checkbox
+                    wrap.onclick = function() {
+                        checkbox.checked = !checkbox.checked;
+                        if (checkbox.checked) {
+                            wrap.classList.add('active');
+                        } else {
+                            wrap.classList.remove('active');
+                        }
+                    };
+                    
+                    container.appendChild(wrap);
+                });
+                
+            }).catch(e => console.error("加载配置失败", e));
+        }
+
+        function saveConfig() {
+            // 收集选中的 skills
+            var checkboxes = el('configSkillList').querySelectorAll('input[type="checkbox"]');
+            var selected = [];
+            var allCount = checkboxes.length;
+            
+            checkboxes.forEach(cb => {
+                if (cb.checked) {
+                    selected.push(cb.value);
+                }
+            });
+            
+            var val = "";
+            if (selected.length === allCount || selected.length === 0) {
+                // 全选或全不选（默认行为）-> 空字符串
+                val = "";
+            } else {
+                val = selected.join(',');
+            }
+
+            // 修正 payload 格式以匹配后端 ConfigUpdate 模型
+            var payload = {
+                "key": "AGENT_SKILL_ALLOWLIST",
+                "value": val
+            };
+            
+            // 使用新增加的 /api/config/update 接口
+            fetch('/api/config/update', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            }).then(r=>r.json()).then(data => {
+                if(data.ok) {
+                    alert('配置已保存，请刷新或重启 Agent 生效');
+                    el('configMask').style.display = 'none';
+                    state.config['AGENT_SKILL_ALLOWLIST'] = val;
+                } else {
+                    alert('保存失败: ' + (data.error || '未知错误'));
+                }
+            }).catch(e => alert('保存异常: ' + e));
+        }
+        
+        // 绑定全选/清空按钮
+        el('configSelectAllBtn').onclick = function() {
+            el('configSkillList').querySelectorAll('.skillItem').forEach(item => {
+                item.classList.add('active');
+                item.querySelector('input').checked = true;
+            });
+        };
+        el('configClearBtn').onclick = function() {
+            el('configSkillList').querySelectorAll('.skillItem').forEach(item => {
+                item.classList.remove('active');
+                item.querySelector('input').checked = false;
+            });
+        };
+
+        // ... (在 init 中绑定按钮事件)
+        
+        // 增加“配置”按钮到顶部栏
+        // 移除旧的动态插入逻辑，因为现在直接写在 HTML 里了
+        el('configBtn').onclick = function() {
+            loadConfig(); 
+            el('configMask').style.display = 'flex';
+        };
+
+        el('configCloseBtn').onclick = function() { el('configMask').style.display = 'none'; }
+        el('saveConfigBtn').onclick = saveConfig;
+
+        // 初始化加载配置
+        loadConfig();
+
+    </script>
+
 
     <div id="createMask" class="modalMask">
         <div class="modal">

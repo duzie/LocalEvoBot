@@ -739,8 +739,11 @@ def scaffold_skill(skill_name: str, tools: list, description: str = None, overwr
         created.append(file_path)
     skill_md = os.path.join(skill_dir, "skill.md")
     usage_md = os.path.join(refs_dir, "usage.md")
+    rules_md = os.path.join(skill_dir, "rules.md")
     _snap(skill_md)
     _snap(usage_md)
+    _snap(rules_md)
+    
     skill_desc = description or "自动生成技能"
     skill_md_content = [
         "# Skill",
@@ -768,6 +771,7 @@ def scaffold_skill(skill_name: str, tools: list, description: str = None, overwr
     ]
     with open(skill_md, "w", encoding="utf-8") as f:
         f.write("\n".join(skill_md_content))
+        
     usage_md_content = [
         "# Usage",
         "",
@@ -782,6 +786,15 @@ def scaffold_skill(skill_name: str, tools: list, description: str = None, overwr
     ]
     with open(usage_md, "w", encoding="utf-8") as f:
         f.write("\n".join(usage_md_content))
+        
+    rules_md_content = [
+        f"=== {skill_name} 提示 ===",
+        "1) 请根据工具文档正确使用参数。",
+        "2) 操作前请确保相关资源已就绪。",
+    ]
+    with open(rules_md, "w", encoding="utf-8") as f:
+        f.write("\n".join(rules_md_content))
+        
     file_items = []
     for abs_fp, item in snapshot_map.items():
         after_bytes = open(abs_fp, "rb").read() if os.path.exists(abs_fp) else b""
@@ -811,7 +824,7 @@ def scaffold_skill(skill_name: str, tools: list, description: str = None, overwr
     _trim_ops(10)
     return json.dumps({
         "skill_dir": skill_dir,
-        "created_files": created + [skill_md, usage_md],
+        "created_files": created + [skill_md, usage_md, rules_md],
         "tools": tool_names
     }, ensure_ascii=False, indent=2)
 
@@ -819,6 +832,8 @@ def scaffold_skill(skill_name: str, tools: list, description: str = None, overwr
 def write_tool_code(file_path: str, code: str = None, content: str = None):
     """
     写入或覆盖工具实现代码。
+    注意：此工具仅负责更新代码文件本身，不会自动更新 skill.md/usage.md/rules.md。
+    如果工具签名发生变化，请务必手动检查并更新相关文档。
     """
     final_code = code if code is not None else content
     if not file_path or not final_code:

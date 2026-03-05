@@ -93,6 +93,7 @@ _SCHEMA_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "AGENT_MAX_ITERATIONS": {"label": "最大执行步数", "desc": "Agent 单次任务最多执行步数", "group": "Agent", "common": True},
     "AGENT_MAX_EXECUTION_TIME": {"label": "最大执行时间（秒）", "desc": "Agent 单次任务最多执行时间", "group": "Agent", "common": True},
     "AGENT_LIMITS_DISABLED": {"label": "解除执行限制", "desc": "是否解除步数/时间限制（1/0）", "group": "Agent", "common": True},
+    "AGENT_SKILL_ALLOWLIST": {"label": "启用技能列表", "desc": "允许加载的 Skill 名称列表（逗号分隔，为空则全部加载）", "group": "Agent", "common": True},
     "DEVOPS_ENC_KEY": {"label": "变更日志加密密钥", "desc": "用于加密变更日志/快照", "group": "安全/密钥", "common": False, "secret": True},
     "AUDIT_LOG_KEY": {"label": "审计日志加密密钥", "desc": "用于加密审计日志", "group": "安全/密钥", "common": False, "secret": True},
 }
@@ -502,6 +503,24 @@ async def update_config(config: ConfigUpdate):
         set_key(env_path, config.key, config.value)
         os.environ[config.key] = config.value
         return {"status": "success", "key": config.key, "value": config.value}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/update")
+async def update_config_kv(config: ConfigUpdate):
+    """
+    Update a specific environment variable (alias for POST / for better semantics)
+    """
+    env_path = _get_env_path()
+
+    try:
+        if not os.path.exists(env_path):
+            with open(env_path, "w", encoding="utf-8") as f:
+                f.write("")
+        
+        set_key(env_path, config.key, config.value)
+        os.environ[config.key] = config.value
+        return {"status": "success", "key": config.key, "value": config.value, "ok": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

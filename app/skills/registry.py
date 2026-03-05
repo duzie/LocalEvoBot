@@ -10,33 +10,17 @@ from datetime import datetime
 from typing import List, Dict, Any
 from langchain_core.tools import BaseTool
 from web.backend.shared import shared
+from app.skills.common import SkillException, error_payload as _common_error_payload, ok_payload as _common_ok_payload, emit_event as _common_emit_event
 
+# Kept for backward compatibility if any other modules import these
 def _error_payload(code: str, message: str, **fields) -> Dict[str, Any]:
-    info = {"code": str(code or "error"), "message": str(message or "")}
-    payload: Dict[str, Any] = {"ok": False, "error": info["message"], "error_info": info}
-    for k, v in (fields or {}).items():
-        if v is None:
-            continue
-        payload[str(k)] = v
-    return payload
+    return _common_error_payload(code, message, **fields)
 
 def _ok_payload(message: str = "", **fields) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {"ok": True}
-    if message:
-        payload["message"] = str(message)
-    for k, v in (fields or {}).items():
-        if v is None:
-            continue
-        payload[str(k)] = v
-    return payload
+    return _common_ok_payload(message, **fields)
 
 def _emit_event(tool_name: str, event: str, **fields):
-    payload = {"event": str(event or ""), "tool": str(tool_name or ""), "time": datetime.now().isoformat()}
-    for k, v in (fields or {}).items():
-        if v is None:
-            continue
-        payload[str(k)] = v
-    shared.broadcast_threadsafe(json.dumps(payload, ensure_ascii=False))
+    return _common_emit_event(tool_name, event, **fields)
 
 def _normalize_result(result: Any, tool_name: str, scope: str) -> Dict[str, Any]:
     if isinstance(result, dict):
@@ -103,6 +87,7 @@ class StandardizedTool(BaseTool):
     return_direct: bool = False
     inner_tool: BaseTool
     scope: str
+    skill_name: str = ""
 
     def _run(self, *args, **kwargs):
         import time
@@ -134,6 +119,24 @@ class StandardizedTool(BaseTool):
                 except Exception:
                     pass  # 审计日志失败不影响主流程
             
+        except SkillException as se:
+            duration_ms = int((time.time() - start_time) * 1000)
+            
+            # 记录失败日志
+            if audit_logger:
+                try:
+                    audit_logger.log_tool_call(
+                        tool_name=self.name,
+                        request_data=payload,
+                        error=se,
+                        duration_ms=duration_ms
+                    )
+                except Exception:
+                    pass
+
+            _emit_event(self.name, "error", scope=self.scope, error=se.message, code=se.code)
+            return _error_payload(se.code, se.message, tool=self.name, scope=self.scope, **se.details)
+
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)
             
@@ -208,8 +211,11 @@ class StandardizedTool(BaseTool):
         _emit_event(self.name, "invoke", scope=self.scope, ok=normalized.get("ok"))
         return normalized
 
-def _wrap_auto_tool(tool: BaseTool, scope: str) -> BaseTool:
+def _wrap_auto_tool(tool: BaseTool, scope: str, skill_name: str = "") -> BaseTool:
     if isinstance(tool, StandardizedTool):
+        # 如果已经有了skill_name，就不覆盖了；否则补充
+        if skill_name and not getattr(tool, "skill_name", ""):
+            tool.skill_name = skill_name
         return tool
     return StandardizedTool(
         name=getattr(tool, "name", ""),
@@ -218,6 +224,7 @@ def _wrap_auto_tool(tool: BaseTool, scope: str) -> BaseTool:
         return_direct=getattr(tool, "return_direct", False),
         inner_tool=tool,
         scope=scope,
+        skill_name=skill_name,
     )
 
 def _read_skill_entry(skill_md_path: str):
@@ -269,7 +276,13 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
 
         packages_to_scan = []
         if pkg_name.endswith(".scripts"):
-            packages_to_scan = [pkg_name]
+            # 如果直接指定了 scripts 路径，尝试反推 skill_name
+            # 例如 app.skills.board_skill.scripts -> board_skill
+            skill_name = ""
+            parts = pkg_name.split(".")
+            if len(parts) >= 2 and parts[-1] == "scripts":
+                skill_name = parts[-2]
+            packages_to_scan = [(pkg_name, skill_name)]
         elif hasattr(package, "__path__"):
             base_paths = list(package.__path__)
             for _, module_name, is_pkg in pkgutil.iter_modules(package.__path__):
@@ -282,12 +295,13 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
                         entry = _read_skill_entry(skill_md_path)
                         if entry:
                             break
+                # skill_name 就是 module_name (目录名)
                 if entry:
-                    packages_to_scan.append(entry)
+                    packages_to_scan.append((entry, module_name))
                 else:
-                    packages_to_scan.append(f"{pkg_name}.{module_name}.scripts")
+                    packages_to_scan.append((f"{pkg_name}.{module_name}.scripts", module_name))
 
-        for scripts_package in packages_to_scan:
+        for scripts_package, skill_name in packages_to_scan:
             if auto_package_name and pkg_name == auto_package_name:
                 prefixes = [scripts_package]
                 if scripts_package.endswith(".scripts"):
@@ -313,13 +327,13 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
                         found_tools = 0
                         for name, obj in inspect.getmembers(module):
                             if isinstance(obj, BaseTool):
-                                tool = _wrap_auto_tool(obj, "skills") if wrap_tools else obj
+                                tool = _wrap_auto_tool(obj, "skills", skill_name) if wrap_tools else obj
                                 tools.append(tool)
                                 found_tools += 1
                             elif inspect.isclass(obj) and issubclass(obj, BaseTool) and obj is not BaseTool:
                                 try:
                                     instance = obj()
-                                    tool = _wrap_auto_tool(instance, "skills") if wrap_tools else instance
+                                    tool = _wrap_auto_tool(instance, "skills", skill_name) if wrap_tools else instance
                                     tools.append(tool)
                                     found_tools += 1
                                 except Exception:
@@ -335,12 +349,12 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
                     module = importlib.import_module(scripts_package)
                     for name, obj in inspect.getmembers(module):
                         if isinstance(obj, BaseTool):
-                            tool = _wrap_auto_tool(obj, "skills") if wrap_tools else obj
+                            tool = _wrap_auto_tool(obj, "skills", skill_name) if wrap_tools else obj
                             tools.append(tool)
                         elif inspect.isclass(obj) and issubclass(obj, BaseTool) and obj is not BaseTool:
                             try:
                                 instance = obj()
-                                tool = _wrap_auto_tool(instance, "skills") if wrap_tools else instance
+                                tool = _wrap_auto_tool(instance, "skills", skill_name) if wrap_tools else instance
                                 tools.append(tool)
                             except Exception:
                                 pass
@@ -353,7 +367,7 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
     tools.extend(_load_from_package(package_name, wrap_tools=True))
     if auto_package_name and auto_package_name != package_name:
         auto_tools = _load_from_package(auto_package_name, wrap_tools=True)
-        tools.extend([_wrap_auto_tool(t, "auto_skills") for t in auto_tools])
+        tools.extend([_wrap_auto_tool(t, "auto_skills", getattr(t, "skill_name", "")) for t in auto_tools])
 
     # 去重 (根据 name)
     unique_tools = {t.name: t for t in tools}
