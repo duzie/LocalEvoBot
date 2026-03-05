@@ -22,3 +22,5 @@ sentence-transformers
 cryptography
 python-dotenv
 pyodbc
+
+rank_bm25

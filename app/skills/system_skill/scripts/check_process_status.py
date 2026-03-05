@@ -81,7 +81,18 @@ def _decode_bytes(data: bytes):
 @tool
 def run_shell_command(command: str, cwd: str = None, timeout: int = 60, as_json: bool = False, max_output_chars: int = 12000, save_full_output: bool = True):
     """
-    直接执行终端命令并返回输出。
+    Execute a shell command in the terminal.
+    Use this tool to:
+    - Check system status (e.g., 'chcp', 'ver', 'whoami')
+    - List files (e.g., 'dir', 'ls')
+    - Read file content (e.g., 'type filename')
+    - Run scripts (e.g., 'python script.py', 'npm install')
+    - Fix encoding issues or diagnose errors.
+
+    Args:
+        command: The command string to execute (e.g., 'dir /w', 'echo hello')
+        cwd: (Optional) Working directory for the command
+        timeout: (Optional) Timeout in seconds (default: 60)
     """
     tool_name = "run_shell_command"
     cmd = str(command or "").strip()
