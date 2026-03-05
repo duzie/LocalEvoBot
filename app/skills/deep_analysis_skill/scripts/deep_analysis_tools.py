@@ -153,10 +153,102 @@ def _chunk_by_lines(content: str, target_chars: int = 1600, overlap_lines: int =
         i = max(i + 1, j - max(0, overlap_lines))
     return chunks
 
+def _load_index_files(index_id: str) -> Dict[str, str]:
+    index_path = _get_index_path(index_id)
+    if not os.path.exists(index_path):
+        return {}
+    try:
+        with open(index_path, 'r', encoding='utf-8') as f:
+            current_index = json.load(f)
+    except Exception:
+        return {}
+    files_map: Dict[str, str] = {}
+    if isinstance(current_index, dict) and isinstance(current_index.get("files"), dict):
+        for p, item in current_index.get("files", {}).items():
+            if isinstance(item, str):
+                files_map[p] = item
+            elif isinstance(item, dict):
+                files_map[p] = str(item.get("content") or "")
+    elif isinstance(current_index, dict):
+        for p, item in current_index.items():
+            if isinstance(item, str):
+                files_map[p] = item
+            elif isinstance(item, dict):
+                files_map[p] = str(item.get("content") or "")
+    return files_map
+
+def _path_to_module(root_path: str, file_path: str) -> str:
+    try:
+        rel = os.path.relpath(file_path, root_path)
+    except Exception:
+        rel = str(file_path)
+    rel = rel.replace("\\", "/")
+    if rel.endswith("/__init__.py"):
+        rel = rel[:-len("/__init__.py")]
+    elif rel.endswith(".py"):
+        rel = rel[:-3]
+    rel = rel.strip(".")
+    return rel.replace("/", ".").strip(".")
+
+def _build_module_map(files_map: Dict[str, str]) -> Dict[str, str]:
+    if not files_map:
+        return {}
+    paths = [p for p in files_map.keys() if isinstance(p, str)]
+    root = os.path.commonpath(paths) if paths else ""
+    module_map: Dict[str, str] = {}
+    for p in paths:
+        if p.endswith(".py"):
+            module_name = _path_to_module(root, p)
+            if module_name:
+                module_map[module_name] = p
+        base = os.path.splitext(os.path.basename(p))[0]
+        if base:
+            module_map.setdefault(base, p)
+    return module_map
+
+def _extract_py_symbols(content: str) -> Tuple[List[str], List[str], List[str]]:
+    classes: List[str] = []
+    functions: List[str] = []
+    imports: List[str] = []
+    try:
+        tree = ast.parse(content)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                classes.append(node.name)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                functions.append(node.name)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name:
+                        imports.append(alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    imports.append(node.module)
+    except Exception:
+        return [], [], []
+    return sorted(set(classes)), sorted(set(functions)), sorted(set(imports))
+
+def _extract_js_symbols(content: str) -> Tuple[List[str], List[str], List[str]]:
+    classes = re.findall(r'class\s+(\w+)', content)
+    functions = re.findall(r'function\s+(\w+)', content)
+    functions += re.findall(r'const\s+(\w+)\s*=\s*\(', content)
+    imports = re.findall(r'import\s+.*?from\s+[\'"]([^\'"]+)[\'"]', content)
+    imports += re.findall(r'require\(\s*[\'"]([^\'"]+)[\'"]\s*\)', content)
+    return sorted(set(classes)), sorted(set(functions)), sorted(set(imports))
+
 # --- Tools ---
 
 @tool
-def get_project_skeleton_analysis(root_path: str = ".") -> str:
+def get_project_skeleton_analysis(
+    root_path: str = ".",
+    force_rebuild: bool = False,
+    max_depth: int = 3,
+    max_entries: int = 500,
+    include_hidden: bool = False,
+    include_symbols: bool = True,
+    extensions: List[str] = None,
+    max_lines: int = 200
+) -> str:
     """
     扫描项目结构以返回目录树和文件签名（类/函数）。
     在读取具体文件之前，使用此工具定位相关文件。
@@ -164,28 +256,63 @@ def get_project_skeleton_analysis(root_path: str = ".") -> str:
     
     Args:
         root_path: 项目根目录路径。默认为当前目录。
+        force_rebuild: 是否强制重建缓存。
+        max_depth: 最大扫描深度。
+        max_entries: 最大条目数。
+        include_hidden: 是否包含隐藏文件/目录。
+        include_symbols: 是否输出符号摘要。
+        extensions: 仅输出指定扩展名的文件（例如 [".py", ".ts"]）。
+        max_lines: 最多输出行数，避免上下文过大。
     """
     try:
+        from app.skills.project_skeleton_skill.scripts.get_project_skeleton import get_project_skeleton
         if root_path == ".":
             root_path = os.getcwd()
-        
-        skeleton = _build_skeleton(root_path)
-        
-        # Summarize output to save tokens
+        payload = get_project_skeleton.invoke({
+            "root_path": root_path,
+            "force_rebuild": force_rebuild,
+            "max_depth": max_depth,
+            "max_entries": max_entries,
+            "include_hidden": include_hidden
+        })
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            err = payload.get("error") if isinstance(payload, dict) else None
+            return f"扫描项目骨架时出错: {err or 'unknown'}"
+        entries = payload.get("entries") or []
+        allowed_ext = None
+        if extensions:
+            allowed_ext = {str(x).lower() for x in extensions if x}
         summary = []
-        for item in skeleton:
-            line = f"- {item['path']} ({item['size']} bytes)"
-            if "symbols" in item:
-                syms = item["symbols"]
+        for item in entries:
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path") or ""
+            if not path:
+                continue
+            if allowed_ext:
+                ext = os.path.splitext(path)[1].lower()
+                if ext not in allowed_ext:
+                    continue
+            line = f"- {path}"
+            size = item.get("size")
+            if size is not None:
+                line += f" ({size} bytes)"
+            if include_symbols and isinstance(item.get("symbols"), dict):
+                syms = item.get("symbols") or {}
                 parts = []
-                if syms["classes"]:
+                if syms.get("classes"):
                     parts.append(f"Classes: {', '.join(syms['classes'])}")
-                if syms["functions"]:
+                if syms.get("functions"):
                     parts.append(f"Funcs: {', '.join(syms['functions'])}")
+                if syms.get("variables"):
+                    parts.append(f"Vars: {', '.join(syms['variables'])}")
                 if parts:
                     line += f" [{'; '.join(parts)}]"
             summary.append(line)
-            
+            if max_lines and len(summary) >= int(max_lines):
+                break
+        if not summary:
+            return "未找到符合条件的文件条目。"
         return "\n".join(summary)
     except Exception as e:
         return f"扫描项目骨架时出错: {str(e)}"
@@ -415,9 +542,9 @@ def query_analysis_index(
         ])
         
         llm = create_llm()
-        chain = prompt_template | llm
-        
-        response = chain.invoke({"context": context_str, "query": query})
+        prompt_value = prompt_template.invoke({"context": context_str, "query": query})
+        messages = prompt_value.to_messages() if hasattr(prompt_value, "to_messages") else prompt_template.format_messages(context=context_str, query=query)
+        response = llm.invoke(messages)
         
         return (
             f"已选取 {len(selected_files)} 个文件、{len(context_parts)} 个片段进入分析（上下文约 {used} 字符）。\n"
@@ -426,6 +553,102 @@ def query_analysis_index(
         
     except Exception as e:
         return f"Error querying analysis index: {str(e)}"
+
+@tool
+def build_project_logic_graph(
+    index_id: str = "default",
+    focus_paths: List[str] = None,
+    max_files: int = 30,
+    max_nodes: int = 200,
+    max_edges: int = 400
+) -> str:
+    """
+    基于分析索引构建项目逻辑图（文件/符号/导入关系的紧凑图）。
+    """
+    try:
+        files_map = _load_index_files(index_id)
+        if not files_map:
+            return "分析索引为空。请先读取文件到索引中。"
+        focus = [str(p).replace("\\", "/").lower() for p in (focus_paths or []) if p]
+        items = []
+        for path, content in files_map.items():
+            p_norm = str(path).replace("\\", "/")
+            if focus:
+                if not any(f in p_norm.lower() or os.path.basename(p_norm).lower() == f for f in focus):
+                    continue
+            items.append((p_norm, content))
+        if not items:
+            items = [(str(p), c) for p, c in files_map.items()]
+        items.sort(key=lambda x: len(x[1] or ""), reverse=True)
+        safe_max_files = max(1, min(int(max_files or 30), 120))
+        items = items[:safe_max_files]
+
+        module_map = _build_module_map({p: c for p, c in items})
+        nodes: Dict[str, Dict[str, str]] = {}
+        edges: Dict[str, Dict[str, str]] = {}
+
+        def add_node(node_id: str, node_type: str, label: str, path: str = ""):
+            if node_id in nodes:
+                return
+            if len(nodes) >= max(10, int(max_nodes or 200)):
+                return
+            payload = {"id": node_id, "type": node_type, "label": label}
+            if path:
+                payload["path"] = path
+            nodes[node_id] = payload
+
+        def add_edge(source: str, target: str, edge_type: str):
+            if len(edges) >= max(20, int(max_edges or 400)):
+                return
+            key = f"{source}::{edge_type}::{target}"
+            if key in edges:
+                return
+            edges[key] = {"source": source, "target": target, "type": edge_type}
+
+        for path, content in items:
+            file_id = f"file:{path}"
+            add_node(file_id, "file", os.path.basename(path), path)
+            ext = os.path.splitext(path)[1].lower()
+            classes: List[str] = []
+            functions: List[str] = []
+            imports: List[str] = []
+            if ext == ".py":
+                classes, functions, imports = _extract_py_symbols(content)
+            elif ext in {".js", ".ts", ".jsx", ".tsx"}:
+                classes, functions, imports = _extract_js_symbols(content)
+            for name in classes:
+                sym_id = f"symbol:{path}:{name}"
+                add_node(sym_id, "class", name, path)
+                add_edge(file_id, sym_id, "defines")
+            for name in functions:
+                sym_id = f"symbol:{path}:{name}"
+                add_node(sym_id, "function", name, path)
+                add_edge(file_id, sym_id, "defines")
+            for imp in imports:
+                target_path = module_map.get(imp)
+                if target_path:
+                    target_id = f"file:{target_path}"
+                    add_node(target_id, "file", os.path.basename(target_path), target_path)
+                    add_edge(file_id, target_id, "imports")
+                else:
+                    mod_id = f"module:{imp}"
+                    add_node(mod_id, "module", imp)
+                    add_edge(file_id, mod_id, "imports")
+
+        result = {
+            "index_id": index_id,
+            "nodes": list(nodes.values()),
+            "edges": list(edges.values()),
+            "stats": {
+                "file_count": len(items),
+                "node_count": len(nodes),
+                "edge_count": len(edges),
+                "truncated": len(nodes) >= int(max_nodes or 200) or len(edges) >= int(max_edges or 400)
+            }
+        }
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return f"生成项目逻辑图失败: {str(e)}"
 
 @tool
 def clear_analysis_index(index_id: str = "default") -> str:

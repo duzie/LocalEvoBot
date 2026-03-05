@@ -79,8 +79,23 @@ def _select_skill_allowlist(user_input: str) -> List[str]:
     if has_any(["音频", "录音", "转写", "听写", "语音", ".mp3", ".wav", ".m4a", ".flac"]):
         skills.add("audio_transcribe_skill")
     if has_any(["分析", "analyze", "analysis", "代码", "code", "项目", "project", "scan", "skeleton", "index", "索引"]):
-        skills.add("deep_analysis_skill")
+        skills.update(["deep_analysis_skill", "project_skeleton_skill"])
     return sorted(skills)
+
+def _is_code_analysis_input(user_input: str) -> bool:
+    text = str(user_input or "").lower()
+    return any(k in text for k in ["分析", "analyze", "analysis", "代码", "code", "项目", "project", "scan", "skeleton", "index", "索引"])
+
+def _analysis_skill_allowlist() -> List[str]:
+    return [
+        "system_skill",
+        "deep_analysis_skill",
+        "project_skeleton_skill",
+        "file_skill",
+        "file_save_skill",
+        "file_directory_skill",
+        "file_lock_skill"
+    ]
 
 def _wa_gateway_base_url():
     host = (os.getenv("WA_GATEWAY_HOST") or "127.0.0.1").strip()
@@ -1644,6 +1659,20 @@ def main():
                     auto_input = f"用户要求搜索所有记忆。请同时检索长期记忆(get_operation_experience)与短期记忆(search_short_term_memory)，并合并后给出结论与依据。\n\n用户原始输入：{user_input}"
                 else:
                     auto_input = _maybe_apply_template(user_input, project_id, user_id)
+            if not tool_router_enabled:
+                if _is_code_analysis_input(auto_input):
+                    selected_skill_allowlist = _analysis_skill_allowlist()
+                    selected_key = ("__analysis__",) + tuple(selected_skill_allowlist)
+                    if selected_key != current_skill_allowlist_key:
+                        current_skill_allowlist = selected_skill_allowlist
+                        current_skill_allowlist_key = selected_key
+                        agent_executor = create_agent_executor(skill_allowlist=current_skill_allowlist, callbacks=tool_trace_callbacks)
+                else:
+                    selected_key = ("__all__",)
+                    if selected_key != current_skill_allowlist_key:
+                        current_skill_allowlist = None
+                        current_skill_allowlist_key = selected_key
+                        agent_executor = create_agent_executor(callbacks=tool_trace_callbacks)
             if tool_router_enabled:
                 selected_skill_allowlist = _select_skill_allowlist(auto_input)
                 selected_key = tuple(selected_skill_allowlist)

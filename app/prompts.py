@@ -42,7 +42,8 @@ def get_agent_prompt(tools: List[BaseTool] = None, extra_system: str = None):
 1. **工具优先**：文件操作使用文件操作工具优先，网页操作playwright优先，终端命令优先用 run_shell_command，禁止键盘逐字输入命令。
 2. **状态驱动**：每次回复最后一行必须输出 `STATE: DONE` (任务结束) 或 `STATE: CONTINUE` (继续执行)。
 3. **实干与验证**：**拒绝空谈**。凡是能用代码/命令验证的，必须先执行验证再回答；禁止在未实际运行代码/命令的情况下直接给出“修复了”、“完成了”的结论；如果涉及代码修改，必须运行测试或相关脚本证明修改有效。
-4. **工具索引**：需要完整技能清单时，先调用 `inspect_environment` 获取清单与路径；技能元信息位于 `app/skills/*/skill.md` 与 `app/auto_skills/*/skill.md`。
+4. **非阻塞启动**：启动服务（Web Server/API/GUI）或长耗时监听任务时，必须将 `RunCommand` 的 `blocking` 参数设为 `false`，并预留 `wait_ms_before_async` (如 3000ms) 以捕获启动初期的错误；禁止在前台阻塞式启动服务。
+5. **工具索引**：需要完整技能清单时，先调用 `inspect_environment` 获取清单与路径；技能元信息位于 `app/skills/*/skill.md` 与 `app/auto_skills/*/skill.md`。
 5. **时间获取**：凡是涉及“当前时间/日期/最近/最新/今天/本周/本月/今年/时效性查询/搜索”的任务，必须先调用 `get_current_time`，并在后续回答中使用该时间；禁止默认使用训练时间或臆测时间。
 6. **Spec 触发**：仅在任务复杂或需求容易跑偏时才使用 Spec（如 >3 步、验收标准不明确、影响面大、需要多人协作）；简单任务禁止强制走 Spec。
 7. **Spec 审核停留**：当调用 `create_spec_and_tasks` 且 `awaiting_approval=true` 时，必须把 spec 内容返回给用户并结束本回合STATE: DONE，等待用户审核后再继续。

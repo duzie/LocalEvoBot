@@ -17,6 +17,7 @@ app.skills.deep_analysis_skill.scripts
 - read_files_to_analysis_index: 将文件内容写入分析索引，避免全文进入会话历史
 - get_analysis_index_status: 查询索引状态、文件数量和总体规模
 - query_analysis_index: 基于索引做聚合分析，返回跨文件关系与证据
+- build_project_logic_graph: 基于索引生成项目逻辑图（文件/符号/导入关系）
 - clear_analysis_index: 清空索引，释放资源并开始新会话
 
 ## Platforms
