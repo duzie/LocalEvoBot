@@ -1733,8 +1733,6 @@ def main():
                 if stored_input and len(stored_input) > 12000:
                     stored_input = stored_input[:12000] + "\n...(truncated)..."
                 stored_output = visible_output
-                if stored_output and len(stored_output) > 12000:
-                    stored_output = stored_output[:12000] + "\n...(truncated)..."
                 trace_text = _load_recent_tool_traces(project_id, user_id, step_started_at, limit=50)
                 if trace_text:
                     trace_lines = []
@@ -1745,8 +1743,6 @@ def main():
                         trace_lines.append("Tool: " + s)
                     if trace_lines:
                         stored_output = (stored_output or "").rstrip() + "\n\n工具调用轨迹:\n" + "\n".join(trace_lines)
-                if stored_output and len(stored_output) > 16000:
-                    stored_output = stored_output[:16000] + "\n...(truncated)..."
                 _add_short_term_message("assistant", stored_output, project_id, user_id)
                 shared.broadcast_threadsafe("Agent: " + (stored_output or "") + "\n")
                 if wa_ctx and state != "CONTINUE":
