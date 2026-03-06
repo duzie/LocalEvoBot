@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>对话交互 - 小冬瓜智能助手</title>
     <style>
-        :root{--bg:#f5f7fb;--card:#ffffff;--border:#e5e7eb;--muted:#6b7280;--text:#0f172a;--primary:#6366f1;--primary2:#8b5cf6;--green:#22c55e;--radius:14px;--radius2:10px;--shadow:0 8px 24px rgba(15,23,42,.08);--mono:ui-monospace,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;--sans:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+        :root{--bg:#f5f7fb;--card:#ffffff;--border:#e5e7eb;--muted:#6b1024;--text:#0f172a;--primary:#6366f1;--primary2:#8b5cf6;--green:#22c55e;--radius:14px;--radius2:10px;--shadow:0 8px 24px rgba(15,23,42,.08);--mono:ui-monospace,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;--sans:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
         *{box-sizing:border-box}
         body{margin:0;font-family:var(--sans);color:var(--text);background:var(--bg)}
         .app{max-width:1120px;margin:0 auto;padding:16px}
@@ -124,8 +124,12 @@
                     <div id="chatList" class="chatList"></div>
                     <div class="chatInput">
                         <textarea id="chatInput" class="input" rows="3" placeholder="输入指令...（Enter 发送，Shift+Enter 换行）" autocomplete="off"></textarea>
-                        <button id="voiceBtn" class="btn ghost" type="button">按住说话</button>
-                        <button id="sendBtn" class="btn primary" type="button">发送</button>
+                        <div style="display:flex;gap:10px;align-items:flex-end;">
+                            <button id="uploadImageBtn" class="btn ghost" type="button" title="上传图片识别">🖼️ 图片</button>
+                            <input type="file" id="imageUpload" accept="image/*" style="display:none;" />
+                            <button id="voiceBtn" class="btn ghost" type="button">按住说话</button>
+                            <button id="sendBtn" class="btn primary" type="button">发送</button>
+                        </div>
                     </div>
                 </div>
                 <div class="auxPane">
@@ -356,16 +360,6 @@
                         break
                     }
                 }
-                
-                // 查找 "Finished chain" 的位置
-                var finishedChainIndex = -1
-                for (var i = 0; i < lines.length; i++){
-                    if (lines[i].indexOf('Finished chain') !== -1){
-                        finishedChainIndex = i
-                        break
-                    }
-                }
-                
 
                 var mainLines = []
                 var detailLines = []
@@ -377,14 +371,12 @@
                     
                     // 默认先判断是否为 detail 行
                     var detail = isDetailLine(line)
-                    
-                    // 如果存在 "Finished chain"，则之前的所有内容（包括 Finished chain 本身）都强制视为 detail
-                    if (finishedChainIndex >= 0 && i <= finishedChainIndex) {
+
+                    if (trimmed.indexOf('Finished chain') !== -1){
                         detail = true
                     }
-                    
-                    // 原有的 STATE: 逻辑保持（通常 Finished chain 在 STATE 之前或附近，如果 STATE 在更后面，也应视为 detail）
-                    if (stateIndex >= 0 && i <= stateIndex){
+
+                    if (stateIndex >= 0 && i >= stateIndex){
                         detail = true
                     }
                     
@@ -1007,6 +999,59 @@
                     state.roleLogSelected = roleLogSelect.value
                     renderRoleLogs({ logs: state.roleLogs })
                 })
+            }
+            // 图片上传功能
+            var uploadImageBtn = el('uploadImageBtn');
+            var imageUpload = el('imageUpload');
+            if (uploadImageBtn && imageUpload) {
+                uploadImageBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    imageUpload.click(); // 触发文件选择对话框
+                });
+                
+                imageUpload.addEventListener('change', function(e) {
+                    var file = e.target.files[0];
+                    if (file && file.type.startsWith('image/')) {
+                        handleImageUpload(file);
+                    }
+                });
+            }
+            
+            // 处理图片上传的函数
+            function handleImageUpload(file) {
+                if (!state.chatConnected) {
+                    appendChatMessage('>>> 系统: 请先连接到服务');
+                    return;
+                }
+                
+                var formData = new FormData();
+                formData.append('image', file);
+                
+                // 显示上传进度
+                appendChatMessage('>>> 系统: 正在上传图片并识别...');
+                
+                fetch('/api/chat/image_recognize', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(function(response) {
+                    if (!response.ok) {
+                        throw new Error('识别失败: ' + response.status);
+                    }
+                    return response.json();
+                })
+                .then(function(data) {
+                    if (data.success) {
+                        appendChatMessage('>>> 系统: 图片识别完成，已发送到AI进行分析');
+                        // 将识别结果发送给AI
+                        sendMessageText('请分析这张图片: ' + data.description);
+                    } else {
+                        appendChatMessage('>>> 系统: 图片识别失败: ' + (data.error || '未知错误'));
+                    }
+                })
+                .catch(function(error) {
+                    appendChatMessage('>>> 系统: 图片识别过程中出错: ' + error.message);
+                });
             }
             el('clearAuxBtn').addEventListener('click', function(){ el('auxList').textContent = '' })
             el('newChatBtn').addEventListener('click', function(){ 
