@@ -37,7 +37,7 @@ _GROUP_ORDER = [
 
 _SCHEMA_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "WEB_HOST": {"label": "Web 监听地址", "desc": "Web 服务绑定的 host（通常 0.0.0.0 或 127.0.0.1）", "group": "Web 控制台", "common": True},
-    "WEB_PORT": {"label": "Web 端口", "desc": "Web 服务端口（默认 5010）", "group": "Web 控制台", "common": True},
+    "WEB_PORT": {"label": "Web 端口", "desc": "Web 服务端口（默认 1024）", "group": "Web 控制台", "common": True},
     "PUBLIC_URL": {"label": "访问地址", "desc": "用于生成二维码/分享的访问地址（可填局域网或公网地址）", "group": "Web 控制台", "common": True},
     "LLM_PROVIDER": {"label": "模型提供方", "desc": "选择模型提供方（deepseek/qwen/openai/local/nim_* 等）", "group": "模型/LLM", "common": True},
     "DEEPSEEK_API_KEY": {"label": "DeepSeek API Key", "desc": "DeepSeek 密钥", "group": "DeepSeek", "common": True, "secret": True},
@@ -220,7 +220,7 @@ def _append_missing_env_keys(keys: List[str]) -> Dict[str, Any]:
 
     defaults: Dict[str, str] = {
         "WEB_HOST": "0.0.0.0",
-        "WEB_PORT": "5010",
+        "WEB_PORT": "1024",
         "WA_PROVIDER": "baileys",
         "WA_GATEWAY_HOST": "127.0.0.1",
         "WA_GATEWAY_PORT": "8787",
@@ -549,7 +549,7 @@ async def set_access_url(payload: AccessUrlUpdate):
 async def get_hosts():
     env_path = _get_env_path()
     env = dotenv_values(env_path) if os.path.exists(env_path) else {}
-    port = int(os.getenv("WEB_PORT") or env.get("WEB_PORT") or 5010)
+    port = int(os.getenv("WEB_PORT") or env.get("WEB_PORT") or 1024)
 
     candidates = []
     try:

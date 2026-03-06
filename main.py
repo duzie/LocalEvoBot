@@ -79,23 +79,8 @@ def _select_skill_allowlist(user_input: str) -> List[str]:
     if has_any(["音频", "录音", "转写", "听写", "语音", ".mp3", ".wav", ".m4a", ".flac"]):
         skills.add("audio_transcribe_skill")
     if has_any(["分析", "analyze", "analysis", "代码", "code", "项目", "project", "scan", "skeleton", "index", "索引"]):
-        skills.update(["deep_analysis_skill", "project_skeleton_skill"])
+        skills.add("deep_analysis_skill")
     return sorted(skills)
-
-def _is_code_analysis_input(user_input: str) -> bool:
-    text = str(user_input or "").lower()
-    return any(k in text for k in ["分析", "analyze", "analysis", "代码", "code", "项目", "project", "scan", "skeleton", "index", "索引"])
-
-def _analysis_skill_allowlist() -> List[str]:
-    return [
-        "system_skill",
-        "deep_analysis_skill",
-        "project_skeleton_skill",
-        "file_skill",
-        "file_save_skill",
-        "file_directory_skill",
-        "file_lock_skill"
-    ]
 
 def _wa_gateway_base_url():
     host = (os.getenv("WA_GATEWAY_HOST") or "127.0.0.1").strip()
@@ -543,6 +528,7 @@ class ShortTermToolTraceHandler(BaseCallbackHandler):
         if self.max_len and len(text) > self.max_len:
             text = text[: self.max_len] + "…"
         _add_short_term_message("tool", text, self.project_id, self.user_id)
+        shared.broadcast_threadsafe("TOOLTRACE:" + text + "\n")
 
     def on_tool_start(self, serialized, input_str=None, **kwargs):
         tool_name = None
@@ -737,6 +723,26 @@ def parse_state(output: str):
         kept.append(line.strip())
     cleaned = "\n".join([line_text for line_text in kept if line_text]).strip()
     return state, cleaned
+
+def _compute_stream_delta(prev_output: str, new_text) -> tuple[str, str]:
+    if new_text is None:
+        return prev_output or "", ""
+    if not isinstance(new_text, str):
+        new_text = str(new_text)
+    prev = prev_output or ""
+    if not prev:
+        return new_text, new_text
+    if new_text.startswith(prev):
+        return new_text, new_text[len(prev):]
+    max_len = min(len(prev), len(new_text))
+    i = 0
+    while i < max_len and prev[i] == new_text[i]:
+        i += 1
+    if len(new_text) >= len(prev) and i >= max(4, int(len(prev) * 0.5)):
+        if len(new_text) > len(prev):
+            return new_text, new_text[len(prev):]
+        return new_text, ""
+    return prev + new_text, new_text
 
 def _last_nonempty_line(text: str) -> str:
     if not text:
@@ -1498,12 +1504,11 @@ class DualOutput:
     def _sanitize_for_web(self, message):
         cleaned = ANSI_ESCAPE_RE.sub("", message)
         stripped = cleaned.strip()
-        if stripped == "User:":
+        if not stripped:
             return ""
-        lowered = cleaned.lower()
-        if any(token in lowered for token in self.blocked_tokens):
-            return ""
-        return cleaned
+        if stripped.startswith(">>>"):
+            return cleaned
+        return ""
 
     def write(self, message):
         self.original_stdout.write(message)
@@ -1659,20 +1664,6 @@ def main():
                     auto_input = f"用户要求搜索所有记忆。请同时检索长期记忆(get_operation_experience)与短期记忆(search_short_term_memory)，并合并后给出结论与依据。\n\n用户原始输入：{user_input}"
                 else:
                     auto_input = _maybe_apply_template(user_input, project_id, user_id)
-            if not tool_router_enabled:
-                if _is_code_analysis_input(auto_input):
-                    selected_skill_allowlist = _analysis_skill_allowlist()
-                    selected_key = ("__analysis__",) + tuple(selected_skill_allowlist)
-                    if selected_key != current_skill_allowlist_key:
-                        current_skill_allowlist = selected_skill_allowlist
-                        current_skill_allowlist_key = selected_key
-                        agent_executor = create_agent_executor(skill_allowlist=current_skill_allowlist, callbacks=tool_trace_callbacks)
-                else:
-                    selected_key = ("__all__",)
-                    if selected_key != current_skill_allowlist_key:
-                        current_skill_allowlist = None
-                        current_skill_allowlist_key = selected_key
-                        agent_executor = create_agent_executor(callbacks=tool_trace_callbacks)
             if tool_router_enabled:
                 selected_skill_allowlist = _select_skill_allowlist(auto_input)
                 selected_key = tuple(selected_skill_allowlist)
@@ -1707,12 +1698,7 @@ def main():
                     # 确保 text 是字符串
                     if not isinstance(text, str):
                         text = str(text)
-                    if text.startswith(raw_output):
-                        delta = text[len(raw_output):]
-                        raw_output = text
-                    else:
-                        delta = text
-                        raw_output += delta
+                    raw_output, delta = _compute_stream_delta(raw_output, text)
                     if not delta:
                         continue
                     buffer += delta
@@ -1749,7 +1735,20 @@ def main():
                 stored_output = visible_output
                 if stored_output and len(stored_output) > 12000:
                     stored_output = stored_output[:12000] + "\n...(truncated)..."
+                trace_text = _load_recent_tool_traces(project_id, user_id, step_started_at, limit=50)
+                if trace_text:
+                    trace_lines = []
+                    for ln in str(trace_text).splitlines():
+                        s = str(ln).rstrip()
+                        if not s:
+                            continue
+                        trace_lines.append("Tool: " + s)
+                    if trace_lines:
+                        stored_output = (stored_output or "").rstrip() + "\n\n工具调用轨迹:\n" + "\n".join(trace_lines)
+                if stored_output and len(stored_output) > 16000:
+                    stored_output = stored_output[:16000] + "\n...(truncated)..."
                 _add_short_term_message("assistant", stored_output, project_id, user_id)
+                shared.broadcast_threadsafe("Agent: " + (stored_output or "") + "\n")
                 if wa_ctx and state != "CONTINUE":
                     reply_text = (cleaned_output or output or "").strip()
                     if reply_text:
@@ -1786,7 +1785,7 @@ def main():
                         print(f"Agent: 技能重载失败: {e}\n")
                         try:
                             from app.skills.skillgen_skill.scripts.skill_tools import rollback_change
-                            msg = rollback_change(change_id=None)
+                            msg = rollback_change.invoke({"change_id": None})
                             print(f"Agent: 已自动回滚到最近稳定版本: {msg}\n")
                             agent_executor = create_agent_executor()
                             summary_llm = create_llm()

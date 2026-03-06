@@ -1320,7 +1320,7 @@
       "project_id": "langchain",
       "user_id": "",
       "memory_type": "behavior",
-      "created_at": "2026-02-28T17:15:52.501075+00:00",
+      "created_at": "2026-02-28T17:15:52.102475+00:00",
       "original_content": "处理音频文件时，先确认格式兼容性（采样率、编码），必要时使用 ffmpeg 预处理后再调用识别接口"
     },
     "page_content": "System: personal_cognition\nContent: 处理音频文件时，先确认格式兼容性（采样率、编码），必要时使用 ffmpeg 预处理后再调用识别接口\nTags: ASR, iFlytek, Debugging, Backend Integration, Audio Processing, Credential Management, project:langchain, scope:user, topic:behavior\nScope: user\nProject: langchain\nUser: \nType: behavior"
@@ -6003,7 +6003,7 @@
   {
     "content": "{\n  \"project\": \"langchain\",\n  \"user_id\": \"\",\n  \"blockers\": [],\n  \"mistakes\": [\n    \"Assistant initially claimed context pruning and layered exposure were missing without verifying code\",\n    \"Assistant incorrectly stated project lacked progressive disclosure mechanisms initially\"\n  ],\n  \"improvements\": {\n    \"template\": [],\n    \"prompt\": [\n      \"Consider adding task-type classifier to predefine P0 tool sets\",\n      \"Add semantic tool discovery via vector embeddings for tool descriptions\"\n    ],\n    \"skill\": [\n      \"Implement tool usage frequency analysis based on audit logs\",\n      \"Optimize tool priority adjustment based on usage statistics\"\n    ]\n  },\n  \"evidence\": [\n    \"Assistant admitted error: '非常抱歉，我之前说错了！'\",\n    \"User confirmed implementation of context pruning in `_load_rules_for_tools()`\",\n    \"User confirmed implementation of lazy loading via `skill.md Entry`\",\n    \"User confirmed chat history pruning via SQLite by date + FTS5\"\n  ],\n  \"proposed_tags\": [\n    \"progressive disclosure\",\n    \"context pruning\",\n    \"code review\",\n    \"architecture validation\",\n    \"self-correction\"\n  ]\n}",
     "metadata": {
-      "id": "4d96a725-36b8-44de-82e7-86fca2c50103",
+      "id": "4d96a725-36b8-44de-82e7-86fca2c10243",
       "system": "task_reflection",
       "tags": "progressive disclosure, context pruning, code review, architecture validation, self-correction, scope:project, project:langchain, topic:reflection",
       "tags_list": "progressive disclosure, context pruning, code review, architecture validation, self-correction, scope:project, project:langchain, topic:reflection",

@@ -8,6 +8,7 @@ import hashlib
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from typing import Dict, Any, List, Optional, Type
+from dotenv import dotenv_values
 from app.agent import create_llm
 from app.skills.registry import load_skills
 from app.integrations.mcp_client import load_mcp_tools
@@ -15,7 +16,28 @@ from app.integrations import heartbeat
 from app.prompts import get_agent_prompt
 from web.backend.shared import shared
 
-_PATH_KEYS = {"file_path", "path", "dir", "directory", "folder", "target_dir", "output_dir", "root", "base_dir", "file", "cwd"}
+_PATH_KEYS = {
+    "file_path",
+    "path",
+    "dir",
+    "directory",
+    "folder",
+    "target_dir",
+    "output_dir",
+    "root",
+    "base_dir",
+    "file",
+    "cwd",
+    "workdir",
+    "work_dir",
+    "working_dir",
+    "working_directory",
+    "workspace",
+    "workspace_dir",
+    "project_dir",
+    "project_root",
+    "repo_dir",
+}
 _LIST_PATH_KEYS = {"file_paths", "paths", "files", "dirs", "directories"}
 
 class WorkdirTool(BaseTool):
@@ -55,6 +77,50 @@ class WorkdirTool(BaseTool):
                 data["cwd"] = wd
             return await tool.ainvoke(data)
         return await tool.ainvoke({})
+
+_DOTENV_CACHE: Optional[Dict[str, Any]] = None
+
+def _get_dotenv() -> Dict[str, Any]:
+    global _DOTENV_CACHE
+    if _DOTENV_CACHE is not None:
+        return _DOTENV_CACHE
+    try:
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+        env_path = os.path.join(root, ".env")
+        _DOTENV_CACHE = dotenv_values(env_path) if os.path.exists(env_path) else {}
+    except Exception:
+        _DOTENV_CACHE = {}
+    return _DOTENV_CACHE
+
+def _read_env_value(key: str) -> str:
+    raw = os.getenv(key)
+    if raw is not None and str(raw).strip():
+        return str(raw).strip()
+    env = _get_dotenv()
+    v = env.get(key)
+    if v is None:
+        return ""
+    return str(v).strip().strip("'\"")
+
+def _compute_stream_delta(prev_output: str, new_text) -> tuple[str, str]:
+    if new_text is None:
+        return prev_output or "", ""
+    if not isinstance(new_text, str):
+        new_text = str(new_text)
+    prev = prev_output or ""
+    if not prev:
+        return new_text, new_text
+    if new_text.startswith(prev):
+        return new_text, new_text[len(prev):]
+    max_len = min(len(prev), len(new_text))
+    i = 0
+    while i < max_len and prev[i] == new_text[i]:
+        i += 1
+    if len(new_text) >= len(prev) and i >= max(4, int(len(prev) * 0.5)):
+        if len(new_text) > len(prev):
+            return new_text, new_text[len(prev):]
+        return new_text, ""
+    return prev + new_text, new_text
 
 def _get_role_log_dir():
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
@@ -165,6 +231,69 @@ def _normalize_path_value(value: str, workdir: str) -> str:
     if os.path.isabs(s):
         return s
     return os.path.abspath(os.path.join(workdir, s))
+
+_WIN_ABS_PATH_RE = re.compile(r"(?i)\b[a-z]:[\\/][^\s\"\'<>|]+")
+
+def _clean_path_candidate(raw: str) -> str:
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    s = s.strip("\"'`")
+    s = s.rstrip(".,;:)]}＞》）】")
+    s = s.lstrip("([{＜《（【")
+    return s.strip()
+
+def _try_resolve_workdir_from_text(text: str) -> str:
+    t = str(text or "")
+    if not t.strip():
+        return ""
+    candidates = []
+    for m in _WIN_ABS_PATH_RE.finditer(t):
+        candidates.append(_clean_path_candidate(m.group(0)))
+    for c in candidates:
+        if not c:
+            continue
+        p = c.replace("/", "\\")
+        if os.path.isdir(p):
+            return os.path.abspath(p)
+        if os.path.isfile(p):
+            return os.path.abspath(os.path.dirname(p))
+        parent = os.path.dirname(p)
+        if parent and os.path.isdir(parent):
+            return os.path.abspath(p)
+    return ""
+
+def _infer_workdir(board_snapshot: Optional[Dict[str, Any]], task_input: str, payload: Optional[Dict[str, Any]] = None) -> str:
+    texts = []
+    if payload:
+        for k in ("workdir", "work_dir", "working_dir", "working_directory", "workspace", "workspace_dir", "project_dir", "project_root", "repo_dir", "cwd", "root", "base_dir"):
+            v = payload.get(k)
+            if isinstance(v, str) and v.strip():
+                texts.append(v)
+    if task_input:
+        texts.append(task_input)
+    if board_snapshot:
+        for k in ("goal", "phase", "milestone"):
+            v = board_snapshot.get(k)
+            if isinstance(v, str) and v.strip():
+                texts.append(v)
+    for t in texts:
+        p = _try_resolve_workdir_from_text(t)
+        if p:
+            return p
+    return ""
+
+def _ensure_workdir(path: str) -> str:
+    wd = (path or "").strip()
+    if not wd:
+        return ""
+    if not os.path.isabs(wd):
+        wd = os.path.abspath(wd)
+    try:
+        os.makedirs(wd, exist_ok=True)
+    except Exception:
+        pass
+    return wd
 
 def _rewrite_paths(data, workdir: str, key: str = ""):
     if not workdir:
@@ -564,6 +693,22 @@ def _always_allowed_tools() -> set:
         "save_document",
         "read_document_part",
         "search_document",
+        "list_directory",
+        "search_files",
+        "get_file_info",
+        "add_vectors_to_index",
+        "batch_index_files",
+        "batch_index_files",
+        "delete_index",
+        "get_index_stats",
+        "list_indexes",
+        "optimize_index",
+        "search_vectors",
+        "analyze_file_structure",
+        "benchmark_file_reading",
+        "generate_file_summary",
+        "optimize_file_reading",
+        "smart_read_file"
     }
 
 def _infer_skills_allowlist(task_input: str) -> List[str]:
@@ -589,10 +734,19 @@ def _filter_tools(tools, allowlist: List[str]):
     allowed = set([t for t in allowlist if t]) | always_allowed
     return [t for t in tools if getattr(t, "name", "") in allowed]
 
-def _build_role_prompt(role_name: str, role_prompt: str) -> str:
+def _build_role_prompt(role_name: str, role_prompt: str, workdir: str = "") -> str:
     parts = []
     if role_name:
         parts.append(f"你当前角色是: {role_name}。")
+    wd = str(workdir or "").strip()
+    if wd:
+        parts.append(f"你的工作目录是: {wd}。你必须以此目录为唯一工作上下文，所有产出都必须基于该目录下真实存在的文件与代码。")
+        parts.append(
+            "工作约束:\n"
+            "1) 开始前必须先用工具确认项目结构与关键文件（例如 list_directory / search_files / search_document / read_document_part），不允许在未验证代码存在时凭空编造实现。\n"
+            "2) 禁止脱离当前项目另起炉灶写一套无关的“示例项目/脚手架/全新架构”。优先最小改动对接现有代码、依赖与约定。\n"
+            "3) 若需求与项目现状不匹配，先基于检索到的真实文件给出差距分析与改造路径，再动手修改。"
+        )
     if role_prompt:
         parts.append(role_prompt)
     return "\n".join(parts).strip()
@@ -739,7 +893,7 @@ def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", t
             inferred = _infer_skills_allowlist(task_input)
             allow.extend(_collect_tools_for_skills(inferred))
     tools = _filter_tools(tools, allow)
-    prompt_extra = _build_role_prompt(role_name, role_prompt)
+    prompt_extra = _build_role_prompt(role_name, role_prompt, wd)
     prompt = get_agent_prompt(tools, prompt_extra if prompt_extra else None)
     agent = create_tool_calling_agent(llm, tools, prompt)
     limits_disabled, default_max_iter, default_max_time = _resolve_role_limits()
@@ -802,12 +956,7 @@ def _execute_role_task(role_name: str, task_input: str, role_prompt: str = "", t
             # 处理最终输出的增量更新
             # 注意：LangChain 的 stream output 有时是全量，有时是增量，取决于 LLM
             # 这里沿用原有逻辑，假设是全量覆盖或增量追加
-            if text.startswith(raw_output):
-                delta = text[len(raw_output):]
-                raw_output = text
-            else:
-                delta = text
-                raw_output += delta
+            raw_output, delta = _compute_stream_delta(raw_output, text)
             if delta:
                 _append_role_log(role_name, delta)
     except Exception as e:
@@ -1715,12 +1864,16 @@ def run_role_agent(role_name: str, task_input: str, role_prompt: str = "", tools
     """
     board_snapshot = _load_board_locked()
     task = _get_task_by_id(board_snapshot, int(task_id)) if board_snapshot and task_id else None
-    env_workdir = (os.getenv("AGENT_WORKDIR") or "").strip()
-    if env_workdir and not os.path.isabs(env_workdir):
-        env_workdir = os.path.abspath(env_workdir)
-    if env_workdir:
-        os.makedirs(env_workdir, exist_ok=True)
-    effective_workdir = (workdir or output_dir or "").strip() or env_workdir or _get_board_output_dir()
+    env_workdir = _read_env_value("AGENT_WORKDIR")
+    env_workdir = _ensure_workdir(env_workdir) if env_workdir else ""
+    inferred_workdir = _infer_workdir(
+        board_snapshot,
+        "\n".join([str(task_input or ""), str(context or ""), str(summary or "")]).strip(),
+        {"workdir": workdir, "output_dir": output_dir},
+    )
+    inferred_workdir = _ensure_workdir(inferred_workdir) if inferred_workdir else ""
+    effective_workdir = (workdir or output_dir or "").strip() or env_workdir or inferred_workdir or _get_board_output_dir()
+    effective_workdir = _ensure_workdir(effective_workdir)
     payload = {"context": context, "summary": summary, "output_dir": output_dir, "workdir": workdir, "role_name": role_name}
     if not output_dir and not workdir:
         payload["output_dir"] = effective_workdir
@@ -1866,17 +2019,34 @@ def run_role_agents_parallel(tasks: List[Dict[str, Any]], max_workers: int = 3, 
                 if "role_name" not in working_payload:
                     working_payload = dict(working_payload)
                     working_payload["role_name"] = payload.get("role_name") or ""
-                selected_workdir = payload.get("workdir") or payload.get("output_dir") or payload.get("target_dir") or payload.get("directory") or ""
+                selected_workdir = (
+                    payload.get("workdir")
+                    or payload.get("work_dir")
+                    or payload.get("working_dir")
+                    or payload.get("working_directory")
+                    or payload.get("workspace")
+                    or payload.get("workspace_dir")
+                    or payload.get("project_dir")
+                    or payload.get("project_root")
+                    or payload.get("repo_dir")
+                    or payload.get("output_dir")
+                    or payload.get("target_dir")
+                    or payload.get("directory")
+                    or payload.get("cwd")
+                    or payload.get("root")
+                    or payload.get("base_dir")
+                    or ""
+                )
                 if not selected_workdir:
-                    env_workdir = (os.getenv("AGENT_WORKDIR") or "").strip()
-                    if env_workdir and not os.path.isabs(env_workdir):
-                        env_workdir = os.path.abspath(env_workdir)
-                    if env_workdir:
-                        os.makedirs(env_workdir, exist_ok=True)
-                    selected_workdir = env_workdir or _get_board_output_dir()
-                    working_payload = dict(payload)
-                    if not working_payload.get("workdir") and not working_payload.get("output_dir"):
-                        working_payload["output_dir"] = selected_workdir
+                    env_workdir = _read_env_value("AGENT_WORKDIR")
+                    env_workdir = _ensure_workdir(env_workdir) if env_workdir else ""
+                    inferred_workdir = _infer_workdir(board_snapshot, str(payload.get("task_input") or ""), payload)
+                    inferred_workdir = _ensure_workdir(inferred_workdir) if inferred_workdir else ""
+                    selected_workdir = env_workdir or inferred_workdir or _get_board_output_dir()
+                selected_workdir = _ensure_workdir(selected_workdir)
+                if selected_workdir and not working_payload.get("workdir") and not working_payload.get("output_dir"):
+                    working_payload = dict(working_payload)
+                    working_payload["output_dir"] = selected_workdir
                 merged_input = _compose_task_input(working_payload.get("task_input") or "", working_payload, board_snapshot, task)
                 lock_owner = payload.get("role_name") or f"task_{payload.get('task_id') or meta['index']}"
                 future = executor.submit(

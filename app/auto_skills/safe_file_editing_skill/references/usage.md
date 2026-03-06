@@ -4,12 +4,12 @@
 它支持纯文本替换和正则替换，并且会自动备份。
 
 **场景 1：纯文本全局替换**
-将所有的 `5010` 替换为 `5011`。
+将所有的 `1024` 替换为 `1024`。
 ```python
 simple_text_replace(
     file_path="config.py",
-    old_text="5010",
-    new_text="5011",
+    old_text="1024",
+    new_text="1024",
     is_regex=False
 )
 ```

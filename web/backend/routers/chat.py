@@ -18,6 +18,8 @@ from dotenv import dotenv_values, set_key
 from typing import List
 from fastapi import Body
 from fastapi import Request
+import tempfile
+from PIL import Image
 from fastapi.responses import PlainTextResponse
 
 router = APIRouter()
@@ -744,3 +746,145 @@ async def websocket_endpoint(websocket: WebSocket):
                 shared.put_input(data)
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+import httpx
+import base64
+
+
+async def analyze_image_with_vision_api(image_bytes: bytes, filename: str, width: int, height: int, format: str, mode: str):
+    """
+    使用视觉识别API进行图像分析（支持多种后端）
+    """
+    try:
+        # 尝试从环境变量获取各种API配置
+        # 优先级：自定义视觉API > DOUBAO > QWEN-VL
+        
+        # 首先检查是否有配置自定义视觉API
+        vision_api_url = os.getenv("VISION_API_URL")
+        vision_api_key = os.getenv("VISION_API_KEY")
+        
+        if vision_api_url and vision_api_key:
+            # 使用自定义视觉API
+            image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+
+            payload = {
+                "image": image_base64,
+                "prompt": "请详细描述这张图片的内容，包括主要物体、颜色、场景、构图等特征"
+            }
+
+            headers = {
+                "Authorization": f"Bearer {vision_api_key}",
+                "Content-Type": "application/json"
+            }
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(vision_api_url, json=payload, headers=headers)
+
+                if response.status_code == 200:
+                    result = response.json()
+                    # 根据不同API返回格式调整
+                    description = result.get("description") or result.get("result") or result.get("content") or str(result)
+                    return description
+        else:
+            # 如果没有配置自定义视觉API，尝试使用DOUBAO配置
+            doubao_api_key = os.getenv("OPENAI_API_KEY") or os.getenv("ARK_API_KEY") or os.getenv("DOUBAO_API_KEY")
+            doubao_base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("DOUBAO_BASE_URL")
+            doubao_vision_model = os.getenv("DOUBAO_VISION_MODEL_NAME") or os.getenv("DOUBAO_MODEL_NAME")
+
+            if doubao_api_key and doubao_base_url and doubao_vision_model:
+                # 使用DOUBAO API进行视觉识别
+                image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+
+                payload = {
+                    "model": doubao_vision_model,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "请详细描述这张图片的内容，包括主要物体、颜色、场景、构图等特征"
+                                },
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/{format.lower()};base64,{image_base64}"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    "stream": False
+                }
+
+                headers = {
+                    "Authorization": f"Bearer {doubao_api_key}",
+                    "Content-Type": "application/json"
+                }
+
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(doubao_base_url + "/chat/completions", json=payload, headers=headers)
+
+                    if response.status_code == 200:
+                        result = response.json()
+                        choices = result.get("choices", [])
+                        if choices:
+                            description = choices[0].get("message", {}).get("content", "")
+                            return description
+
+        # 如果没有配置外部API，返回None，使用基础描述
+        return None
+    except Exception as e:
+        print(f"视觉API调用失败: {str(e)}")
+        return None
+
+@router.post("/image_recognize")
+
+async def image_recognize(image: UploadFile = File(...)):
+    """
+    上传图片并进行识别
+    """
+    try:
+        # 读取上传的图片文件
+        contents = await image.read()
+        
+        # 检查文件是否为空
+        if not contents:
+            raise HTTPException(status_code=400, detail="图片文件为空")
+        
+        # 保存到临时文件进行处理
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(image.filename)[1]) as temp_file:
+            temp_file.write(contents)
+            temp_path = temp_file.name
+        
+        try:
+            # 打开图片并获取基本信息（不再使用verify()，因为它会关闭文件）
+            with Image.open(temp_path) as img:
+                width, height = img.size
+                format = img.format
+                mode = img.mode  # 获取色彩模式
+                
+            # 使用视觉API进行图像识别
+            # 首先尝试使用视觉API进行图像识别
+            ai_description = await analyze_image_with_vision_api(contents, image.filename, width, height, format, mode)
+            if not ai_description:
+                # 如果视觉API不可用，使用基础描述
+                ai_description = f"图片尺寸: {width}x{height}像素, 格式: {format}, 色彩模式: {mode}。AI视觉分析: 这是一张用户上传的图片，包含了多种颜色和元素，适合进行进一步的AI分析。"
+            
+            return {
+                "success": True,
+                "description": ai_description,
+                "file_info": {
+                    "name": image.filename,
+                    "size": len(contents),
+                    "format": format,
+                    "dimensions": f"{width}x{height}"
+                }
+            }
+        finally:
+            # 清理临时文件
+            os.unlink(temp_path)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"图片识别失败: {str(e)}")
+

@@ -135,6 +135,10 @@
                 <div class="auxPane">
                     <div class="auxHeader">
                         <div class="auxTitle">提示窗口（总结/模板/系统）</div>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#475569;">
+                            <input id="showToolTrace" type="checkbox" style="transform:translateY(1px);" />
+                            显示工具轨迹
+                        </label>
                         <button id="clearAuxBtn" class="btn ghost" type="button">清空</button>
                     </div>
                     <div id="confirmInline" class="confirmInline">
@@ -157,7 +161,7 @@
     <script>
         (function(){
             function el(id){return document.getElementById(id)}
-            var state = {chatConnected:false,logConnected:false,chatWs:null,logWs:null,modelCurrent:'doubao',modelOptions:[],lastAgentBubble:null,lastAgentContent:'',lastPrintedMsg:'',auxCapture:false,isSending:false,isRunning:false,stopPending:false,confirmTimer:null,confirmCountdown:null,roleLogs:[],roleLogSelected:'',sessionHistory:[],isNewSession:true}
+            var state = {chatConnected:false,logConnected:false,chatWs:null,logWs:null,modelCurrent:'doubao',modelOptions:[],lastAgentBubble:null,lastAgentContent:'',lastPrintedMsg:'',auxCapture:false,isSending:false,isRunning:false,stopPending:false,confirmTimer:null,confirmCountdown:null,roleLogs:[],roleLogSelected:'',sessionHistory:[],isNewSession:true,showToolTrace:false,toolTraceBuffer:[]}
 
             function setOnline(online){
                 var dot = el('statusDot')
@@ -326,6 +330,15 @@
                 list.scrollTop = list.scrollHeight
             }
 
+            function maybeAppendToolTrace(raw){
+                if (!state.showToolTrace) {
+                    state.toolTraceBuffer.push(raw)
+                    if (state.toolTraceBuffer.length > 200) state.toolTraceBuffer.shift()
+                    return
+                }
+                appendAuxMessage(raw)
+            }
+
 
             function _normalizeStateLine(line){
                 return String(line || '').replace(/\*/g, '').trim()
@@ -347,6 +360,43 @@
                 if (!node) return true
                 var remain = node.scrollHeight - node.scrollTop - node.clientHeight
                 return remain < 40
+            }
+
+            function mergeStreamText(prev, next){
+                var a = prev == null ? '' : String(prev)
+                var b = next == null ? '' : String(next)
+                if (!b) return a
+                if (!a) return b
+                if (a.endsWith(b)) return a
+                if (b.startsWith(a)) return b
+                var max = Math.min(a.length, b.length, 4000)
+                for (var k = max; k >= 1; k--){
+                    if (a.slice(a.length - k) === b.slice(0, k)){
+                        return a + b.slice(k)
+                    }
+                }
+                return a + b
+            }
+
+            function sanitizeAssistantContent(raw){
+                var text = raw == null ? '' : String(raw)
+                text = text.replace(/\r/g, '')
+                var idx = text.lastIndexOf('> Finished chain.')
+                if (idx !== -1){
+                    text = text.slice(idx + '> Finished chain.'.length)
+                }
+                var lines = text.split('\n')
+                var kept = []
+                for (var i = 0; i < lines.length; i++){
+                    var line = lines[i]
+                    var t = String(line || '').trim()
+                    if (!t) continue
+                    if (t.toUpperCase().indexOf('STATE:') === 0) continue
+                    if (t.indexOf('> Finished chain.') === 0) continue
+                    if (t.indexOf('Finished chain') !== -1) continue
+                    kept.push(line)
+                }
+                return kept.join('\n').trim()
             }
 
             function renderAgentBubble(bubble, content){
@@ -487,7 +537,7 @@
                     }
                     state.lastPrintedMsg = newMsg
                     var near = isNearBottom(el('chatList'))
-                    state.lastAgentContent = (state.lastAgentContent || '') + newMsg
+                    state.lastAgentContent = mergeStreamText(state.lastAgentContent || '', newMsg)
                     renderAgentBubble(state.lastAgentBubble, state.lastAgentContent)
                     if (near) el('chatList').scrollTop = el('chatList').scrollHeight
                     return
@@ -506,6 +556,7 @@
                 if (isAgent){
                     var content = msg.slice('Agent:'.length)
                     if (content.startsWith(' ')) content = content.slice(1)
+                    content = sanitizeAssistantContent(content)
                     renderAgentBubble(bubble, content)
                     state.lastAgentBubble = bubble
                     state.lastAgentContent = content
@@ -534,6 +585,11 @@
                 }
                 ws.onmessage = function(ev){
                     var data = ev.data || ''
+                    if (typeof data === 'string' && data.indexOf('TOOLTRACE:') === 0){
+                        var traceText = data.slice('TOOLTRACE:'.length).replace(/\r/g, '').trim()
+                        if (traceText) maybeAppendToolTrace(traceText)
+                        return
+                    }
                     if (typeof data === 'string' && data.indexOf('>>> 系统: 状态=') === 0){
                         if (data.indexOf('执行中') !== -1) setRunning(true)
                         if (data.indexOf('空闲') !== -1) { setRunning(false); setStopPending(false) }
@@ -549,9 +605,12 @@
                             if (state.sessionHistory === undefined) {
                                 state.sessionHistory = []
                             }
+                            var assistantText = data.slice('Agent:'.length)
+                            if (assistantText && assistantText.startsWith(' ')) assistantText = assistantText.slice(1)
+                            assistantText = sanitizeAssistantContent(assistantText)
                             state.sessionHistory.push({
                                 role: 'assistant', 
-                                content: data,
+                                content: assistantText,
                                 created_at: new Date().toISOString()
                             })
                         }
@@ -603,7 +662,11 @@
                 }
                 if (!state.isNewSession && state.sessionHistory && state.sessionHistory.length > 0) {
                     // 只取最近的8轮对话（16条消息）
-                    var recentHistory = state.sessionHistory.slice(-16)
+                    var cleanHistory = state.sessionHistory.filter(function(item){
+                        if (!item || !item.role) return false
+                        return item.role === 'user' || item.role === 'assistant'
+                    })
+                    var recentHistory = cleanHistory.slice(-16)
                     requestBody.history = recentHistory
                     console.log('Sending with history:', recentHistory.length, 'messages')
                 }
@@ -1076,7 +1139,7 @@
                     var role = item.role
                     var content = String(item.content)
                     if (role === 'user') appendChatMessage('User: ' + content, { allowConfirm: false })
-                    else if (role === 'assistant') appendChatMessage('Agent: ' + content, { allowConfirm: false })
+                    else if (role === 'assistant') appendChatMessage('Agent: ' + sanitizeAssistantContent(content), { allowConfirm: false })
                 })
             }
 

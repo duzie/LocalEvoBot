@@ -1,4 +1,4 @@
-const DEFAULT_API = "http://127.0.0.1:5010/api/chat/cookies/save";
+const DEFAULT_API = "http://127.0.0.1:1024/api/chat/cookies/save";
 
 function setBadge(text, color) {
   chrome.action.setBadgeText({ text: text || "" });

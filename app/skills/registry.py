@@ -341,7 +341,8 @@ def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.
                         if found_tools == 0:
                             # 忽略下划线开头的模块（通常是内部工具或辅助模块）
                             if not module_name.startswith("_"):
-                                print(f"Registry: No tools found in {full_module_name}")
+                                if os.getenv("SKILL_REGISTRY_VERBOSE", "").strip() == "1":
+                                    print(f"Registry: No tools found in {full_module_name}")
                     except Exception as e:
                         print(f"Registry Warning: Failed to load module {full_module_name}: {e}")
             else:
