@@ -1,6 +1,6 @@
 === 通用文本替换 ===
 1) 简单文本替换使用 `simple_text_replace`。
-2) **代码文件修改禁止使用 `replace_block_between_anchors`**：建议在修改代码文件时慎用。对于 Markdown 这种文档结构修改，我会建议 Agent 未来优先使用 safe_block_update 的 replace_between 模式，并确保 new_block 不包含锚点，或者明确使用全量替换模式。
+2) **代码文件修改禁止使用 `replace_block_between_anchors`**：建议在修改代码文件时慎用。对于 Markdown 这种文档结构修改，我会建议优先使用 safe_block_update 的 replace_between 模式，并确保 new_block 不包含锚点，或者明确使用全量替换模式。
 3) **代码修改推荐方案**：
    - Python 文件：优先使用 `python_code_edit`（AST 语法树）
    - C# 文件：优先使用 `csharp_code_edit` 或 `simple_text_replace`（完整块替换）

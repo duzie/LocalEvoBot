@@ -1034,6 +1034,7 @@
                     if (confirmBox) confirmBox.classList.remove('active')
                     // 保存历史记录到 state，并立即显示
                     state.sessionHistory = list.filter(function(item){ return item && item.content })
+                    state.isNewSession = !(state.sessionHistory && state.sessionHistory.length)
                     
                     // 立即渲染历史记录到界面
                     renderHistory();

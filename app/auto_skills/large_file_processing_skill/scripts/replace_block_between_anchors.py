@@ -71,7 +71,7 @@ def replace_block_between_anchors(
     skip_if_present: bool = True
 ) -> Dict[str, Any]:
     """
-    按锚点区间替换内容，避免重复与错位插入。
+    按锚点区间替换内容，避免重复与错位插入。写代码慎用，会导致重复
     """
     try:
         if not file_path:

@@ -535,7 +535,7 @@ async def stop_current():
 @router.get("/history")
 @router.get("/history")
 @router.get("/history")
-async def get_history(limit: int = 60):
+async def get_history(limit: int = 60, include_tool: bool = False):
     env_path = _get_env_path()
     env = dotenv_values(env_path) if os.path.exists(env_path) else {}
     base_dir = os.path.dirname(env_path)
@@ -548,11 +548,14 @@ async def get_history(limit: int = 60):
         db_paths = [_get_short_term_db_path()]
     items = []
     
-    # 修改查询逻辑，使其能够匹配数据库中user_id为空的记录
-    sql = """SELECT role, content, created_at 
+    role_clause = ""
+    if not include_tool:
+        role_clause = "AND role IN ('user','assistant')"
+    sql = f"""SELECT role, content, created_at 
              FROM short_term_messages 
              WHERE project_id = ? 
              AND (user_id = ? OR user_id IS NULL OR user_id = '') 
+             {role_clause}
              ORDER BY id DESC LIMIT ?"""
     
     for path in db_paths:
