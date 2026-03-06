@@ -415,7 +415,7 @@ def _load_short_term_messages(project_id: str, user_id: str, limit: int = 60):
 
 
 class ShortTermToolTraceHandler(BaseCallbackHandler):
-    def __init__(self, project_id: str, user_id: str, max_len: int = 2000):
+    def __init__(self, project_id: str, user_id: str, max_len: int = 12000):
         self.project_id = project_id or ""
         self.user_id = user_id or ""
 
@@ -519,6 +519,31 @@ class ShortTermToolTraceHandler(BaseCallbackHandler):
                 payload["tool_input"] = info
         return payload
 
+    def _shrink_value(self, value, max_chars: int = 6000):
+        if value is None:
+            return value
+        if isinstance(value, (dict, list)):
+            try:
+                text = json.dumps(value, ensure_ascii=False)
+            except Exception:
+                text = str(value)
+        else:
+            text = str(value)
+        if len(text) <= max_chars:
+            return value
+        head = max(200, int(max_chars * 0.65))
+        tail = max(120, int(max_chars * 0.25))
+        return text[:head].rstrip() + "\n...(truncated)...\n" + text[-tail:].lstrip()
+
+    def _shrink_payload(self, payload: dict, max_len: int):
+        out = dict(payload or {})
+        field_budget = max(1200, int(max_len * 0.75))
+        for key in ("output", "input", "tool_input", "log", "error"):
+            if key in out:
+                out[key] = self._shrink_value(out.get(key), max_chars=field_budget)
+        out["truncated"] = True
+        return out
+
     def _emit(self, payload: dict):
         payload = self._compact_payload(payload)
         try:
@@ -526,7 +551,20 @@ class ShortTermToolTraceHandler(BaseCallbackHandler):
         except Exception:
             text = str(payload)
         if self.max_len and len(text) > self.max_len:
-            text = text[: self.max_len] + "…"
+            payload = self._shrink_payload(payload, self.max_len)
+            try:
+                text = json.dumps(payload, ensure_ascii=False)
+            except Exception:
+                text = str(payload)
+            if len(text) > self.max_len:
+                minimal = {
+                    "event": payload.get("event"),
+                    "tool": payload.get("tool"),
+                    "time": payload.get("time"),
+                    "truncated": True,
+                    "preview": text[: max(200, self.max_len - 120)],
+                }
+                text = json.dumps(minimal, ensure_ascii=False)
         _add_short_term_message("tool", text, self.project_id, self.user_id)
         shared.broadcast_threadsafe("TOOLTRACE:" + text + "\n")
 
@@ -601,7 +639,64 @@ def _requests_all_memory_search(text: str):
     keywords = ["搜索所有记忆", "搜所有记忆", "搜索全部记忆", "搜全部记忆", "全量搜索记忆", "搜索全量记忆"]
     return any(k in t for k in keywords)
 
-def _load_recent_tool_traces(project_id: str, user_id: str, since_iso: str, limit: int = 12) -> str:
+def _tool_trace_text(value):
+    if value is None:
+        return ""
+    text = str(value)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return text.strip()
+
+
+def _tool_trace_block_text(value):
+    if isinstance(value, (dict, list)):
+        try:
+            return json.dumps(value, ensure_ascii=False, indent=2).strip()
+        except Exception:
+            return str(value).strip()
+    return _tool_trace_text(value)
+
+
+def _format_tool_trace_terminal(payload: dict) -> str:
+    event = str(payload.get("event") or "")
+    tool = str(payload.get("tool") or payload.get("tool_name") or "")
+    if event == "agent_action":
+        log_text = _tool_trace_text(payload.get("log"))
+        if log_text:
+            return log_text
+        tool_input = _tool_trace_text(payload.get("tool_input"))
+        if tool and tool_input:
+            return f"Invoking: `{tool}` with `{tool_input}`"
+        if tool:
+            return f"Invoking: `{tool}`"
+        return ""
+    if event == "tool_start":
+        tool_input = _tool_trace_text(payload.get("input"))
+        if tool and tool_input:
+            return f"Invoking: `{tool}` with `{tool_input}`"
+        if tool:
+            return f"Invoking: `{tool}`"
+        return ""
+    if event == "tool_end":
+        raw_output = payload.get("output")
+        if isinstance(raw_output, (dict, list)):
+            return _tool_trace_block_text(raw_output)
+        output = _tool_trace_text(raw_output)
+        if output:
+            return "responded: " + output
+        return "responded:"
+    if event == "tool_error":
+        err = _tool_trace_text(payload.get("error"))
+        return "responded: " + err if err else "responded:"
+    return ""
+
+
+def _format_tool_trace_compact(payload: dict) -> str:
+    event = str(payload.get("event") or "")
+    tool = str(payload.get("tool") or payload.get("tool_name") or "")
+    return f"- {event} {tool}".strip()
+
+
+def _load_recent_tool_traces(project_id: str, user_id: str, since_iso: str, limit: int = 12, style: str = "compact") -> str:
     base_dir = os.path.dirname(os.path.abspath(__file__))
     data_dir = os.path.join(base_dir, "app", "data")
     if not os.path.isdir(data_dir):
@@ -658,31 +753,13 @@ def _load_recent_tool_traces(project_id: str, user_id: str, since_iso: str, limi
                         continue
                 except Exception:
                     pass
-        event = payload.get("event") or ""
-        tool = payload.get("tool") or payload.get("tool_name") or ""
-        hint = ""
-        if event in {"tool_start", "tool_end"}:
-            detail = payload.get("input") if event == "tool_start" else payload.get("output")
-            if isinstance(detail, dict):
-                f = detail.get("file") or ""
-                lines = detail.get("lines") or ""
-                truncated = detail.get("truncated")
-                excerpt = detail.get("content_excerpt") or ""
-                if f:
-                    hint = f"{os.path.basename(str(f))}"
-                    if lines:
-                        hint += f":{lines}"
-                    if truncated:
-                        hint += " (truncated)"
-                    if excerpt:
-                        compact_excerpt = " ".join(str(excerpt).split())
-                        if len(compact_excerpt) > 220:
-                            compact_excerpt = compact_excerpt[:220].rstrip() + "…"
-                        hint += f' | excerpt="{compact_excerpt}"'
-        if hint:
-            items.append(f"- {event} {tool}: {hint}")
+        if style == "terminal":
+            line = _format_tool_trace_terminal(payload)
         else:
-            items.append(f"- {event} {tool}".strip())
+            line = _format_tool_trace_compact(payload)
+        line = str(line or "").strip()
+        if line:
+            items.append(line)
     if safe_limit and len(items) > safe_limit:
         items = items[-safe_limit:]
     return "\n".join(items).strip()
@@ -1679,6 +1756,7 @@ def main():
                 step_started_at = datetime.now(timezone.utc).isoformat()
                 shared.set_status("running", "执行中", auto_input)
                 print(">>> 系统: 状态=执行中")
+                shared.broadcast_threadsafe(">>> 系统: 状态=执行中")
                 stopped_found = False
                 for chunk in agent_executor.stream({
                     "input": auto_input,
@@ -1688,6 +1766,7 @@ def main():
                         # shared.clear_stop() # 不要清除，外层需要感知
                         shared.set_status("stopped", "已停止", auto_input)
                         print(">>> 系统: 状态=已停止")
+                        shared.broadcast_threadsafe(">>> 系统: 状态=已停止")
                         stopped_found = True
                         break
                     if not isinstance(chunk, dict):
@@ -1701,6 +1780,7 @@ def main():
                     raw_output, delta = _compute_stream_delta(raw_output, text)
                     if not delta:
                         continue
+                    shared.broadcast_threadsafe("AgentStream:" + delta)
                     buffer += delta
                     if RELOAD_SIGNAL in buffer:
                         buffer = buffer.replace(RELOAD_SIGNAL, "")
@@ -1721,6 +1801,7 @@ def main():
                     shared.clear_stop()
                     shared.set_status("idle", "空闲")
                     print(">>> 系统: 状态=空闲")
+                    shared.broadcast_threadsafe(">>> 系统: 状态=空闲")
                     break
 
                 output = raw_output
@@ -1733,16 +1814,9 @@ def main():
                 if stored_input and len(stored_input) > 12000:
                     stored_input = stored_input[:12000] + "\n...(truncated)..."
                 stored_output = visible_output
-                trace_text = _load_recent_tool_traces(project_id, user_id, step_started_at, limit=50)
+                trace_text = _load_recent_tool_traces(project_id, user_id, step_started_at, limit=50, style="terminal")
                 if trace_text:
-                    trace_lines = []
-                    for ln in str(trace_text).splitlines():
-                        s = str(ln).rstrip()
-                        if not s:
-                            continue
-                        trace_lines.append("Tool: " + s)
-                    if trace_lines:
-                        stored_output = (stored_output or "").rstrip() + "\n\n工具调用轨迹:\n" + "\n".join(trace_lines)
+                    stored_output = (stored_output or "").rstrip() + "\n\n工具调用轨迹:\n" + trace_text
                 _add_short_term_message("assistant", stored_output, project_id, user_id)
                 shared.broadcast_threadsafe("Agent: " + (stored_output or "") + "\n")
                 if wa_ctx and state != "CONTINUE":

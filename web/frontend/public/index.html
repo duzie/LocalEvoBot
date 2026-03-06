@@ -51,6 +51,220 @@
         .confirmInlineContent{font-size:13px;color:#334155;white-space:pre-wrap;word-break:break-word}
         .confirmInlineActions{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}
         .confirmInlineStatus{font-size:12px;color:var(--muted)}
+        /* ========== 智能文件输入样式 (方案 C) ========== */
+        .smart-drop-hint{
+            margin:12px;padding:20px;
+            border:2px dashed #cbd5e1;
+            border-radius:12px;
+            background:#f8fafc;
+            text-align:center;
+            transition:all 0.2s;
+        }
+        .smart-drop-hint.show{
+            border-color:#6366f1;
+            background:#eef2ff;
+        }
+        .drop-hint-content{
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            gap:10px;
+            color:#64748b;
+            font-size:14px;
+        }
+        .drop-icon{font-size:20px}
+        
+        .drag-over{
+            border-color:#6366f1 !important;
+            background:#eef2ff !important;
+        }
+        
+        .file-cards-container{
+            display:flex;
+            flex-direction:column;
+            gap:8px;
+            padding:8px 12px;
+            background:#f8fafc;
+            border-top:1px solid #e5e7eb;
+        }
+        
+        .file-card{
+            display:flex;
+            flex-direction:column;
+            gap:6px;
+            padding:10px 12px;
+            background:#fff;
+            border:1px solid #e5e7eb;
+            border-radius:10px;
+            box-shadow:0 2px 8px rgba(0,0,0,0.04);
+            position:relative;
+            transition:all 0.2s;
+        }
+        .file-card:hover{
+            border-color:#cbd5e1;
+            box-shadow:0 4px 12px rgba(0,0,0,0.08);
+        }
+        .file-card.image-card{
+            flex-direction:row;
+            align-items:center;
+            gap:12px;
+        }
+        
+        .file-card-header{
+            display:flex;
+            align-items:center;
+            gap:8px;
+            font-size:13px;
+        }
+        .file-icon{font-size:16px}
+        .file-name{
+            font-weight:600;
+            color:#1e293b;
+        }
+        .file-size{
+            margin-left:auto;
+            font-size:11px;
+            color:#94a3b8;
+        }
+        
+        .file-card-path{
+            font-size:11px;
+            color:#64748b;
+            font-family:var(--mono);
+            overflow:hidden;
+            text-overflow:ellipsis;
+            white-space:nowrap;
+            padding-left:24px;
+        }
+        
+        .file-card-actions{
+            display:flex;
+            gap:6px;
+            justify-content:flex-end;
+        }
+        .file-action-btn{
+            padding:4px 8px;
+            border:1px solid #e5e7eb;
+            background:#f8fafc;
+            border-radius:6px;
+            font-size:12px;
+            cursor:pointer;
+            transition:all 0.15s;
+        }
+        .file-action-btn:hover{
+            background:#e2e8f0;
+            border-color:#cbd5e1;
+        }
+        .file-remove-btn{
+            position:absolute;
+            top:8px;
+            right:8px;
+            width:24px;
+            height:24px;
+            border:none;
+            background:#fee2e2;
+            color:#dc2626;
+            border-radius:50%;
+            cursor:pointer;
+            font-size:16px;
+            line-height:1;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+        }
+        .file-remove-btn:hover{
+            background:#fecaca;
+        }
+        
+        .file-preview-modal{
+            display:none;
+            position:fixed;
+            top:0;
+            left:0;
+            right:0;
+            bottom:0;
+            background:rgba(0,0,0,0.5);
+            z-index:9999;
+            align-items:center;
+            justify-content:center;
+            padding:20px;
+        }
+        .file-preview-content{
+            background:#fff;
+            border-radius:12px;
+            max-width:800px;
+            width:100%;
+            max-height:80vh;
+            overflow:hidden;
+            display:flex;
+            flex-direction:column;
+        }
+        .file-preview-header{
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            padding:12px 16px;
+            border-bottom:1px solid #e5e7eb;
+            background:#f8fafc;
+        }
+        .file-preview-header h3{
+            margin:0;
+            font-size:14px;
+            font-weight:600;
+            color:#1e293b;
+        }
+        .close-btn{
+            width:28px;
+            height:28px;
+            border:none;
+            background:#f1f5f9;
+            border-radius:50%;
+            cursor:pointer;
+            font-size:18px;
+            color:#64748b;
+        }
+        .close-btn:hover{
+            background:#e2e8f0;
+        }
+        .file-preview-body{
+            flex:1;
+            overflow:auto;
+            padding:16px;
+            background:#fff;
+        }
+        .file-preview-body pre{
+            margin:0;
+            padding:0;
+            background:#f8fafc;
+            border-radius:8px;
+            padding:12px;
+            overflow:auto;
+            max-height:60vh;
+        }
+        .file-preview-body code{
+            font-family:var(--mono);
+            font-size:12px;
+            line-height:1.5;
+        }
+        
+        .copy-toast{
+            position:fixed;
+            bottom:20px;
+            left:50%;
+            transform:translateX(-50%);
+            background:#10b981;
+            color:#fff;
+            padding:8px 16px;
+            border-radius:8px;
+            font-size:13px;
+            box-shadow:0 4px 12px rgba(16,185,129,0.3);
+            z-index:10000;
+            animation:toastFadeIn 0.3s ease;
+        }
+        @keyframes toastFadeIn{
+            from{opacity:0;transform:translateX(-50%) translateY(10px)}
+            to{opacity:1;transform:translateX(-50%) translateY(0)}
+        }
         @media (max-width:640px){.progressGrid{grid-template-columns:1fr}.chatSplit{flex-direction:column;height:auto}.auxPane{display:none}.bubble{max-width:92vw}}
     </style>
 </head>
@@ -161,7 +375,7 @@
     <script>
         (function(){
             function el(id){return document.getElementById(id)}
-            var state = {chatConnected:false,logConnected:false,chatWs:null,logWs:null,modelCurrent:'doubao',modelOptions:[],lastAgentBubble:null,lastAgentContent:'',lastPrintedMsg:'',auxCapture:false,isSending:false,isRunning:false,stopPending:false,confirmTimer:null,confirmCountdown:null,roleLogs:[],roleLogSelected:'',sessionHistory:[],isNewSession:true,showToolTrace:false,toolTraceBuffer:[]}
+            var state = {chatConnected:false,logConnected:false,chatWs:null,logWs:null,modelCurrent:'doubao',modelOptions:[],lastAgentBubble:null,lastAgentContent:'',lastAgentDetailContent:'',lastPrintedMsg:'',auxCapture:false,isSending:false,isRunning:false,stopPending:false,confirmTimer:null,confirmCountdown:null,roleLogs:[],roleLogSelected:'',sessionHistory:[],isNewSession:true,showToolTrace:false,toolTraceBuffer:[],runningBubble:null,runningWrap:null}
 
             function setOnline(online){
                 var dot = el('statusDot')
@@ -188,6 +402,28 @@
 
             function setRunning(running){
                 state.isRunning = !!running
+                if (state.isRunning){
+                    if (!state.runningBubble){
+                        var wrap = document.createElement('div')
+                        wrap.className = 'msg'
+                        var bubble = document.createElement('div')
+                        bubble.className = 'bubble agent'
+                        renderAgentBubble(bubble, '执行中...')
+                        state.runningBubble = bubble
+                        state.runningWrap = wrap
+                        wrap.appendChild(bubble)
+                        el('chatList').appendChild(wrap)
+                        el('chatList').scrollTop = el('chatList').scrollHeight
+                    }
+                }else{
+                    if (state.runningWrap && state.runningWrap.parentNode){
+                        if (!state.lastAgentContent){
+                            state.runningWrap.parentNode.removeChild(state.runningWrap)
+                        }
+                    }
+                    state.runningBubble = null
+                    state.runningWrap = null
+                }
                 updateSendButton()
             }
 
@@ -390,7 +626,6 @@
                 for (var i = 0; i < lines.length; i++){
                     var line = lines[i]
                     var t = String(line || '').trim()
-                    if (!t) continue
                     if (t.toUpperCase().indexOf('STATE:') === 0) continue
                     if (t.indexOf('> Finished chain.') === 0) continue
                     if (t.indexOf('Finished chain') !== -1) continue
@@ -399,9 +634,60 @@
                 return kept.join('\n').trim()
             }
 
-            function renderAgentBubble(bubble, content){
+            function toolTraceValueText(v){
+                if (v == null) return ''
+                if (typeof v === 'object'){
+                    try{
+                        return JSON.stringify(v, null, 2)
+                    }catch(e){
+                        return String(v)
+                    }
+                }
+                var text = String(v)
+                return text.replace(/\r/g, '').trim()
+            }
+
+            function formatToolTraceLine(rawTrace){
+                var lineText = String(rawTrace || '').replace(/\r/g, '').trim()
+                if (!lineText) return ''
+                try{
+                    var payload = JSON.parse(lineText)
+                    var ev = payload.event || ''
+                    var tool = payload.tool || payload.tool_name || ''
+                    if (ev === 'agent_action'){
+                        var log = toolTraceValueText(payload.log)
+                        if (log) return log
+                        var actionInput = toolTraceValueText(payload.tool_input)
+                        if (tool && actionInput) return 'Invoking: `' + tool + '` with `' + actionInput + '`'
+                        if (tool) return 'Invoking: `' + tool + '`'
+                        return ''
+                    }
+                    if (ev === 'tool_start'){
+                        var input = toolTraceValueText(payload.input)
+                        if (tool && input) return 'Invoking: `' + tool + '` with `' + input + '`'
+                        if (tool) return 'Invoking: `' + tool + '`'
+                        return ''
+                    }
+                    if (ev === 'tool_end'){
+                        if (payload.output && typeof payload.output === 'object'){
+                            return toolTraceValueText(payload.output)
+                        }
+                        var output = toolTraceValueText(payload.output)
+                        return output ? ('responded: ' + output) : 'responded:'
+                    }
+                    if (ev === 'tool_error'){
+                        var err = toolTraceValueText(payload.error)
+                        return err ? ('responded: ' + err) : 'responded:'
+                    }
+                    return ''
+                }catch(e){
+                    return lineText
+                }
+            }
+
+            function renderAgentBubble(bubble, content, detailExtra, forceOpenDetails, showAllDetails){
                 bubble.textContent = ''
-                var shouldOpenDetails = (bubble.dataset && bubble.dataset.detailsOpen === '1')
+                var shouldOpenDetails = (forceOpenDetails === true) || (bubble.dataset && bubble.dataset.detailsOpen === '1')
                 var lines = String(content || '').replace(/\r/g, '').split('\n')
                 var stateIndex = -1
                 for (var i = 0; i < lines.length; i++){
@@ -418,8 +704,10 @@
                 for (var i = 0; i < lines.length; i++){
                     var line = lines[i]
                     var trimmed = line.trim()
-                    
-                    // 默认先判断是否为 detail 行
+                    if (showAllDetails === true){
+                        if (trimmed) mainLines.push(line)
+                        continue
+                    }
                     var detail = isDetailLine(line)
 
                     if (trimmed.indexOf('Finished chain') !== -1){
@@ -430,7 +718,6 @@
                         detail = true
                     }
                     
-                    // 延续性判断：如果上一行是 detail，且当前行看起来是 JSON/代码块的延续，也视为 detail
                     if (!detail && lastDetail){
                         if (trimmed === '' || trimmed.indexOf('{') === 0 || trimmed.indexOf('[') === 0 || trimmed.indexOf('}') === 0 || trimmed.indexOf(']') === 0){
                             detail = true
@@ -450,6 +737,14 @@
                     main.className = 'bubbleMain'
                     main.textContent = mainLines.join('\n')
                     bubble.appendChild(main)
+                }
+                if (detailExtra){
+                    var extraLines = String(detailExtra || '').replace(/\r/g, '').split('\n')
+                    for (var j = 0; j < extraLines.length; j++){
+                        if (String(extraLines[j] || '').trim()){
+                            detailLines.push(extraLines[j])
+                        }
+                    }
                 }
                 if (detailLines.length){
                     var prevScrollTop = bubble.dataset.detailsScrollTop ? parseInt(bubble.dataset.detailsScrollTop, 10) || 0 : 0
@@ -523,6 +818,7 @@
                     state.auxCapture = false
                     state.lastAgentBubble = null
                     state.lastAgentContent = ''
+                    state.lastAgentDetailContent = ''
                 }
 
                 if (!isUser && !isAgent && !isSystem && state.lastAgentBubble){
@@ -531,14 +827,13 @@
                         return
                     }
                     var newMsg = msg.replace(/\r/g, '')
-                    // 去重检查：只跳过完全相同的消息（防止网络重试导致重复）
                     if (state.lastPrintedMsg && state.lastPrintedMsg === newMsg){
                         return
                     }
                     state.lastPrintedMsg = newMsg
                     var near = isNearBottom(el('chatList'))
                     state.lastAgentContent = mergeStreamText(state.lastAgentContent || '', newMsg)
-                    renderAgentBubble(state.lastAgentBubble, state.lastAgentContent)
+                    renderAgentBubble(state.lastAgentBubble, state.lastAgentContent, state.lastAgentDetailContent)
                     if (near) el('chatList').scrollTop = el('chatList').scrollHeight
                     return
                 }
@@ -554,16 +849,22 @@
                 bubble.className = 'bubble ' + type
                 var near = isNearBottom(el('chatList'))
                 if (isAgent){
-                    var content = msg.slice('Agent:'.length)
-                    if (content.startsWith(' ')) content = content.slice(1)
-                    content = sanitizeAssistantContent(content)
-                    renderAgentBubble(bubble, content)
+                    var rawContent = msg.slice('Agent:'.length)
+                    if (rawContent.startsWith(' ')) rawContent = rawContent.slice(1)
+                    var content = sanitizeAssistantContent(rawContent)
+                    if (state.runningWrap && state.runningWrap.parentNode && state.runningBubble === bubble){
+                        state.runningWrap = null
+                        state.runningBubble = null
+                    }
+                    state.lastAgentDetailContent = rawContent 
+                    renderAgentBubble(bubble, content, null, false, false)
                     state.lastAgentBubble = bubble
                     state.lastAgentContent = content
                 }else{
                     bubble.textContent = msg
                     state.lastAgentBubble = null
                     state.lastAgentContent = ''
+                    state.lastAgentDetailContent = ''
                 }
                 wrap.appendChild(bubble)
                 el('chatList').appendChild(wrap)
@@ -585,9 +886,60 @@
                 }
                 ws.onmessage = function(ev){
                     var data = ev.data || ''
+                    if (typeof data === 'string' && data.indexOf('AgentStream:') === 0){
+                        var chunk = data.slice('AgentStream:'.length)
+                        if (!state.lastAgentBubble){
+                            if (state.runningBubble){
+                                state.lastAgentBubble = state.runningBubble
+                                state.lastAgentContent = ''
+                                state.lastAgentDetailContent = ''
+                            }
+                        }
+                        if (!state.lastAgentBubble){
+                            var wrap = document.createElement('div')
+                            wrap.className = 'msg'
+                            var bubble = document.createElement('div')
+                            bubble.className = 'bubble agent'
+                            renderAgentBubble(bubble, '', '', true, true)
+                            state.lastAgentBubble = bubble
+                            state.lastAgentContent = ''
+                            state.lastAgentDetailContent = ''
+                            wrap.appendChild(bubble)
+                            el('chatList').appendChild(wrap)
+                        }
+                        var near = isNearBottom(el('chatList'))
+                        state.lastAgentDetailContent = mergeStreamText(state.lastAgentDetailContent || '', chunk)
+                        renderAgentBubble(state.lastAgentBubble, state.lastAgentContent, state.lastAgentDetailContent, true, true)
+                        if (near) el('chatList').scrollTop = el('chatList').scrollHeight
+                        return
+                    }
                     if (typeof data === 'string' && data.indexOf('TOOLTRACE:') === 0){
-                        var traceText = data.slice('TOOLTRACE:'.length).replace(/\r/g, '').trim()
-                        if (traceText) maybeAppendToolTrace(traceText)
+                        var rawTrace = data.slice('TOOLTRACE:'.length).replace(/\r/g, '').trim()
+                        if (rawTrace){
+                            var lineText = formatToolTraceLine(rawTrace)
+                            if (!lineText){
+                                if (rawTrace) maybeAppendToolTrace(rawTrace)
+                                return
+                            }
+                            if (!state.lastAgentBubble){
+                                var wrap2 = document.createElement('div')
+                                wrap2.className = 'msg'
+                                var bubble2 = document.createElement('div')
+                                bubble2.className = 'bubble agent'
+                                renderAgentBubble(bubble2, '', lineText, true, true)
+                                state.lastAgentBubble = bubble2
+                                state.lastAgentContent = ''
+                                state.lastAgentDetailContent = lineText
+                                wrap2.appendChild(bubble2)
+                                el('chatList').appendChild(wrap2)
+                            }else{
+                                state.lastAgentDetailContent = mergeStreamText(state.lastAgentDetailContent || '', lineText + '\n')
+                                renderAgentBubble(state.lastAgentBubble, state.lastAgentContent, state.lastAgentDetailContent, true, true)
+                            }
+                            var near2 = isNearBottom(el('chatList'))
+                            if (near2) el('chatList').scrollTop = el('chatList').scrollHeight
+                        }
+                        if (rawTrace) maybeAppendToolTrace(rawTrace)
                         return
                     }
                     if (typeof data === 'string' && data.indexOf('>>> 系统: 状态=') === 0){
@@ -826,7 +1178,7 @@
                 })
             }
 
-            function sendOrStop(){
+function sendOrStop(){
                 if (state.stopPending){
                     return
                 }
@@ -836,7 +1188,22 @@
                 }
                 var input = el('chatInput')
                 var msg = (input.value || '').trim()
-                if (!msg || !state.chatConnected) return
+                
+                // 获取待发送的文件路径（从 SmartFileInput 组件）
+                var filePaths = []
+                if (window.smartFileInput && typeof window.smartFileInput.getPendingFilePaths === 'function') {
+                    filePaths = window.smartFileInput.getPendingFilePaths()
+                }
+                
+                // 如果有文件卡片，将路径附加到消息中
+                if (filePaths.length > 0) {
+                    var pathPrefix = filePaths.map(function(p) { return '@' + p }).join(' ')
+                    msg = pathPrefix + (msg ? '\n' + msg : '')
+                    // 清空文件卡片
+                    window.smartFileInput.clearFileCards()
+                }
+                
+                if (!msg && filePaths.length === 0 || !state.chatConnected) return
                 input.value = ''
                 sendMessageText(msg)
             }
@@ -1140,7 +1507,7 @@
                     var role = item.role
                     var content = String(item.content)
                     if (role === 'user') appendChatMessage('User: ' + content, { allowConfirm: false })
-                    else if (role === 'assistant') appendChatMessage('Agent: ' + sanitizeAssistantContent(content), { allowConfirm: false })
+                    else if (role === 'assistant') appendChatMessage('Agent: ' + content, { allowConfirm: false })
                 })
             }
 
@@ -1173,7 +1540,103 @@
             
             // 页面加载完成后渲染历史记录
             setTimeout(renderHistory, 500)
+            
+            // ========== 阻止浏览器默认拖拽行为（关键修复）==========
+            // 防止拖拽文件时浏览器直接打开文件
+            document.addEventListener('dragenter', function(e) {
+                e.preventDefault()
+            }, true)
+            
+            document.addEventListener('dragover', function(e) {
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'copy'
+            }, true)
+            
+            document.addEventListener('drop', function(e) {
+                e.preventDefault()
+            }, true)
+            
+            document.addEventListener('dragleave', function(e) {
+                e.preventDefault()
+            }, true)
+            
         })();
+    </script>
+    
+    <!-- 智能文件输入组件 (方案 C) -->
+    <script src="smart-file-input.js"></script>
+    <script>
+        // 初始化智能文件输入组件
+        (function(){
+            setTimeout(function() {
+                if (typeof SmartFileInput !== 'undefined') {
+                    window.smartFileInput = new SmartFileInput({
+                        chatInput: document.getElementById('chatInput'),
+                        chatList: document.getElementById('chatList'),
+                        sendBtn: document.getElementById('sendBtn'),
+                        projectRoot: 'D:\\\\dfCode\\\\agentCoderBuilding'
+                    })
+                    console.log('[Index] ✅ SmartFileInput 初始化成功')
+                    console.log('[Index] 拖拽区域:', window.smartFileInput.dropZone)
+                } else {
+                    console.error('[Index] ❌ SmartFileInput 类未定义')
+                }
+            }, 100)
+        })();
+    </script>
+    
+    <!-- ========== 拖拽功能调试（关键测试） ========== -->
+    <script>
+        (function(){
+            console.log('[DragDebug] 初始化全局拖拽监听...')
+            
+            // 全局阻止默认行为
+            document.addEventListener('dragenter', function(e){
+                e.preventDefault()
+                e.stopPropagation()
+                console.log('[DragDebug] ✅ dragenter - target:', e.target.tagName)
+            }, true)
+            
+            document.addEventListener('dragover', function(e){
+                e.preventDefault()
+                e.stopPropagation()
+                e.dataTransfer.dropEffect = 'copy'
+                console.log('[DragDebug] ✅ dragover')
+            }, true)
+            
+            document.addEventListener('drop', function(e){
+                e.preventDefault()
+                e.stopPropagation()
+                const files = e.dataTransfer.files
+                console.log('[DragDebug] ✅ drop - files:', files.length)
+                
+                if (files.length > 0) {
+                    const file = files[0]
+                    console.log('[DragDebug] 文件信息:', file.name, file.size, 'bytes')
+                    
+                    // 调用 SmartFileInput 的处理函数
+                    if (window.smartFileInput && typeof window.smartFileInput.handleDrop === 'function') {
+                        console.log('[DragDebug] ✅ 调用 SmartFileInput.handleDrop()')
+                        window.smartFileInput.handleDrop(e.dataTransfer)
+                    } else {
+                        // 降级处理：直接显示文件名
+                        const input = document.getElementById('chatInput')
+                        if (input) {
+                            input.value = '📎 拖拽成功：' + file.name + ' (' + (file.size/1024).toFixed(1) + ' KB)'
+                            console.log('[DragDebug] ⚠️ SmartFileInput 未就绪，仅显示文本')
+                        }
+                    }
+                }
+            }, true)
+            
+            document.addEventListener('dragleave', function(e){
+                e.preventDefault()
+                e.stopPropagation()
+            }, true)
+            
+            console.log('[DragDebug] ✅ 全局拖拽监听已激活')
+            console.log('[DragDebug] 请从资源管理器拖拽文件到页面任意位置')
+        })()
     </script>
 </body>
 </html>
