@@ -1,4 +1,4 @@
-import os
+﻿import os
 import platform
 import ctypes
 import sys
@@ -24,6 +24,7 @@ os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 os.environ.setdefault("HUGGINGFACE_HUB_ENDPOINT", "https://hf-mirror.com")
 
 from app.agent import create_agent_executor, create_llm
+from app.context.transcript_manager import get_session_manager
 from app.skills.system_skill.scripts.experience_tools import add_operation_experience, get_operation_experience
 from langchain.callbacks.base import BaseCallbackHandler
 from dotenv import dotenv_values
