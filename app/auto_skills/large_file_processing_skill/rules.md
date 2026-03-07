@@ -1,12 +1,9 @@
-=== 通用文本替换 ===
-1) 简单文本替换使用 `simple_text_replace`。
-2) **代码文件修改禁止使用 `replace_block_between_anchors`**：建议在修改代码文件时慎用。对于 Markdown 这种文档结构修改，我会建议优先使用 safe_block_update 的 replace_between 模式，并确保 new_block 不包含锚点，或者明确使用全量替换模式。
-3) **代码修改推荐方案**：
-   - Python 文件：优先使用 `python_code_edit`（AST 语法树）
-   - C# 文件：优先使用 `csharp_code_edit` 或 `simple_text_replace`（完整块替换）
-   - JSON 文件：优先使用 `json_file_edit`
-   - 其他文件：使用 `safe_block_update` 并提供 `expected_old` 校验
-4) `replace_block_between_anchors` 仅限简单配置文件使用，且必须验证 `expected_old`。
-5) 锚点失败才允许行号兜底。
-6) 插入/替换开启 `skip_if_present`；`insert_text_at_line` 需 `expected_pattern`，重叠开启 `dedupe_overlap`。
-7) `safe_file_merge` 仅做新增插入，函数定义必须 `before_pattern` 或区间替换，禁止 `after_pattern`。
+=== 代码修改规则 ===
+1) **代码文件修改必须使用行号定位**：优先使用 `replace_lines`、`insert_lines`、`delete_lines`，通过 `get_line_content` 确认行号后操作。
+2) **禁止使用锚点搜索**：所有基于正则表达式或文本模式的锚点匹配工具（如 replace_block_between_anchors、safe_block_update）已废弃，因其在代码文件中容易匹配错误或重复。
+3) **行号操作流程**：
+   - 步骤1：使用 `get_line_content(file_path, line_number, context_lines=5)` 查看目标行及上下文
+   - 步骤2：确认行号正确后，使用 `replace_lines`/`insert_lines`/`delete_lines` 执行操作
+4) **大文件分块读取**：使用 `read_large_file_chunks` 分块读取大文件，避免一次性加载。
+5) **备份与恢复**：所有修改操作自动创建 .bak 备份，必要时使用 `restore_from_backup` 恢复。
+6) **完整性校验**：修改后使用 `validate_file_integrity` 检查文件完整性。

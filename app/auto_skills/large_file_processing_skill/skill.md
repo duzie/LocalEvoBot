@@ -7,18 +7,14 @@ large_file_processing_skill
 1.0.0
 
 ## Description
-大文件安全处理技能，支持分块读取、锚点校验替换、流式改写、原子替换、备份恢复与完整性校验
+大文件安全处理技能，支持分块读取、行号精确定位修改、备份恢复与完整性校验
 
 ## Entry
 app.auto_skills.large_file_processing_skill.scripts
 
 ## Tools
 - read_large_file_chunks
-- safe_file_merge
-- extract_and_merge_class
-- truncate_incomplete_tail
-- replace_block_between_anchors
-- safe_block_update
+- line_based_replacer (replace_lines, insert_lines, delete_lines, get_line_content)
 - validate_file_integrity
 - restore_from_backup
 

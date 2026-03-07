@@ -1,24 +1,77 @@
 # Usage
 
 ## Scope
-大文件安全处理技能，支持分块读取、增量编辑、流式改写、原子替换与备份恢复等功能
+大文件安全处理技能，支持分块读取、行号精确定位修改、备份恢复与完整性校验
 
 ## Tools
 - read_large_file_chunks
-- safe_file_merge
-- extract_and_merge_class
-- truncate_incomplete_tail
-- replace_block_between_anchors
-- safe_block_update
+- replace_lines
+- insert_lines
+- delete_lines
+- get_line_content
 - validate_file_integrity
 - restore_from_backup
 
 ## Examples
-- 修改场景优先区间替换：replace_block_between_anchors(..., expected_old="def foo")
-- 锚点失败才允许行号兜底：replace_block_between_anchors(..., allow_fallback=True, start_line=120, end_line=180, expected_old="def foo")
-- 大块替换增加内容校验：safe_block_update(..., expected_old="def foo")
-- 大文件编辑优先流式改写：safe_block_update(..., insert_mode="replace_between", expected_old="def foo")
-- 避免重复写入：replace_block_between_anchors(..., skip_if_present=True)
-- 全链路精确修改：replace_block_between_anchors(..., expected_old="def foo", skip_if_present=True, allow_fallback=False)
-- 在函数前插入新函数：safe_file_merge(..., insert_position="before_pattern", anchor_pattern="^def target_function\\(", skip_if_present=True)
-- 修改完成后校验：validate_file_integrity(...)
+
+### 代码修改标准流程
+```python
+# 步骤1：查看目标行及上下文
+get_line_content(
+    file_path="app/views.py",
+    line_number=42,
+    context_lines=5
+)
+# 确认行号正确后再操作
+
+# 步骤2：替换指定行
+replace_lines(
+    file_path="app/views.py",
+    new_content="def new_function():\n    return 'new'",
+    start_line=42,
+    end_line=42
+)
+
+# 步骤3：在指定行前插入
+insert_lines(
+    file_path="app/models.py",
+    new_content="class NewModel:",
+    line_number=20
+)
+
+# 步骤4：删除指定行
+delete_lines(
+    file_path="app/views.py",
+    start_line=10,
+    end_line=15
+)
+```
+
+### 大文件处理
+```python
+# 分块读取大文件
+read_large_file_chunks(
+    file_path="large.log",
+    chunk_size=1000,
+    encoding="utf-8"
+)
+
+# 校验文件完整性
+validate_file_integrity(
+    file_path="app/views.py",
+    expected_size=10240,
+    checksum_algorithm="md5"
+)
+
+# 恢复备份
+restore_from_backup(
+    file_path="app/views.py",
+    backup_suffix=".bak"
+)
+```
+
+### 最佳实践
+- ✅ **先确认，后操作**：使用 `get_line_content` 确认行号后再修改
+- ✅ **小范围修改**：单次修改不超过50行
+- ✅ **自动备份**：所有修改自动创建 .bak 备份
+- ✅ **校验结果**：修改后使用 `validate_file_integrity` 校验

@@ -115,5 +115,122 @@
   }
 
   window.renderShell = buildShell
+  
+  // 上下文监控和压缩功能
+  // 注意：这些函数依赖于 index.html 中定义的 el() 和 state
+  // 所以需要在 index.html 加载后才能调用
+  window.updateContextUsage = function() {
+    var el = window.el || function(id){return document.getElementById(id)}
+    var state = window.state || {sessionHistory:[],modelCurrent:'doubao',modelOptions:[],isSending:false,isRunning:false}
+    
+    var contextUsed = el('contextUsed')
+    var contextTotal = el('contextTotal')
+    var contextRemaining = el('contextRemaining')
+    var contextUsageBar = el('contextUsageBar')
+    var contextUsageText = el('contextUsageText')
+    var compressBtn = el('compressContextBtn')
+    
+    if (!contextUsed || !contextTotal || !contextUsageBar) return
+    
+    // 获取当前模型的上下文窗口
+    var modelOptions = state.modelOptions || []
+    var currentModel = state.modelCurrent || 'doubao'
+    var maxTokens = 0
+    
+    modelOptions.forEach(function(m) {
+      if (m.id === currentModel || m.name === currentModel) {
+        maxTokens = m.contextWindow || m.maxTokens || 100000
+      }
+    })
+    
+    if (maxTokens === 0) {
+      if (contextUsageText) contextUsageText.textContent = '未知'
+      contextUsageBar.style.width = '0%'
+      if (compressBtn) compressBtn.disabled = true
+      return
+    }
+    
+    // 估算当前上下文使用量（基于历史记录）
+    var estimatedTokens = 0
+    if (state.sessionHistory && state.sessionHistory.length > 0) {
+      // 简单估算：每个字符约4个token
+      var historyText = JSON.stringify(state.sessionHistory)
+      estimatedTokens = Math.floor(historyText.length / 4)
+    }
+    
+    // 确保 estimatedTokens 不超过 maxTokens
+    if (estimatedTokens > maxTokens) {
+      estimatedTokens = maxTokens - 1000
+    }
+    
+    var remaining = maxTokens - estimatedTokens
+    var usagePercent = (estimatedTokens / maxTokens) * 100
+    
+    // 更新显示
+    if (contextUsed) contextUsed.textContent = estimatedTokens.toLocaleString()
+    if (contextTotal) contextTotal.textContent = maxTokens.toLocaleString()
+    if (contextRemaining) contextRemaining.textContent = remaining.toLocaleString()
+    if (contextUsageText) contextUsageText.textContent = usagePercent.toFixed(1) + '%'
+    contextUsageBar.style.width = usagePercent + '%'
+    
+    // 设置颜色
+    if (usagePercent >= 95) {
+      contextUsageBar.style.background = 'linear-gradient(90deg, #ef4444 0%, #dc2626 100%)'
+    } else if (usagePercent >= 85) {
+      contextUsageBar.style.background = 'linear-gradient(90deg, #f97316 0%, #ea580c 100%)'
+    } else if (usagePercent >= 70) {
+      contextUsageBar.style.background = 'linear-gradient(90deg, #eab308 0%, #ca8a04 100%)'
+    } else {
+      contextUsageBar.style.background = 'linear-gradient(90deg, var(--primary) 0%, var(--primary2) 100%)'
+    }
+    
+    if (compressBtn) compressBtn.disabled = false
+    
+    // 自动压缩（超过85%）
+    if (usagePercent >= 85 && !state.isSending && !state.isRunning) {
+      setTimeout(function() {
+        if (typeof compressContext === 'function') {
+          if (confirm('上下文使用率已达 ' + usagePercent.toFixed(1) + '%，是否自动压缩上下文以节省token？')) {
+            compressContext()
+          }
+        }
+      }, 1000)
+    }
+  }
+  
+  window.compressContext = function() {
+    var el = window.el || function(id){return document.getElementById(id)}
+    var state = window.state || {isSending:false,isRunning:false}
+    
+    var compressBtn = el('compressContextBtn')
+    var originalText = compressBtn ? compressBtn.textContent : '压缩上下文'
+    
+    if (compressBtn) {
+      compressBtn.textContent = '压缩中...'
+      compressBtn.disabled = true
+    }
+    
+    fetch('/api/chat/compact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    }).then(function(res) {
+      if (res.ok) {
+        alert('上下文已压缩！')
+        // 刷新历史记录
+        if (typeof loadHistory === 'function') loadHistory()
+        if (typeof updateContextUsage === 'function') updateContextUsage()
+      } else {
+        alert('压缩失败：' + res.status)
+      }
+    }).catch(function(e) {
+      alert('压缩出错：' + e.message)
+    }).finally(function() {
+      if (compressBtn) {
+        compressBtn.textContent = originalText
+        compressBtn.disabled = false
+      }
+    })
+  }
 })()
 

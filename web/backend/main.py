@@ -15,7 +15,7 @@ if not (os.getenv("HF_HOME") or "").strip():
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     os.environ["HF_HOME"] = os.path.join(project_root, "app", "data", "hf_cache")
 
-from web.backend.routers import logs, chat, config, skills
+from web.backend.routers import logs, chat, config, skills, files
 
 from web.backend.routers import audit_logs
 
@@ -52,6 +52,7 @@ app.include_router(logs.router, prefix="/api/logs", tags=["logs"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(config.router, prefix="/api/config", tags=["config"])
 app.include_router(skills.router, prefix="/api/skills", tags=["skills"])
+app.include_router(files.router, prefix="/api/files", tags=["files"])
 
 app.include_router(audit_logs.router, prefix="/api/audit-logs", tags=["audit-logs"])
 

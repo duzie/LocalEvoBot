@@ -10,8 +10,12 @@ from dotenv import load_dotenv
 from app.skills.registry import load_skills
 from app.integrations.mcp_client import load_mcp_tools
 from app.prompts import get_agent_prompt
+from app.agent_timeout_wrapper import (
+    wrap_tools_with_timeout,
+    get_timeout_config,
+    HeartbeatMonitor
+)
 
-# 加载环境变量
 load_dotenv()
 
 _skill_tool_cache: Dict[str, List[str]] = {}
@@ -398,6 +402,11 @@ def create_agent_executor(tool_allowlist: List[str] = None, skill_allowlist: Lis
     limits_disabled = _read_bool_env("AGENT_LIMITS_DISABLED", False)
     max_iterations = None if limits_disabled else _read_int_env("AGENT_MAX_ITERATIONS", 50000000)
     max_execution_time = None if limits_disabled else _read_int_env("AGENT_MAX_EXECUTION_TIME", 600)
+    
+    # 获取超时配置
+    timeout_config = get_timeout_config()
+    print(f"Agent 超时配置: LLM={timeout_config['llm_timeout']}s, 工具={timeout_config['tool_timeout']}s")
+    
     executor = AgentExecutor(
         agent=agent,
         tools=tools,

@@ -572,6 +572,69 @@ async def get_history(limit: int = 60, include_tool: bool = False):
     items.reverse()
     return {"messages": items}
 
+@router.post("/compact")
+async def compact_context():
+    """
+    压缩上下文：删除较早的历史记录，只保留最近的8轮对话
+    """
+    env_path = _get_env_path()
+    env = dotenv_values(env_path) if os.path.exists(env_path) else {}
+    base_dir = os.path.dirname(env_path)
+    project_id = os.path.basename(base_dir)
+    user_id = (os.getenv("LOCAL_USER_ID") or env.get("LOCAL_USER_ID") or "local_user").strip().strip("'\"")
+    
+    db_paths = _list_short_term_db_paths()
+    if not db_paths:
+        return {"status": "no_history", "message": "没有历史记录可压缩"}
+    
+    # 获取所有消息
+    all_items = []
+    for path in db_paths:
+        conn = sqlite3.connect(path)
+        try:
+            cur = conn.cursor()
+            sql = """SELECT id, role, content, created_at 
+                     FROM short_term_messages 
+                     WHERE project_id = ? 
+                     AND (user_id = ? OR user_id IS NULL OR user_id = '') 
+                     ORDER BY id ASC"""
+            rows = cur.execute(sql, (project_id, user_id)).fetchall()
+            for r in rows:
+                all_items.append({"id": r[0], "role": r[1], "content": r[2], "created_at": r[3]})
+        finally:
+            conn.close()
+    
+    if len(all_items) <= 16:  # 少于16条消息，不需要压缩
+        return {"status": "no_need", "message": "历史记录较少，无需压缩", "count": len(all_items)}
+    
+    # 保留最近的16条消息（8轮对话）
+    keep_count = 16
+    to_delete = all_items[:-keep_count]
+    to_keep = all_items[-keep_count:]
+    
+    if not to_delete:
+        return {"status": "no_need", "message": "无需删除", "count": len(all_items)}
+    
+    # 删除旧消息
+    deleted_count = 0
+    for item in to_delete:
+        for path in db_paths:
+            conn = sqlite3.connect(path)
+            try:
+                cur = conn.cursor()
+                cur.execute("DELETE FROM short_term_messages WHERE id = ?", (item["id"],))
+                conn.commit()
+                deleted_count += 1
+            finally:
+                conn.close()
+    
+    return {
+        "status": "success", 
+        "message": f"已压缩上下文，删除 {deleted_count} 条旧消息",
+        "deleted": deleted_count,
+        "remaining": len(to_keep)
+    }
+
 def _get_xf_config():
     env_path = _get_env_path()
     env = dotenv_values(env_path) if os.path.exists(env_path) else {}
@@ -891,3 +954,309 @@ async def image_recognize(image: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"图片识别失败: {str(e)}")
 
+
+
+
+# ==================== 文件浏览器 API (方案 C) ====================
+
+from pathlib import Path
+import os
+
+# 项目根目录
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.resolve()
+
+@router.get("/files/list")
+async def api_list_files(path: str = ".", recursive: bool = False):
+    """列出目录内容，支持安全检查和递归搜索"""
+    
+    def collect_files(target_dir: Path, items_list: list, root: Path):
+        """递归收集文件"""
+        try:
+            for item in target_dir.iterdir():
+                # 跳过隐藏文件和__pycache__
+                if item.name.startswith('.') or item.name == '__pycache__':
+                    continue
+                
+                if item.is_dir():
+                    if recursive:
+                        collect_files(item, items_list, root)
+                else:
+                    try:
+                        stat = item.stat()
+                        items_list.append({
+                            "name": item.name,
+                            "type": "file",
+                            "path": str(item),
+                            "rel_path": str(item.relative_to(root)) if str(item).startswith(str(root)) else item.name,
+                            "ext": item.suffix.lower(),
+                            "size": stat.st_size,
+                            "modified": stat.st_mtime
+                        })
+                    except Exception:
+                        items_list.append({
+                            "name": item.name,
+                            "type": "file",
+                            "path": str(item),
+                            "rel_path": str(item.relative_to(root)) if str(item).startswith(str(root)) else item.name,
+                            "ext": item.suffix.lower(),
+                            "size": 0
+                        })
+        except PermissionError:
+            pass
+    
+    try:
+        # 解析路径
+        if path == "." or path == "":
+            target_path = PROJECT_ROOT
+        else:
+            target_path = Path(path).resolve()
+        
+        # 安全检查：限制在项目目录内
+        if not str(target_path).startswith(str(PROJECT_ROOT)):
+            return {"error": "路径超出项目范围", "items": []}
+        
+        if not target_path.exists():
+            return {"error": "路径不存在", "items": []}
+        
+        items = []
+        try:
+            if recursive:
+                # 递归模式：只返回文件
+                collect_files(target_path, items, PROJECT_ROOT)
+            else:
+                # 非递归模式：返回目录和文件
+                for item in target_path.iterdir():
+                    # 跳过隐藏文件和__pycache__
+                    if item.name.startswith('.') or item.name == '__pycache__':
+                        continue
+                    
+                    if item.is_dir():
+                        items.append({
+                            "name": item.name,
+                            "type": "directory",
+                            "path": str(item),
+                            "rel_path": str(item.relative_to(PROJECT_ROOT)) if str(item).startswith(str(PROJECT_ROOT)) else item.name,
+                            "children": []
+                        })
+                    else:
+                        try:
+                            stat = item.stat()
+                            items.append({
+                                "name": item.name,
+                                "type": "file",
+                                "path": str(item),
+                                "rel_path": str(item.relative_to(PROJECT_ROOT)) if str(item).startswith(str(PROJECT_ROOT)) else item.name,
+                                "ext": item.suffix.lower(),
+                                "size": stat.st_size,
+                                "modified": stat.st_mtime
+                            })
+                        except Exception:
+                            items.append({
+                                "name": item.name,
+                                "type": "file",
+                                "path": str(item),
+                                "rel_path": str(item.relative_to(PROJECT_ROOT)) if str(item).startswith(str(PROJECT_ROOT)) else item.name,
+                                "ext": item.suffix.lower(),
+                                "size": 0
+                            })
+        except PermissionError:
+            return {"error": "无权限访问该目录", "items": []}
+        
+        # 排序：目录在前，文件在后，按名称排序
+        items.sort(key=lambda x: (x["type"] != "directory", x["name"].lower()))
+        
+        return {
+            "items": items,
+            "current_path": str(target_path),
+            "rel_path": str(target_path.relative_to(PROJECT_ROOT)) if str(target_path).startswith(str(PROJECT_ROOT)) else ".",
+            "total": len(items)
+        }
+    except Exception as e:
+        return {"error": str(e), "items": []}
+
+
+@router.get("/api/files/preview")
+async def api_preview_file(path: str, lines: int = 50, max_chars: int = 5000):
+    """预览文件内容"""
+    try:
+        target_path = Path(path).resolve()
+        
+        # 安全检查
+        if not str(target_path).startswith(str(PROJECT_ROOT)):
+            return {"error": "路径超出项目范围"}
+        
+        if not target_path.exists() or not target_path.is_file():
+            return {"error": "文件不存在"}
+        
+        # 检查文件大小
+        if target_path.stat().st_size > 1024 * 1024:  # 1MB
+            return {"error": "文件过大，无法预览"}
+        
+        # 读取文件
+        try:
+            with open(target_path, 'r', encoding='utf-8') as f:
+                content_lines = []
+                char_count = 0
+                for i, line in enumerate(f):
+                    if i >= lines:
+                        break
+                    if char_count + len(line) > max_chars:
+                        content_lines.append(line[:max_chars - char_count] + "...")
+                        break
+                    content_lines.append(line)
+                    char_count += len(line)
+            
+            return {
+                "content": "".join(content_lines),
+                "path": str(target_path),
+                "rel_path": str(target_path.relative_to(PROJECT_ROOT)),
+                "lines": len(content_lines),
+                "total_lines": sum(1 for _ in open(target_path, 'r', encoding='utf-8', errors='ignore')),
+                "language": detect_language(target_path.suffix)
+            }
+        except UnicodeDecodeError:
+            return {"error": "无法读取文件（非文本文件）", "is_binary": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@router.get("/api/files/autocomplete")
+async def api_autocomplete_path(path: str = ".", query: str = ""):
+    """路径自动补全"""
+    try:
+        # 解析基础路径
+        if path == "." or path == "":
+            base_path = PROJECT_ROOT
+        else:
+            base_path = Path(path).resolve()
+        
+        # 安全检查
+        if not str(base_path).startswith(str(PROJECT_ROOT)):
+            return {"suggestions": []}
+        
+        if not base_path.exists():
+            return {"suggestions": []}
+        
+        suggestions = []
+        try:
+            for item in base_path.iterdir():
+                if item.name.startswith('.') or item.name == '__pycache__':
+                    continue
+                
+                # 过滤查询
+                if query and not item.name.lower().startswith(query.lower()):
+                    continue
+                
+                if item.is_dir():
+                    suggestions.append({
+                        "name": item.name,
+                        "type": "directory",
+                        "path": str(item),
+                        "rel_path": str(item.relative_to(PROJECT_ROOT)) if str(item).startswith(str(PROJECT_ROOT)) else item.name
+                    })
+                else:
+                    suggestions.append({
+                        "name": item.name,
+                        "type": "file",
+                        "path": str(item),
+                        "rel_path": str(item.relative_to(PROJECT_ROOT)) if str(item).startswith(str(PROJECT_ROOT)) else item.name,
+                        "ext": item.suffix.lower()
+                    })
+        except PermissionError:
+            pass
+        
+        # 排序并限制数量
+        suggestions.sort(key=lambda x: (x["type"] != "directory", x["name"].lower()))
+        return {"suggestions": suggestions[:20]}
+    except Exception as e:
+        return {"error": str(e), "suggestions": []}
+
+
+@router.get("/api/files/search")
+async def api_search_files(query: str, path: str = ".", max_results: int = 50):
+    """搜索文件"""
+    try:
+        base_path = Path(path).resolve() if path and path != "." else PROJECT_ROOT
+        
+        # 安全检查
+        if not str(base_path).startswith(str(PROJECT_ROOT)):
+            return {"results": []}
+        
+        results = []
+        query_lower = query.lower()
+        
+        for item in base_path.rglob("*"):
+            if len(results) >= max_results:
+                break
+            
+            # 跳过隐藏文件和__pycache__
+            if any(part.startswith('.') or part == '__pycache__' for part in item.parts):
+                continue
+            
+            if item.is_file() and query_lower in item.name.lower():
+                try:
+                    stat = item.stat()
+                    results.append({
+                        "name": item.name,
+                        "path": str(item),
+                        "rel_path": str(item.relative_to(PROJECT_ROOT)),
+                        "ext": item.suffix.lower(),
+                        "size": stat.st_size,
+                        "type": "file"
+                    })
+                except Exception:
+                    results.append({
+                        "name": item.name,
+                        "path": str(item),
+                        "rel_path": str(item.relative_to(PROJECT_ROOT)),
+                        "ext": item.suffix.lower(),
+                        "type": "file",
+                        "size": 0
+                    })
+        
+        return {"results": results, "total": len(results)}
+    except Exception as e:
+        return {"error": str(e), "results": []}
+
+
+def detect_language(ext: str) -> str:
+    """根据文件扩展名检测编程语言"""
+    lang_map = {
+        '.py': 'python',
+        '.js': 'javascript',
+        '.ts': 'typescript',
+        '.jsx': 'javascript',
+        '.tsx': 'typescript',
+        '.html': 'html',
+        '.htm': 'html',
+        '.css': 'css',
+        '.scss': 'scss',
+        '.less': 'less',
+        '.json': 'json',
+        '.md': 'markdown',
+        '.java': 'java',
+        '.cs': 'csharp',
+        '.cpp': 'cpp',
+        '.cc': 'cpp',
+        '.cxx': 'cpp',
+        '.c': 'c',
+        '.h': 'c',
+        '.hpp': 'cpp',
+        '.go': 'go',
+        '.rs': 'rust',
+        '.rb': 'ruby',
+        '.php': 'php',
+        '.swift': 'swift',
+        '.kt': 'kotlin',
+        '.scala': 'scala',
+        '.sh': 'bash',
+        '.bat': 'batch',
+        '.ps1': 'powershell',
+        '.yaml': 'yaml',
+        '.yml': 'yaml',
+        '.xml': 'xml',
+        '.sql': 'sql',
+        '.vue': 'vue',
+        '.svelte': 'svelte'
+    }
+    return lang_map.get(ext.lower(), 'plaintext')
