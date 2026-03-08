@@ -22,5 +22,6 @@ sentence-transformers
 cryptography
 python-dotenv
 pyodbc
+lark-oapi
 
 rank_bm25

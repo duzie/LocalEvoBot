@@ -14,6 +14,7 @@ import subprocess
 import shutil
 import atexit
 import time
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import List, Set
@@ -23,12 +24,45 @@ from web.backend.shared import shared
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 os.environ.setdefault("HUGGINGFACE_HUB_ENDPOINT", "https://hf-mirror.com")
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
 from app.agent import create_agent_executor, create_llm
 from app.context.transcript_manager import get_session_manager
 from app.skills.system_skill.scripts.experience_tools import add_operation_experience, get_operation_experience
 from app.integrations.heartbeat import start_default_tasks
 from langchain.callbacks.base import BaseCallbackHandler
 from dotenv import dotenv_values
+
+# 导入 Channels（消息输入输出接口）- 独立导入，避免一个失败导致全部失败
+CHANNELS_AVAILABLE = {}
+try:
+    from channels.feishu import FeishuChannel
+    CHANNELS_AVAILABLE['feishu'] = FeishuChannel
+except ImportError as e:
+    print(f"⚠️ 飞书 Channel 未导入: {e}")
+
+try:
+    from channels.dingtalk import DingtalkChannel
+    CHANNELS_AVAILABLE['dingtalk'] = DingtalkChannel
+except ImportError as e:
+    print(f"⚠️ 钉钉 Channel 未导入: {e}")
+
+try:
+    from channels.wecom import WeComChannel
+    CHANNELS_AVAILABLE['wecom'] = WeComChannel
+except ImportError as e:
+    print(f"⚠️ 企业微信 Channel 未导入: {e}")
+
+if CHANNELS_AVAILABLE:
+    print(f"[OK] 已加载 {len(CHANNELS_AVAILABLE)} 个 Channel: {', '.join(CHANNELS_AVAILABLE.keys())}")
+else:
+    print("⚠️ 没有可用的 Channel")
 
 RELOAD_SIGNAL = "__RELOAD_SKILLS__"
 SET_MODEL_PREFIX = "__SET_MODEL__:"
@@ -1650,6 +1684,52 @@ def main():
 
     # 启动默认心跳任务（记忆维护 + 主动检查）
     start_default_tasks()
+    
+    # 启动 Channels（消息输入输出接口）
+    print(f">>> DEBUG: CHANNELS_AVAILABLE = {list(CHANNELS_AVAILABLE.keys())}")
+    print(f">>> DEBUG: FEISHU_APP_ID exists = {bool(os.getenv('FEISHU_APP_ID'))}")
+    print(f">>> DEBUG: FEISHU_APP_SECRET exists = {bool(os.getenv('FEISHU_APP_SECRET'))}")
+    
+    # 飞书 Channel（只需要 App ID 和 App Secret）
+    if 'feishu' in CHANNELS_AVAILABLE:
+        if os.getenv("FEISHU_APP_ID") and os.getenv("FEISHU_APP_SECRET"):
+            print(">>> DEBUG: 正在启动飞书 Channel...")
+            feishu = CHANNELS_AVAILABLE['feishu']()
+            feishu.set_agent(agent_executor)
+            feishu.start()
+            time.sleep(1)
+            if feishu.running:
+                print("[OK] 飞书 Channel 已启动")
+            else:
+                print("[ERROR] 飞书 Channel 启动失败，请检查日志")
+        else:
+            print(">>> DEBUG: 飞书 Channel 未启动 - 缺少环境变量 FEISHU_APP_ID 或 FEISHU_APP_SECRET")
+    else:
+        print(">>> DEBUG: 飞书 Channel 不可用 - 导入失败")
+    
+    # 钉钉 Channel
+    if 'dingtalk' in CHANNELS_AVAILABLE:
+        if os.getenv("DINGTALK_CLIENT_ID"):
+            dingtalk = CHANNELS_AVAILABLE['dingtalk']()
+            dingtalk.set_agent(agent_executor)
+            dingtalk.start()
+            time.sleep(1)
+            if dingtalk.running:
+                print("[OK] 钉钉 Channel 已启动")
+            else:
+                print("[ERROR] 钉钉 Channel 启动失败，请检查日志")
+    
+    # 企业微信 Channel
+    if 'wecom' in CHANNELS_AVAILABLE:
+        if os.getenv("WECOM_CORPID"):
+            wecom = CHANNELS_AVAILABLE['wecom']()
+            wecom.set_agent(agent_executor)
+            wecom.start()
+            time.sleep(1)
+            if wecom.running:
+                print("[OK] 企业微信 Channel 已启动")
+            else:
+                print("[ERROR] 企业微信 Channel 启动失败，请检查日志")
     
     print("\n[OK] Agent 已就绪！")
     print("输入 'exit' 或 'quit' 退出。")
