@@ -130,23 +130,57 @@ _manager = HeartbeatManager()
 
 
 def start():
+    """启动心跳管理器"""
     _manager.start()
 
 
 def stop():
+    """停止心跳管理器"""
     _manager.stop()
 
 
 def register_task(name: str, fn: Callable[[], None], interval: Any, enabled: Optional[Callable[[], bool]] = None, on_error: Optional[Callable[[Exception], None]] = None):
+    """注册心跳任务"""
     _manager.register(name, fn, interval, enabled, on_error)
 
 
 def unregister_task(name: str):
+    """注销心跳任务"""
     _manager.unregister(name)
 
 
 def list_tasks():
+    """列出所有心跳任务"""
     return _manager.list_tasks()
+
+
+def start_default_tasks():
+    """启动默认心跳任务（记忆维护 + 主动检查）"""
+    try:
+        from app.skills.system_skill.scripts.memory_maintenance import maintain_memories
+        from app.skills.system_skill.scripts.proactive_checks import proactive_check
+        
+        # 每 7 天执行记忆维护
+        register_task(
+            "memory_maintenance",
+            lambda: maintain_memories("review"),  # 仅检查，不自动修改
+            interval=7 * 24 * 60 * 60,  # 7 天
+            on_error=lambda e: print(f"记忆维护失败：{e}")
+        )
+        
+        # 每 30 分钟主动检查
+        register_task(
+            "proactive_check",
+            lambda: proactive_check("all"),
+            interval=30 * 60,  # 30 分钟
+            on_error=lambda e: print(f"主动检查失败：{e}")
+        )
+        
+        print("[OK] 已注册默认心跳任务：记忆维护 (7 天) + 主动检查 (30 分钟)")
+    except ImportError as e:
+        print(f"[WARN] 心跳任务依赖未找到，跳过自动注册：{e}")
+    except Exception as e:
+        print(f"[WARN] 心跳任务注册失败：{e}")
 
 
 def update_task(name: str, interval: Optional[float] = None, paused: Optional[bool] = None):

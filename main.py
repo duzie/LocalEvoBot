@@ -26,6 +26,7 @@ os.environ.setdefault("HUGGINGFACE_HUB_ENDPOINT", "https://hf-mirror.com")
 from app.agent import create_agent_executor, create_llm
 from app.context.transcript_manager import get_session_manager
 from app.skills.system_skill.scripts.experience_tools import add_operation_experience, get_operation_experience
+from app.integrations.heartbeat import start_default_tasks
 from langchain.callbacks.base import BaseCallbackHandler
 from dotenv import dotenv_values
 
@@ -400,6 +401,7 @@ def _load_short_term_messages(project_id: str, user_id: str, limit: int = 60):
     # 转换为 chat_history 格式 ((role, content), ...)
     # 仅保留 LangChain chat_history 可安全消费的角色，避免 tool 消息缺少 tool_call_id 导致校验异常
     chat_history = []
+    transcript = None
     for item in items:
         role = str(item.get("role") or "").strip().lower()
         content = str(item.get("content") or "")
@@ -1646,17 +1648,22 @@ def main():
         print(f"初始化失败: {e}")
         return
 
-    print("\n✅ Agent 已就绪！")
+    # 启动默认心跳任务（记忆维护 + 主动检查）
+    start_default_tasks()
+    
+    print("\n[OK] Agent 已就绪！")
     print("输入 'exit' 或 'quit' 退出。")
     print("也可以通过 Web 控制台发送指令。\n")
 
     # 初始化历史记录
     try:
-        chat_history = _load_short_term_messages(project_id, user_id, limit=60)
-        print(f">>> 系统: 已加载 {len(chat_history)} 条历史记录")
+        transcript = get_session_manager().get_or_create_session("{project_id}_{user_id}")
+        chat_history = transcript.to_langchain_format(limit=60)
+        print(f">>> 系统: 已加载 {len(chat_history)} 条历史记录（含 tool_calls）")
     except Exception as e:
         print(f">>> 系统: 加载历史记录失败: {e}")
         chat_history = []
+    transcript = None
     max_auto_steps = 60
     tool_router_enabled = _env_flag("TOOL_ROUTER_ENABLED", False)
     current_skill_allowlist = None
@@ -1723,6 +1730,9 @@ def main():
                 continue
 
             _add_short_term_message("user", user_input, project_id, user_id)
+            # 保存到 transcript
+            if transcript:
+                transcript.add_user_message(user_input)
             resume_keywords = {"继续", "继续执行", "继续做", "continue"}
             if user_input.strip().lower() in resume_keywords:
                 plan = _load_task_plan()
@@ -1819,6 +1829,9 @@ def main():
                 if trace_text:
                     stored_output = (stored_output or "").rstrip() + "\n\n工具调用轨迹:\n" + trace_text
                 _add_short_term_message("assistant", stored_output, project_id, user_id)
+                # 保存到 transcript
+                if transcript:
+                    transcript.add_assistant_message(stored_output)
                 shared.broadcast_threadsafe("Agent: " + (stored_output or "") + "\n")
                 if wa_ctx and state != "CONTINUE":
                     reply_text = (cleaned_output or output or "").strip()
@@ -1933,3 +1946,13 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
+
+
+
