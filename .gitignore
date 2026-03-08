@@ -12,6 +12,7 @@ venv/
 /app/data
 *.png
 *.bak
+*.backup
 .dockerignore
 *.bat
 *.yml

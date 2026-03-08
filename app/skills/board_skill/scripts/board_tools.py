@@ -1037,6 +1037,21 @@ def create_board(goal: str, phase: str = "", milestone: str = "", roles: List[Di
             })
             board["next_task_id"] += 1
         _save_board(board)
+
+        # 创建 UI 协作卡片
+        try:
+            print("DEBUG [create_board]: Creating collaboration card")
+            board_adapter = get_board_adapter(shared.broadcast_threadsafe)
+            role_names = [r.get("name", "") for r in (roles or [])]
+            card = board_adapter.create_collaboration_card(
+                title=f"公告板 #{board.get('board_id', 'new')}",
+                goal=goal,
+                roles=role_names,
+                auto_expand=True
+            )
+            print("DEBUG [create_board]: Card created")
+        except Exception as e:
+            print(f"UI adapter error: {e}")
         return board
     finally:
         _release_lock()
@@ -1225,6 +1240,20 @@ def create_spec_and_tasks(summary: str, p0_features: List[Dict[str, Any]] = None
         p0_features = decompose_result.get("p0_features", [])
     
     spec_id = f"SPEC-{int(time.time())}"
+
+    # 创建 UI 协作卡片
+    try:
+        print("DEBUG [create_spec]: Creating collaboration card")
+        board_adapter = get_board_adapter(shared.broadcast_threadsafe)
+        board_adapter.create_collaboration_card(
+            title=f"Spec 任务 #{spec_id}",
+            goal=summary,
+            roles=[owner] if owner else [],
+            auto_expand=True
+        )
+        print("DEBUG [create_spec]: Card created")
+    except Exception as e:
+        print(f"UI adapter error: {e}")
     content = _render_simple_spec(
         spec_id=spec_id,
         summary=str(summary),

@@ -18,15 +18,15 @@ def save_document(file_path: str, content: str = "", max_chars: int = 9000):
     """
     if content is None:
         content = ""
-    max_len = max(1000, int(max_chars or 9000))
-    if len(content) > max_len:
-        raise SkillException(
-            "content_too_large",
-            "内容过大，禁止一次性写入",
-            max_chars=max_len,
-            content_length=len(content),
-            suggestion="请分段写入（safe_file_merge/insert_text_at_line），并逐段校验文件大小"
-        )
+    # max_len = max(1000, int(max_chars or 9000))
+    # if len(content) > max_len:
+    #     raise SkillException(
+    #         "content_too_large",
+    #         "内容过大，禁止一次性写入",
+    #         max_chars=max_len,
+    #         content_length=len(content),
+    #         suggestion="请分段写入（safe_file_merge/insert_text_at_line），并逐段校验文件大小"
+    #     )
         
     # 确保目录存在
     directory = os.path.dirname(file_path)

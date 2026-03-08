@@ -14,6 +14,11 @@ app.skills.tavily_skill.scripts
 
 ## Tools
 - tavily_search
+- tavily_answer
+- tavily_news_search
 
 ## Platforms
 - Windows
+
+## References
+- references/usage.md

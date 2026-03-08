@@ -28,7 +28,7 @@ def read_document_part(file_path: str, start_line: int = 0, end_line: Optional[i
     读取文档的部分内容，支持按行数、字符数或百分比截取
     
     WARNING: 如果文件内容过大，会被强制截断。
-    对于大型文件分析任务，强烈建议使用 `deep_analysis_skill` 中的 `read_files_to_analysis_index` 工具，
+    处理项目，强烈建议使用 `deep_analysis_skill` 中的 `read_files_to_analysis_index` 工具，
     它可以将文件存入旁路索引，避免 Token 爆炸和信息丢失。
     
     Args:
