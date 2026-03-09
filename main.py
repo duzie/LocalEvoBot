@@ -1719,15 +1719,15 @@ def main():
             else:
                 print("[ERROR] 钉钉 Channel 启动失败，请检查日志")
     
-    # 企业微信 Channel
+    # 企业微信 Channel (WebSocket 长连接模式)
     if 'wecom' in CHANNELS_AVAILABLE:
-        if os.getenv("WECOM_CORPID"):
+        if os.getenv("WECOM_BOT_ID") and os.getenv("WECOM_SECRET"):
             wecom = CHANNELS_AVAILABLE['wecom']()
             wecom.set_agent(agent_executor)
             wecom.start()
             time.sleep(1)
             if wecom.running:
-                print("[OK] 企业微信 Channel 已启动")
+                print("[OK] 企业微信 Channel 已启动 (WebSocket 长连接)")
             else:
                 print("[ERROR] 企业微信 Channel 启动失败，请检查日志")
     
