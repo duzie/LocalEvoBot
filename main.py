@@ -1831,7 +1831,22 @@ def main():
                 elif _requests_all_memory_search(user_input):
                     auto_input = f"用户要求搜索所有记忆。请同时检索长期记忆(get_operation_experience)与短期记忆(search_short_term_memory)，并合并后给出结论与依据。\n\n用户原始输入：{user_input}"
                 else:
-                    auto_input = _maybe_apply_template(user_input, project_id, user_id)
+                    # 尝试匹配模板
+                    base_input = _maybe_apply_template(user_input, project_id, user_id)
+                    
+                    # 总是检索相关的长期记忆（任务经验）
+                    # 即使没有模板匹配，也检索相关经验供 Agent 参考
+                    if base_input == user_input:  # 没有模板匹配时
+                        experiences = _get_task_experiences(user_input, project_id, user_id)
+                        exp_text = _format_experiences_for_prompt(experiences)
+                        if exp_text:
+                            # 有经验时，注入到 prompt 中
+                            auto_input = f"用户需求：{user_input}\n\n{exp_text}\n\n请参考以上相关经验完成任务。"
+                        else:
+                            auto_input = user_input
+                    else:
+                        # 已经有模板匹配，_maybe_apply_template 已经包含了经验
+                        auto_input = base_input
             if tool_router_enabled:
                 selected_skill_allowlist = _select_skill_allowlist(auto_input)
                 selected_key = tuple(selected_skill_allowlist)
