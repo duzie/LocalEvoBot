@@ -2,8 +2,8 @@
 
 一个基于 LangChain 的智能电脑操作 Agent，具备**自我进化能力**——能根据任务需求自动编写新技能、热加载并立即使用，无需重启。支持 Windows UI Automation、OCR、Web 自动化、多 Agent 协作、RAG 长时记忆、完整审计日志等高级功能。
 
-**当前时间**: 2026-02-28  
-**版本**: 1.0.0 (持续进化中)
+**当前时间**: 2026-03-09  
+**版本**: 1.1.0 (持续进化中)
 
 ---
 
@@ -81,25 +81,29 @@
 | **office_skill** | Office 处理（Excel 读取/求和、PPT 生成） |
 | **tavily_skill** | 网页搜索（Tavily API 搜索、深度搜索、答案摘要） |
 | **gnews_skill** | 新闻获取（GNews 头条、新闻搜索、保存） |
-| **dingtalk_skill** | 钉钉机器人（发送文本消息、@提醒） |
-| **feishu_skill** | 飞书机器人（发送文本消息、签名校验） |
+| **git_skill** | Git 版本控制（克隆、提交、推送、分支管理） |
 | **windows_task_skill** | Windows 计划任务（创建定时任务、无需管理员权限） |
 | **utility_skill** | 工具函数（数学计算） |
 | **task_plan_guide_skill** | 任务规划指南（获取任务拆解规则） |
 | **skilltest_skill** | 技能测试（测试用例执行、可加载性验证、需求评估） |
 | **project_skeleton_skill** | 项目骨架（生成/缓存目录模块地图） |
 | **seedream_skill** | 图像生成（Seedream 图像生成） |
-| **moltbook_skill** | Moltbook Agent 注册与管理 |
+| **code_review_skill** | 代码审查（代码质量检查、问题诊断、改进建议） |
+| **deep_analysis_skill** | 深度分析（复杂问题拆解、多维度分析） |
 
-### 自动生成技能 (app/auto_skills) - 18+ 个
+### 自动生成技能 (app/auto_skills) - 32 个
 
 Agent 根据任务需求自动生成的技能，随使用自动增长：
 
 | 技能名称 | 功能描述 |
 |----------|----------|
 | **archive_skill** | 文件归档（创建 zip 压缩包） |
+| **audio_transcribe_skill** | 音频转写（语音转文字） |
+| **cache_skill** | 缓存管理（数据缓存、读取、清理） |
 | **code_analysis_skill** | 代码分析（分析代码文件/目录、提取 API 端点） |
+| **context_management_skill** | 上下文管理（对话上下文维护） |
 | **coupon_agent_skill** | 优惠券 Agent（CRM.CRMChat 接口调用） |
+| **documentation_skill** | 文档生成（自动生成文档） |
 | **document_skill** | 文档处理（提取章节、统计信息、插入文本、分块读取、搜索） |
 | **excel_read_skill** | Excel 读取（读取工作表、数据提取） |
 | **file_delete_skill** | 文件删除（单文件/批量删除） |
@@ -107,13 +111,32 @@ Agent 根据任务需求自动生成的技能，随使用自动增长：
 | **image_download_skill** | 图片下载（单张/批量下载、URL 验证） |
 | **image_processing_skill** | 图片处理（缩放、裁剪、格式转换、批量调整） |
 | **large_file_processing_skill** | 大文件处理（分块读取、锚点替换、安全合并、语法验证） |
+| **linter_skill** | 代码检查（语法检查、格式校验） |
 | **mail_126_skill** | 126 邮件发送（支持附件） |
 | **moltbook** | Moltbook 社区操作（发帖、评论、点赞、关注等 20+ 工具） |
 | **openscmskill** | SCM 页面打开（菜么么库存页面） |
 | **open_caimomo_target_page** | 菜么么系统导航（动态菜单定位、采购入库流程） |
 | **ppt_gen_skill** | PPT 生成（主题模板、图文混排） |
+| **precise_code_editing_skill** | 精确代码编辑（精准代码修改） |
+| **quick_edit_skill** | 快速编辑（快速文件修改） |
 | **safe_file_editing_skill** | 安全文件编辑（C#/Python/JSON 专用编辑器、备份回滚） |
+| **smart_file_reader_skill** | 智能文件读取（智能读取大文件） |
+| **sqlserver_skill** | SQL Server 数据库操作 |
+| **stock_data_collection_skill** | 股票数据采集 |
+| **stock_trading_skill** | 股票交易操作 |
 | **stock_unified_skill** | 股票数据（实时行情、历史数据、缓存管理、搜索） |
+| **test_skill** | 测试执行（单元测试、集成测试） |
+| **vector_index_skill** | 向量索引（向量数据库索引管理） |
+| **web_validator_skill** | Web 验证（网页有效性检查） |
+| **word_processor** | 文字处理（Word 文档操作） |
+
+### 消息渠道集成 (channels/)
+
+| 渠道 | 功能描述 |
+|------|----------|
+| **dingtalk** | 钉钉机器人集成（发送文本消息、@提醒） |
+| **feishu** | 飞书机器人集成（发送文本消息、签名校验） |
+| **wecom** | 企业微信集成 |
 
 ---
 
@@ -190,11 +213,10 @@ Agent 根据任务需求自动生成的技能，随使用自动增长：
 ## 📁 项目结构
 
 ```
-AICreate/
+langchain/
 ├── main.py                     # 程序入口、热加载循环、状态管理
 ├── requirements.txt            # Python 依赖
 ├── model.json                  # 模型配置
-├── multi_agent_board_spec.md   # 多 Agent 公告板规格
 ├── HEARTBEAT.md                # 心跳机制文档
 ├── contact.txt                 # 联系方式
 │
@@ -203,19 +225,25 @@ AICreate/
 │   ├── prompts.py              # System Prompt 与自动化策略
 │   ├── registry.py             # 技能注册与动态加载器
 │   │
-│   ├── skills/                 # [核心技能] 27 个手动维护技能
+│   ├── skills/                 # [核心技能] 31 个手动维护技能
 │   │   ├── skillgen_skill/     # 技能生成与管理
 │   │   ├── board_skill/        # 多角色公告板
 │   │   ├── system_skill/       # 系统操作
 │   │   ├── playwright_skill/   # Web 自动化
 │   │   ├── uia_skill/          # UI Automation
-│   │   └── ... (27 个)
+│   │   ├── git_skill/          # Git 版本控制
+│   │   ├── code_review_skill/  # 代码审查
+│   │   ├── deep_analysis_skill/# 深度分析
+│   │   └── ... (31 个)
 │   │
-│   ├── auto_skills/            # [扩展技能] Agent 自动生成 (18+)
+│   ├── auto_skills/            # [扩展技能] Agent 自动生成 (32 个)
 │   │   ├── archive_skill/
 │   │   ├── code_analysis_skill/
 │   │   ├── stock_unified_skill/
 │   │   └── ... (随使用增长)
+│   │
+│   ├── context/                # 上下文管理
+│   │   └── transcript_manager.py  # 对话记录管理
 │   │
 │   ├── integrations/           # 第三方集成
 │   │   ├── audit_logger.py     # 审计日志
@@ -223,7 +251,7 @@ AICreate/
 │   │   └── mcp_client.py       # MCP 客户端
 │   │
 │   └── data/                   # 数据目录
-│       ├── experience_db/      # ChromaDB 向量数据库 (RAG)
+│       ├── experience_db*      # ChromaDB 向量数据库 (RAG)
 │       ├── short_term_memory*.sqlite3  # 短期记忆 (每日归档)
 │       ├── audit_logs.db       # 审计日志数据库
 │       ├── devops/             # DevOps 数据
@@ -234,6 +262,11 @@ AICreate/
 │       ├── project_skeleton/   # 项目骨架缓存
 │       ├── cookies/            # Playwright Cookie
 │       └── playwright_user_data/  # 浏览器用户数据
+│
+├── channels/                   # 消息渠道集成
+│   ├── dingtalk/               # 钉钉
+│   ├── feishu/                 # 飞书
+│   └── wecom/                  # 企业微信
 │
 ├── web/
 │   ├── backend/                # Web 控制台后端 (FastAPI)
@@ -247,12 +280,18 @@ AICreate/
 │   │   └── ...
 │   └── extension/              # 浏览器扩展 (Cookie 保存)
 │
+├── src/
+│   └── frontend/               # 前端源码
+│
 ├── gateway/                    # WA Gateway (Node.js)
 │   ├── index.js
 │   └── node_modules/
 │
 ├── images/                     # 图片输出目录
-└── screenshots/                # 截图保存目录
+├── screenshots/                # 截图保存目录
+└── memory/                     # 记忆文件
+    ├── MEMORY.md               # 长期记忆
+    └── YYYY-MM-DD.md           # 每日记忆
 ```
 
 ---
@@ -484,6 +523,12 @@ get_operation_experience(
 ---
 
 ## 📊 变更日志
+
+### 2026-03-09
+- 更新 README 以反映实际项目结构
+- 核心技能增至 27 个（新增 git_skill, code_review_skill, deep_analysis_skill）
+- 自动生成技能增至 32 个
+- 消息渠道集成独立至 channels/ 目录（dingtalk, feishu, wecom）
 
 ### 2026-02-22
 - Web 对话区"工具/思考详情"展开状态可保持
