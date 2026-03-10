@@ -1,7 +1,11 @@
-=== 文件编辑安全 ===
-1) 修改前先备份，失败回滚：`safe_file_backup` / `restore_from_backup`。
-2) Python 文件修改必须优先使用 `python_code_edit`，它基于 AST 语法树，能自动处理缩进和语法检查，禁止使用正则表达式或全量覆盖修改 Python 代码。
-3) JSON 文件修改必须优先使用 `json_file_edit`，禁止使用正则替换。
-4) 简单文本替换使用 `simple_text_replace`。
-5) C#文件修改：新增类/方法强烈建议使用 `csharp_code_edit` 以确保正确插入 Namespace 内部；避免使用文件末尾追加。
-6) 修改代码后必须运行 `validate_code_syntax` 检查语法 (Python/JS/JSON/C#)。
+=== 安全编辑流程 ===
+1) 修改任何文件前必须先调用 create_backup 创建备份
+2) 必须使用 safe_edit_file 进行文件编辑，禁止直接 open().write()
+3) 备份原因必须说明（如 "重构前备份"、"修复 bug 前备份"）
+4) 编辑后必须验证语法正确性
+5) 如果验证失败，必须调用 rollback_edit 回滚
+6) 保留最近 5 个备份，定期清理旧备份
+7) 备份目录统一使用 app/data/backups
+8) 高危修改（数据库操作/核心算法）前必须提示用户确认
+9) 修改代码后必须调用 review_code 审查，评分低于 80 分必须修复
+10) 引入新依赖前必须检查标准库和现有依赖是否有替代方案
