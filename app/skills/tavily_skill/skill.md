@@ -13,9 +13,9 @@ Tavily 搜索技能，支持基于 Tavily API 的网页搜索与结果返回
 app.skills.tavily_skill.scripts
 
 ## Tools
-- tavily_search
-- tavily_answer
-- tavily_news_search
+- tavily_search: 基于 Tavily API 进行网页搜索
+- tavily_answer: 基于 Tavily API 进行问题回答
+- tavily_news_search: 基于 Tavily API 进行新闻搜索
 
 ## Platforms
 - Windows
