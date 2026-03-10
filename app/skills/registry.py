@@ -242,10 +242,9 @@ class OpenClawTool(BaseTool):
     return_direct: bool = False
     project_root: str
     cli_path: str
+    bin_command: str = ""
 
     def _run(self, command: str = "", args: Any = None, timeout_sec: int = 300, **kwargs):
-        if not self.cli_path or not os.path.exists(self.cli_path):
-            return {"ok": False, "error": "CLI 不存在", "tool": self.name}
         payload = {}
         if kwargs:
             if isinstance(kwargs.get("kwargs"), dict):
@@ -259,19 +258,60 @@ class OpenClawTool(BaseTool):
         cmd_text = str(command or "").strip()
         if not cmd_text:
             return {"ok": False, "error": "command 不能为空", "tool": self.name}
+            
         extra = _normalize_openclaw_args(args, payload)
-        cmd = [sys.executable, self.cli_path, cmd_text]
-        cmd.extend(extra)
+        
+        cmd = []
+        if self.cli_path and os.path.exists(self.cli_path):
+            cmd = [sys.executable, self.cli_path, cmd_text]
+            cmd.extend(extra)
+        elif self.bin_command:
+            # 对于 bin command，cmd_text 可能是子命令，extra 是参数
+            # 例如: wechat:draft --file ...
+            # cmd_text="wechat:draft", extra=["--file", "..."]
+            # 或者是参数的一部分
+            
+            # 检查 bin_command 是否在 PATH 中
+            import shutil
+            bin_path = shutil.which(self.bin_command)
+            if not bin_path:
+                 # 尝试在项目目录下的 node_modules/.bin 中查找？
+                 local_bin = os.path.join(self.project_root, "node_modules", ".bin", self.bin_command)
+                 if os.path.exists(local_bin):
+                     bin_path = local_bin
+                 elif os.path.exists(local_bin + ".cmd"): # Windows
+                     bin_path = local_bin + ".cmd"
+                     
+            if not bin_path:
+                return {"ok": False, "error": f"命令 '{self.bin_command}' 未找到，请确保已安装", "tool": self.name}
+                
+            cmd = [bin_path, cmd_text]
+            cmd.extend(extra)
+        else:
+            return {"ok": False, "error": "CLI 不存在", "tool": self.name}
+
         try:
+            # shell=True for Windows might be needed if calling .cmd files without full path or extension
+            # But we try to resolve path above.
+            # If bin_command is e.g. "npm", shell=True might be safer on Windows
+            use_shell = False
+            if os.name == 'nt' and not self.cli_path:
+                # On Windows, executing non-exe files might require shell=True
+                use_shell = True
+                
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 cwd=self.project_root,
-                timeout=int(timeout_sec) if timeout_sec else None
+                timeout=int(timeout_sec) if timeout_sec else None,
+                shell=use_shell
             )
         except subprocess.TimeoutExpired:
             return {"ok": False, "error": f"执行超时: {timeout_sec}s", "tool": self.name}
+        except Exception as e:
+            return {"ok": False, "error": f"执行出错: {str(e)}", "tool": self.name}
+            
         return {
             "ok": result.returncode == 0,
             "stdout": (result.stdout or "").strip(),
@@ -362,11 +402,15 @@ def _read_openclaw_frontmatter(skill_md_path: str) -> Dict[str, Any]:
             i += 1
             continue
         if ":" not in line:
+            # 可能是上一行的延续（虽然标准YAML不是这样，但这里是手写的解析器）
             i += 1
             continue
+            
         key, rest = line.split(":", 1)
         key = key.strip()
         rest = rest.strip()
+        
+        # Case 1: key: | (Block scalar)
         if rest == "|":
             i += 1
             block = []
@@ -378,6 +422,36 @@ def _read_openclaw_frontmatter(skill_md_path: str) -> Dict[str, Any]:
                 i += 1
             data[key] = "\n".join(block).strip()
             continue
+            
+        # Case 2: key: (Empty, followed by indented block - likely YAML object/list/json)
+        if not rest:
+            # Look ahead for indentation
+            if i + 1 < len(data_lines) and (data_lines[i+1].startswith(" ") or data_lines[i+1].startswith("\t")):
+                i += 1
+                block = []
+                while i < len(data_lines):
+                    block_line = data_lines[i]
+                    if block_line.strip() and not (block_line.startswith(" ") or block_line.startswith("\t")):
+                        break
+                    block.append(block_line)
+                    i += 1
+                # 尝试解析为 JSON？
+                val_str = "\n".join(block)
+                # 简单处理：如果是 { 开头，尝试提取 bins
+                if val_str.strip().startswith("{"):
+                    try:
+                        # 尝试提取 "bins": ["..."]
+                        import re
+                        bins_match = re.search(r'"bins"\s*:\s*\[(.*?)\]', val_str, re.DOTALL)
+                        if bins_match:
+                            bins_content = bins_match.group(1)
+                            bins = [b.strip().strip('"').strip("'") for b in bins_content.split(",")]
+                            data[key + "_bins"] = bins
+                    except:
+                        pass
+                data[key] = val_str
+                continue
+
         data[key] = rest.strip().strip('"').strip("'")
         i += 1
     return data
@@ -393,6 +467,12 @@ def _find_openclaw_cli_root(skill_dir: str) -> str:
             return ""
         current = parent
 
+def _find_skill_md(filenames: List[str]) -> str:
+    for f in filenames:
+        if f.lower() == "skill.md":
+            return f
+    return ""
+
 def load_openclaw_skills(root_dir: str = "") -> List[BaseTool]:
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     openclaw_root = root_dir or os.path.join(project_root, "app", "openclaw_skills")
@@ -401,27 +481,46 @@ def load_openclaw_skills(root_dir: str = "") -> List[BaseTool]:
     tools: List[BaseTool] = []
     seen: Set[str] = set()
     for dirpath, _, filenames in os.walk(openclaw_root):
-        if "SKILL.md" not in filenames:
+        skill_md_name = _find_skill_md(filenames)
+        if not skill_md_name:
             continue
-        skill_md_path = os.path.join(dirpath, "SKILL.md")
+        skill_md_path = os.path.join(dirpath, skill_md_name)
         meta = _read_openclaw_frontmatter(skill_md_path)
         name = (meta.get("name") or "").strip()
         if not name:
             name = os.path.basename(dirpath)
         if not name or name in seen:
             continue
+            
         project_dir = _find_openclaw_cli_root(dirpath)
-        if not project_dir:
-            continue
-        cli_path = os.path.join(project_dir, "scripts", "cli.py")
-        if not os.path.exists(cli_path):
-            continue
+        # 如果找不到 cli.py 的 root，且 metadata 中包含 bins，则尝试作为 bin tool 加载
+        cli_path = ""
+        bin_command = ""
+        
+        if project_dir:
+            cli_path = os.path.join(project_dir, "scripts", "cli.py")
+        
+        if not cli_path or not os.path.exists(cli_path):
+            # Check for bins in metadata (parsed by our helper)
+            # 我们之前在 _read_openclaw_frontmatter 中特殊处理了 metadata_bins
+            # 或者简单的，如果 name 是 wechat-public-cli，我们特殊处理
+            if meta.get("metadata_bins"):
+                bins = meta.get("metadata_bins")
+                if bins:
+                    bin_command = bins[0]
+                    project_dir = dirpath # fallback to current dir
+            
+            # 这里的 fallback 逻辑：如果没有 bins，我们暂时无法支持
+            if not bin_command:
+                continue
+        
         description = (meta.get("description") or "").strip()
         tool = OpenClawTool(
             name=name,
             description=description,
-            project_root=project_dir,
-            cli_path=cli_path
+            project_root=project_dir or dirpath,
+            cli_path=cli_path,
+            bin_command=bin_command
         )
         tools.append(_wrap_auto_tool(tool, "openclaw_skills", name))
         seen.add(name)
