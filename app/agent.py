@@ -7,7 +7,7 @@ from langchain_openai import ChatOpenAI
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from dotenv import load_dotenv
 
-from app.skills.registry import load_skills
+from app.skills.registry import load_skills, load_openclaw_skills
 from app.integrations.mcp_client import load_mcp_tools
 from app.prompts import get_agent_prompt
 from app.agent_timeout_wrapper import (
@@ -61,10 +61,72 @@ def _read_skill_tool_names(skill_dir: str) -> List[str]:
             tools.append(name)
     return tools
 
+def _read_openclaw_frontmatter(skill_md_path: str) -> Dict[str, str]:
+    try:
+        with open(skill_md_path, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except Exception:
+        return {}
+    if not lines or lines[0].strip() != "---":
+        return {}
+    end_idx = None
+    for idx in range(1, len(lines)):
+        if lines[idx].strip() == "---":
+            end_idx = idx
+            break
+    if end_idx is None:
+        return {}
+    data_lines = lines[1:end_idx]
+    data: Dict[str, str] = {}
+    i = 0
+    while i < len(data_lines):
+        line = data_lines[i]
+        if not line.strip():
+            i += 1
+            continue
+        if ":" not in line:
+            i += 1
+            continue
+        key, rest = line.split(":", 1)
+        key = key.strip()
+        rest = rest.strip()
+        if rest == "|":
+            i += 1
+            block = []
+            while i < len(data_lines):
+                block_line = data_lines[i]
+                if not block_line.startswith(" ") and not block_line.startswith("\t"):
+                    break
+                block.append(block_line.lstrip())
+                i += 1
+            data[key] = "\n".join(block).strip()
+            continue
+        data[key] = rest.strip().strip('"').strip("'")
+        i += 1
+    return data
+
+def _collect_openclaw_skill_names(openclaw_root: str) -> Set[str]:
+    names: Set[str] = set()
+    if not os.path.isdir(openclaw_root):
+        return names
+    for dirpath, _, filenames in os.walk(openclaw_root):
+        if "SKILL.md" not in filenames:
+            continue
+        skill_md_path = os.path.join(dirpath, "SKILL.md")
+        meta = _read_openclaw_frontmatter(skill_md_path)
+        name = (meta.get("name") or "").strip()
+        if not name:
+            name = os.path.basename(dirpath)
+        if name:
+            names.add(name)
+    return names
+
 def _collect_tools_for_skills(skill_names: List[str]) -> Set[str]:
     base_dir = os.path.dirname(os.path.abspath(__file__))
     skills_root = os.path.join(base_dir, "skills")
     auto_root = os.path.join(base_dir, "auto_skills")
+    openclaw_root = os.path.join(base_dir, "openclaw_skills")
+    openclaw_names = _collect_openclaw_skill_names(openclaw_root)
     collected: Set[str] = set()
     for raw in skill_names or []:
         name = str(raw or "").strip()
@@ -80,6 +142,8 @@ def _collect_tools_for_skills(skill_names: List[str]) -> Set[str]:
             if not os.path.isdir(skill_dir):
                 continue
             tool_names.extend(_read_skill_tool_names(skill_dir))
+        if name in openclaw_names:
+            tool_names.append(name)
         _skill_tool_cache[name] = tool_names
         collected.update(tool_names)
     return collected
@@ -355,6 +419,9 @@ def create_agent_executor(tool_allowlist: List[str] = None, skill_allowlist: Lis
     mcp_tools = load_mcp_tools()
     if mcp_tools:
         tools.extend(mcp_tools)
+    openclaw_tools = load_openclaw_skills()
+    if openclaw_tools:
+        tools.extend(openclaw_tools)
     total_tools = len(tools)
     allowed_names = None
     

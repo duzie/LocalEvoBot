@@ -6,8 +6,11 @@ import os
 import sys
 import json
 import re
+import subprocess
+import shlex
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Set
+from pydantic import BaseModel
 from langchain_core.tools import BaseTool
 from web.backend.shared import shared
 from app.skills.common import SkillException, error_payload as _common_error_payload, ok_payload as _common_ok_payload, emit_event as _common_emit_event
@@ -227,6 +230,91 @@ def _wrap_auto_tool(tool: BaseTool, scope: str, skill_name: str = "") -> BaseToo
         skill_name=skill_name,
     )
 
+class OpenClawCommandArgs(BaseModel):
+    command: str
+    args: Any = None
+    timeout_sec: int = 300
+
+class OpenClawTool(BaseTool):
+    name: str
+    description: str
+    args_schema: Any = OpenClawCommandArgs
+    return_direct: bool = False
+    project_root: str
+    cli_path: str
+
+    def _run(self, command: str = "", args: Any = None, timeout_sec: int = 300, **kwargs):
+        if not self.cli_path or not os.path.exists(self.cli_path):
+            return {"ok": False, "error": "CLI 不存在", "tool": self.name}
+        payload = {}
+        if kwargs:
+            if isinstance(kwargs.get("kwargs"), dict):
+                payload = dict(kwargs.get("kwargs") or {})
+            else:
+                payload = dict(kwargs)
+        if not command and payload:
+            command = str(payload.pop("command", "") or payload.pop("cmd", "") or payload.pop("action", "")).strip()
+            if args is None and "args" in payload:
+                args = payload.pop("args")
+        cmd_text = str(command or "").strip()
+        if not cmd_text:
+            return {"ok": False, "error": "command 不能为空", "tool": self.name}
+        extra = _normalize_openclaw_args(args, payload)
+        cmd = [sys.executable, self.cli_path, cmd_text]
+        cmd.extend(extra)
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=self.project_root,
+                timeout=int(timeout_sec) if timeout_sec else None
+            )
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": f"执行超时: {timeout_sec}s", "tool": self.name}
+        return {
+            "ok": result.returncode == 0,
+            "stdout": (result.stdout or "").strip(),
+            "stderr": (result.stderr or "").strip(),
+            "returncode": result.returncode
+        }
+
+def _normalize_openclaw_args(args: Any, payload: Dict[str, Any]) -> List[str]:
+    extra: List[str] = []
+    if args is None:
+        pass
+    elif isinstance(args, dict):
+        extra.extend(_payload_to_cli_args(args))
+    elif isinstance(args, list):
+        extra.extend([str(item) for item in args if str(item).strip()])
+    elif isinstance(args, str):
+        extra.extend([item for item in shlex.split(args, posix=False) if item])
+    else:
+        extra.append(str(args))
+    if payload:
+        extra.extend(_payload_to_cli_args(payload))
+    return extra
+
+def _payload_to_cli_args(payload: Dict[str, Any]) -> List[str]:
+    items: List[str] = []
+    for key, value in payload.items():
+        if value is None or value is False:
+            continue
+        flag = f"--{str(key).replace('_', '-')}"
+        if value is True:
+            items.append(flag)
+            continue
+        if isinstance(value, list):
+            values = [str(item) for item in value if str(item).strip()]
+            if not values:
+                continue
+            items.append(flag)
+            items.extend(values)
+            continue
+        items.append(flag)
+        items.append(str(value))
+    return items
+
 def _read_skill_entry(skill_md_path: str):
     try:
         with open(skill_md_path, "r", encoding="utf-8") as f:
@@ -249,6 +337,95 @@ def _read_skill_entry(skill_md_path: str):
                 return entry
             return None
     return None
+
+def _read_openclaw_frontmatter(skill_md_path: str) -> Dict[str, Any]:
+    try:
+        with open(skill_md_path, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except Exception:
+        return {}
+    if not lines or lines[0].strip() != "---":
+        return {}
+    end_idx = None
+    for idx in range(1, len(lines)):
+        if lines[idx].strip() == "---":
+            end_idx = idx
+            break
+    if end_idx is None:
+        return {}
+    data_lines = lines[1:end_idx]
+    data: Dict[str, Any] = {}
+    i = 0
+    while i < len(data_lines):
+        line = data_lines[i]
+        if not line.strip():
+            i += 1
+            continue
+        if ":" not in line:
+            i += 1
+            continue
+        key, rest = line.split(":", 1)
+        key = key.strip()
+        rest = rest.strip()
+        if rest == "|":
+            i += 1
+            block = []
+            while i < len(data_lines):
+                block_line = data_lines[i]
+                if not block_line.startswith(" ") and not block_line.startswith("\t"):
+                    break
+                block.append(block_line.lstrip())
+                i += 1
+            data[key] = "\n".join(block).strip()
+            continue
+        data[key] = rest.strip().strip('"').strip("'")
+        i += 1
+    return data
+
+def _find_openclaw_cli_root(skill_dir: str) -> str:
+    current = skill_dir
+    while True:
+        cli_path = os.path.join(current, "scripts", "cli.py")
+        if os.path.exists(cli_path):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            return ""
+        current = parent
+
+def load_openclaw_skills(root_dir: str = "") -> List[BaseTool]:
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    openclaw_root = root_dir or os.path.join(project_root, "app", "openclaw_skills")
+    if not os.path.isdir(openclaw_root):
+        return []
+    tools: List[BaseTool] = []
+    seen: Set[str] = set()
+    for dirpath, _, filenames in os.walk(openclaw_root):
+        if "SKILL.md" not in filenames:
+            continue
+        skill_md_path = os.path.join(dirpath, "SKILL.md")
+        meta = _read_openclaw_frontmatter(skill_md_path)
+        name = (meta.get("name") or "").strip()
+        if not name:
+            name = os.path.basename(dirpath)
+        if not name or name in seen:
+            continue
+        project_dir = _find_openclaw_cli_root(dirpath)
+        if not project_dir:
+            continue
+        cli_path = os.path.join(project_dir, "scripts", "cli.py")
+        if not os.path.exists(cli_path):
+            continue
+        description = (meta.get("description") or "").strip()
+        tool = OpenClawTool(
+            name=name,
+            description=description,
+            project_root=project_dir,
+            cli_path=cli_path
+        )
+        tools.append(_wrap_auto_tool(tool, "openclaw_skills", name))
+        seen.add(name)
+    return tools
 
 def load_skills(package_name: str = "app.skills", auto_package_name: str = "app.auto_skills") -> List[BaseTool]:
     """

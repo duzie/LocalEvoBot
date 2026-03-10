@@ -472,10 +472,56 @@ def inspect_environment(max_packages: int = 120):
             tools_list.append({"name": name, "description": desc})
         return tools_list
 
+    def _parse_openclaw_frontmatter(skill_md_path: str):
+        try:
+            with open(skill_md_path, "r", encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        except Exception:
+            return {}
+        if not lines or lines[0].strip() != "---":
+            return {}
+        end_idx = None
+        for idx in range(1, len(lines)):
+            if lines[idx].strip() == "---":
+                end_idx = idx
+                break
+        if end_idx is None:
+            return {}
+        data_lines = lines[1:end_idx]
+        data = {}
+        i = 0
+        while i < len(data_lines):
+            line = data_lines[i]
+            if not line.strip():
+                i += 1
+                continue
+            if ":" not in line:
+                i += 1
+                continue
+            key, rest = line.split(":", 1)
+            key = key.strip()
+            rest = rest.strip()
+            if rest == "|":
+                i += 1
+                block = []
+                while i < len(data_lines):
+                    block_line = data_lines[i]
+                    if not block_line.startswith(" ") and not block_line.startswith("\t"):
+                        break
+                    block.append(block_line.lstrip())
+                    i += 1
+                data[key] = "\n".join(block).strip()
+                continue
+            data[key] = rest.strip().strip('"').strip("'")
+            i += 1
+        return data
+
     skills_root = os.path.join(project_root, "app", "skills")
     auto_skills_root = os.path.join(project_root, "app", "auto_skills")
+    openclaw_root = os.path.join(project_root, "app", "openclaw_skills")
     skills = []
     auto_skills = []
+    openclaw_skills = []
     tools_info = []
     if os.path.isdir(skills_root):
         for name in os.listdir(skills_root):
@@ -503,6 +549,22 @@ def inspect_environment(max_packages: int = 120):
                         "skill": name,
                         "scope": "auto_skills"
                     })
+    if os.path.isdir(openclaw_root):
+        for dirpath, _, filenames in os.walk(openclaw_root):
+            if "SKILL.md" not in filenames:
+                continue
+            meta = _parse_openclaw_frontmatter(os.path.join(dirpath, "SKILL.md"))
+            name = (meta.get("name") or "").strip()
+            if not name:
+                name = os.path.basename(dirpath)
+            if name and name not in openclaw_skills:
+                openclaw_skills.append(name)
+                tools_info.append({
+                    "name": name,
+                    "description": (meta.get("description") or "").strip(),
+                    "skill": name,
+                    "scope": "openclaw_skills"
+                })
     return json.dumps({
         "os": platform.system(),
         "python_version": sys.version,
@@ -512,6 +574,7 @@ def inspect_environment(max_packages: int = 120):
         "installed_packages": packages,
         "skills": sorted(skills),
         "auto_skills": sorted(auto_skills),
+        "openclaw_skills": sorted(openclaw_skills),
         "tools": tools_info
     }, ensure_ascii=False, indent=2)
 
