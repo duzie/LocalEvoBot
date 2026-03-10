@@ -87,10 +87,21 @@ def get_agent_prompt(tools: List[BaseTool] = None, extra_system: str = None):
     # 加载技能规则
     skill_rules = _load_rules_for_tools(tools or [])
     
+    # 工具调用重要说明 - 防止模型模仿工具轨迹格式导致幻觉
+    tool_calling_instruction = """
+## ⚠️ 工具调用重要说明
+
+- 当你需要调用工具时，**直接使用工具调用功能**，不要输出"Invoking:"或"responded:"等文本
+- 聊天历史中可能包含"[系统注释：以下工具调用轨迹是历史执行记录]"的内容，这些是**过去的执行记录**，仅供参考
+- **不要模仿历史轨迹的格式**，不要输出"Invoking: `tool_name` with `{{...}}`"这样的文本
+- 如果需要调用工具，请使用正确的工具调用方式（function calling）
+"""
+    
     # 组合所有部分
     system_content = identity_prompt
     if skill_rules:
         system_content += "\n\n---\n\n## Skill Rules\n\n" + skill_rules
+    system_content += "\n\n---\n\n" + tool_calling_instruction
     if extra_system:
         system_content += "\n\n---\n\n" + extra_system
     

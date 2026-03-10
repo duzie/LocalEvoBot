@@ -443,7 +443,8 @@ def _load_short_term_messages(project_id: str, user_id: str, limit: int = 60):
             chat_history.append((role, content))
             continue
         if role == "tool":
-            chat_history.append(("system", f"[历史工具轨迹]\n{content}"))
+            # 工具轨迹以系统注释形式呈现，明确告知模型这是历史执行记录，不要模仿格式
+            chat_history.append(("system", f"[系统注释：以下工具调用轨迹是历史执行记录，仅供参考，不要模仿此格式]\n{content}"))
             continue
         if role:
             chat_history.append(("system", f"[历史消息:{role}]\n{content}"))
@@ -1920,9 +1921,11 @@ def main():
                 if stored_input and len(stored_input) > 12000:
                     stored_input = stored_input[:12000] + "\n...(truncated)..."
                 stored_output = visible_output
+                # 工具调用轨迹单独保存为 tool 角色，避免模型模仿轨迹格式导致幻觉
                 trace_text = _load_recent_tool_traces(project_id, user_id, step_started_at, limit=50, style="terminal")
                 if trace_text:
-                    stored_output = (stored_output or "").rstrip() + "\n\n工具调用轨迹:\n" + trace_text
+                    # 将轨迹保存为独立的 tool 消息，而不是附加到 assistant 输出中
+                    _add_short_term_message("tool", trace_text, project_id, user_id)
                 _add_short_term_message("assistant", stored_output, project_id, user_id)
                 # 保存到 transcript
                 if transcript:
@@ -1932,6 +1935,7 @@ def main():
                     reply_text = (cleaned_output or output or "").strip()
                     if reply_text:
                         _send_whatsapp_reply(wa_ctx.get("chatJid"), reply_text)
+                # 构建聊天历史：user + assistant，工具轨迹已单独保存为 tool 角色
                 chat_history.extend([
                     ("user", stored_input),
                     ("assistant", stored_output)
@@ -1946,18 +1950,17 @@ def main():
                         print("Agent: 已重载技能\n")
                         chat_history.append(("system", "系统消息：技能热加载已完成。"))
                         trace = _load_recent_tool_traces(project_id, user_id, step_started_at, limit=14)
-                        trace_block = f"\n\n已发生的工具轨迹（不要重复）：\n{trace}" if trace else ""
                         if trace:
                             trace_text = trace
                             if len(trace_text) > 5000:
                                 trace_text = trace_text[:5000] + "\n...(truncated)..."
-                            chat_history.append(("system", "系统消息：上一轮工具轨迹（不要重复）：\n" + trace_text))
+                            # 以系统注释形式呈现，明确告知模型不要模仿轨迹格式
+                            chat_history.append(("system", f"[系统注释：以下工具调用轨迹是历史执行记录，仅供参考，不要模仿此格式]\n{trace_text}"))
                         auto_input = (
                             "系统消息：技能热加载已完成。请继续执行上一轮未完成的任务，不要重复创建已存在的技能/目录/文件。"
                             "如果你不确定新技能是否已创建成功，优先通过 inspect_environment 或检查目录确认；"
                             "确认存在后，直接调用新工具完成任务。"
-                            f"{trace_block}\n\n"
-                            f"上一轮任务输入：{auto_input}"
+                            f"\n\n上一轮任务输入：{auto_input}"
                         )
                         continue # 跳过后续的状态检查，直接进入下一轮循环（使用新的 auto_input）
                     except Exception as e:
@@ -1970,12 +1973,16 @@ def main():
                             summary_llm = create_llm()
                             chat_history.append(("system", f"系统消息：热加载失败已自动回滚。{msg}"))
                             trace = _load_recent_tool_traces(project_id, user_id, step_started_at, limit=14)
-                            trace_block = f"\n\n已发生的工具轨迹（不要重复）：\n{trace}" if trace else ""
+                            if trace:
+                                trace_text = trace
+                                if len(trace_text) > 5000:
+                                    trace_text = trace_text[:5000] + "\n...(truncated)..."
+                                # 以系统注释形式呈现，明确告知模型不要模仿轨迹格式
+                                chat_history.append(("system", f"[系统注释：以下工具调用轨迹是历史执行记录，仅供参考，不要模仿此格式]\n{trace_text}"))
                             auto_input = (
                                 "系统消息：热加载失败，已自动回滚到最近稳定版本。"
                                 "请继续上一轮未完成的任务，不要重复创建技能/目录/文件。"
-                                f"{trace_block}\n\n"
-                                f"上一轮任务输入：{auto_input}"
+                                f"\n\n上一轮任务输入：{auto_input}"
                             )
                             continue
                         except Exception as e2:
@@ -2016,13 +2023,16 @@ def main():
                     print(">>> 系统: 状态=空闲")
                     break
                 trace = _load_recent_tool_traces(project_id, user_id, step_started_at, limit=12)
-                trace_block = f"\n\n本轮已发生的工具轨迹（不要重复）：\n{trace}" if trace else ""
+                # 工具轨迹作为系统注释添加到下一轮输入中
+                trace_instruction = ""
+                if trace:
+                    trace_instruction = f"\n\n[系统注释：以下工具调用轨迹是历史执行记录，仅供参考]\n{trace}"
                 auto_input = (
                     "继续执行，基于当前屏幕状态完成任务。"
                     "如果需要继续处理大文件/长文件，优先基于上面的工具轨迹决定下一步（例如从下一段/下一块继续读取），不要从头重复读取。"
                     "如果任务是多文件/项目级逻辑分析，优先使用 deep_analysis_skill：先 read_files_to_analysis_index 建立索引，再 query_analysis_index 做跨文件关联分析。"
-                    "若轨迹只有文件与行号但缺少足够内容证据，必须再次调用读取工具，不得假设已读内容。\n"
-                    f"{trace_block}"
+                    "若轨迹只有文件与行号但缺少足够内容证据，必须再次调用读取工具，不得假设已读内容。"
+                    f"{trace_instruction}"
                 )
                 if step == max_auto_steps - 1:
                     print("Agent: 已达到自动执行步数上限。输入“继续”将从任务计划的当前步骤继续。\n")
