@@ -21,16 +21,16 @@ uv run pytest              # 运行测试
 双层结构：`scripts/` 是 Python CDP 自动化引擎，`skills/` 是 Claude Code Skills 定义（SKILL.md 格式）。
 
 - `scripts/xhs/` — 核心自动化库（模块化，每个功能一个文件）
-- `scripts/cli.py` — 统一 CLI 入口，23 个子命令，JSON 结构化输出
+- `app\openclaw_skills\xiaohongshu-skills\scripts\cli.py` — 统一 CLI 入口，23 个子命令，JSON 结构化输出
 - `scripts/publish_pipeline.py` — 发布编排器（含图片下载和登录检查）
 - `skills/*/SKILL.md` — 指导 Claude 如何调用 scripts/
 
 ### 调用方式
 
 ```bash
-python scripts/cli.py check-login
-python scripts/cli.py search-feeds --keyword "关键词"
-python scripts/cli.py publish --title-file t.txt --content-file c.txt --images pic.jpg
+python app\openclaw_skills\xiaohongshu-skills\scripts\cli.py check-login
+python app\openclaw_skills\xiaohongshu-skills\scripts\cli.py search-feeds --keyword "关键词"
+python app\openclaw_skills\xiaohongshu-skills\scripts\cli.py publish --title-file t.txt --content-file c.txt --images pic.jpg
 python scripts/publish_pipeline.py --title-file t.txt --content-file c.txt --images URL1
 ```
 

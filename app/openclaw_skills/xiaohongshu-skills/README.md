@@ -107,19 +107,19 @@ python scripts/chrome_launcher.py --headless
 
 ```bash
 # 检查登录状态（已登录时返回用户昵称和小红书号）
-python scripts/cli.py check-login
+python app\openclaw_skills\xiaohongshu-skills\scripts\cli.py check-login
 
 # 扫码登录
-python scripts/cli.py login
+python app\openclaw_skills\xiaohongshu-skills\scripts\cli.py login
 ```
 
 #### 3. 搜索笔记
 
 ```bash
-python scripts/cli.py search-feeds --keyword "关键词"
+python app\openclaw_skills\xiaohongshu-skills\scripts\cli.py search-feeds --keyword "关键词"
 
 # 带筛选条件
-python scripts/cli.py search-feeds \
+python app\openclaw_skills\xiaohongshu-skills\scripts\cli.py search-feeds \
   --keyword "关键词" \
   --sort-by "最多点赞" \
   --note-type "图文"
@@ -128,7 +128,7 @@ python scripts/cli.py search-feeds \
 #### 4. 查看笔记详情
 
 ```bash
-python scripts/cli.py get-feed-detail \
+python app\openclaw_skills\xiaohongshu-skills\scripts\cli.py get-feed-detail \
   --feed-id FEED_ID --xsec-token XSEC_TOKEN
 ```
 
@@ -136,25 +136,25 @@ python scripts/cli.py get-feed-detail \
 
 ```bash
 # 图文发布（分步：填写 → 预览 → 确认发布）
-python scripts/cli.py fill-publish \
+python app\openclaw_skills\xiaohongshu-skills\scripts\cli.py fill-publish \
   --title-file title.txt \
   --content-file content.txt \
   --images "/abs/path/pic1.jpg" "/abs/path/pic2.jpg"
 
 # 用户在浏览器中预览确认后
-python scripts/cli.py click-publish
+python app\openclaw_skills\xiaohongshu-skills\scripts\cli.py click-publish
 
 # 或保存为草稿
-python scripts/cli.py save-draft
+python app\openclaw_skills\xiaohongshu-skills\scripts\cli.py save-draft
 
 # 视频发布
-python scripts/cli.py publish-video \
+python app\openclaw_skills\xiaohongshu-skills\scripts\cli.py publish-video \
   --title-file title.txt \
   --content-file content.txt \
   --video "/abs/path/video.mp4"
 
 # 长文发布
-python scripts/cli.py long-article \
+python app\openclaw_skills\xiaohongshu-skills\scripts\cli.py long-article \
   --title-file title.txt \
   --content-file content.txt
 ```
@@ -163,16 +163,16 @@ python scripts/cli.py long-article \
 
 ```bash
 # 评论
-python scripts/cli.py post-comment \
+python app\openclaw_skills\xiaohongshu-skills\scripts\cli.py post-comment \
   --feed-id FEED_ID --xsec-token XSEC_TOKEN \
   --content "评论内容"
 
 # 点赞
-python scripts/cli.py like-feed \
+python app\openclaw_skills\xiaohongshu-skills\scripts\cli.py like-feed \
   --feed-id FEED_ID --xsec-token XSEC_TOKEN
 
 # 收藏
-python scripts/cli.py favorite-feed \
+python app\openclaw_skills\xiaohongshu-skills\scripts\cli.py favorite-feed \
   --feed-id FEED_ID --xsec-token XSEC_TOKEN
 ```
 

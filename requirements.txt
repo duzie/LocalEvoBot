@@ -23,5 +23,5 @@ cryptography
 python-dotenv
 pyodbc
 lark-oapi
-
+request
 rank_bm25
