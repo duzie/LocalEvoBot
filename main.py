@@ -59,6 +59,12 @@ try:
 except ImportError as e:
     print(f"⚠️ 企业微信 Channel 未导入: {e}")
 
+try:
+    from channels.mqtt import MqttChannel
+    CHANNELS_AVAILABLE['mqtt'] = MqttChannel
+except ImportError as e:
+    print(f"⚠️ MQTT Channel 未导入: {e}")
+
 if CHANNELS_AVAILABLE:
     print(f"[OK] 已加载 {len(CHANNELS_AVAILABLE)} 个 Channel: {', '.join(CHANNELS_AVAILABLE.keys())}")
 else:
@@ -1731,7 +1737,51 @@ def main():
                 print("[OK] 企业微信 Channel 已启动 (WebSocket 长连接)")
             else:
                 print("[ERROR] 企业微信 Channel 启动失败，请检查日志")
-    
+
+    # MQTT Channel (长连接模式)
+    if 'mqtt' in CHANNELS_AVAILABLE:
+        if os.getenv("MQTT_SERVER_URL") and os.getenv("MQTT_APP_ID"):
+            mqtt_channel = CHANNELS_AVAILABLE['mqtt']()
+            mqtt_channel.set_agent(agent_executor)
+            mqtt_channel.start()
+            time.sleep(1)
+            if mqtt_channel.running:
+                print("[OK] MQTT Channel 已启动 (长连接)")
+            else:
+                print("[ERROR] MQTT Channel 启动失败，请检查日志")
+        elif os.getenv("MQTT_SERVER_URL"):
+            # 如果只有服务器URL没有APP ID，尝试不使用认证的方式启动
+            mqtt_channel = CHANNELS_AVAILABLE['mqtt']()
+            mqtt_channel.set_agent(agent_executor)
+            mqtt_channel.start()
+            time.sleep(1)
+            if mqtt_channel.running:
+                print("[OK] MQTT Channel 已启动 (长连接，无认证)")
+            else:
+                print("[ERROR] MQTT Channel 启动失败，请检查日志")
+
+    # MQTT Channel (长连接模式)
+    if 'mqtt' in CHANNELS_AVAILABLE:
+        if os.getenv("MQTT_SERVER_URL") and os.getenv("MQTT_APP_ID"):
+            mqtt_channel = CHANNELS_AVAILABLE['mqtt']()
+            mqtt_channel.set_agent(agent_executor)
+            mqtt_channel.start()
+            time.sleep(1)
+            if mqtt_channel.running:
+                print("[OK] MQTT Channel 已启动 (长连接)")
+            else:
+                print("[ERROR] MQTT Channel 启动失败，请检查日志")
+        elif os.getenv("MQTT_SERVER_URL"):
+            # 如果只有服务器URL没有APP ID，尝试不使用认证的方式启动
+            mqtt_channel = CHANNELS_AVAILABLE['mqtt']()
+            mqtt_channel.set_agent(agent_executor)
+            mqtt_channel.start()
+            time.sleep(1)
+            if mqtt_channel.running:
+                print("[OK] MQTT Channel 已启动 (长连接，无认证)")
+            else:
+                print("[ERROR] MQTT Channel 启动失败，请检查日志")
+
     print("\n[OK] Agent 已就绪！")
     print("输入 'exit' 或 'quit' 退出。")
     print("也可以通过 Web 控制台发送指令。\n")
