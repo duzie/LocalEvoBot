@@ -1778,24 +1778,8 @@
                 var input = el('chatInput')
                 var msg = (input ? input.value : '') || ''
                 msg = msg.trim()
-                
-                // 获取待发送的文件路径（从 SmartFileInput 组件）
-                var filePaths = []
-                if (window.smartFileInput && typeof window.smartFileInput.getPendingFilePaths === 'function') {
-                    filePaths = window.smartFileInput.getPendingFilePaths()
-                }
-                
-                // 如果有文件卡片，将路径附加到消息中
-                if (filePaths.length > 0) {
-                    var pathPrefix = filePaths.map(function(p) { return '@' + p }).join(' ')
-                    msg = pathPrefix + (msg ? '\n' + msg : '')
-                    // 清空文件卡片
-                    if (window.smartFileInput && typeof window.smartFileInput.clearFileCards === 'function') {
-                        window.smartFileInput.clearFileCards()
-                    }
-                }
-                
-                if (!msg && filePaths.length === 0 || !state.chatConnected) return
+
+                if (!msg || !state.chatConnected) return
                 if (input) input.value = ''
                 sendMessageText(msg)
             }

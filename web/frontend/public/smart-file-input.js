@@ -232,9 +232,7 @@ class SmartFileInput {
   
   async handleTextDrop(text) {
     const result = await this.smartIdentifyText(text)
-    if (result.type === 'file-path') this.addPathToChat(text)
-    else if (result.type === 'code') this.addCodeToChat(text, result.language)
-    else if (result.type === 'url') this.addPathToChat(text)
+    if (result.type === 'code') this.addCodeToChat(text, result.language)
   }
 
 
@@ -257,14 +255,7 @@ class SmartFileInput {
       }
       
       const text = clipboardData.getData('text')
-      if (text) {
-        this.smartIdentifyText(text).then(result => {
-          if (result.type === 'file-path' && result.confidence > 0.8) {
-            e.preventDefault()
-            this.addPathToChat(text)
-          }
-        })
-      }
+      if (text) return
     })
   }
   
@@ -347,8 +338,11 @@ class SmartFileInput {
   }
   
   addPathToChat(path) {
-    const pathCard = this.createFileCard({ icon: '📎', name: path.split(/[\\/]/).pop(), path: path, type: 'path' })
-    this.insertFileCard(pathCard)
+    const text = this.chatInput.value
+    const startPos = this.chatInput.selectionStart || 0
+    const endPos = this.chatInput.selectionEnd || 0
+    this.chatInput.value = text.substring(0, startPos) + path + text.substring(endPos)
+    this.chatInput.focus()
   }
   
   addCodeToChat(code, language) {
@@ -398,7 +392,6 @@ class SmartFileInput {
       <div class="file-card-path" title="${fileInfo.path}">${fileInfo.path}</div>
       <div class="file-card-actions">
         <button class="file-action-btn" onclick="smartFileInput.previewFile('${fileInfo.path}')" title="预览">👁</button>
-        <button class="file-action-btn" onclick="smartFileInput.copyPath('${fileInfo.path}')" title="复制路径">📋</button>
         <button class="file-action-btn" onclick="smartFileInput.removeFileCard(this)" title="移除">×</button>
       </div>
     `
