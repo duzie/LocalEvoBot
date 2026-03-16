@@ -151,6 +151,32 @@ async def whatsapp_webhook(request: Request, payload: dict = Body(...)):
     )
     return {"ok": True}
 
+@router.post("/wecom/webhook")
+async def wecom_webhook(request: Request, payload: dict = Body(...)):
+    env_path = _get_env_path()
+    env = dotenv_values(env_path) if os.path.exists(env_path) else {}
+    expected = (os.getenv("WECOM_WEBHOOK_TOKEN") or env.get("WECOM_WEBHOOK_TOKEN") or "").strip()
+    if expected:
+        auth = str(request.headers.get("authorization") or "")
+        if auth != f"Bearer {expected}":
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+    text = str(payload.get("text") or "").strip()
+    chatid = str(payload.get("chatid") or "").strip()
+    sender_userid = str(payload.get("senderUserid") or "").strip()
+    kind = str(payload.get("kind") or "").strip()
+    if not chatid or not text:
+        raise HTTPException(status_code=400, detail="Invalid payload")
+    print(f">>> 系统: 收到 WeCom webhook chatid={chatid} text={text[:80]}")
+
+    shared.put_input(
+        "__WECOM_IN__:" + json.dumps(
+            {"chatid": chatid, "senderUserid": sender_userid, "kind": kind, "text": text},
+            ensure_ascii=False,
+        )
+    )
+    return {"ok": True}
+
 def _read_bool_env_value(key: str, default: bool = False) -> bool:
     env_path = _get_env_path()
     env = dotenv_values(env_path) if os.path.exists(env_path) else {}

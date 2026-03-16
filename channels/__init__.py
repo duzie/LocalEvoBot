@@ -3,7 +3,6 @@
 
 from .feishu.channel import FeishuChannel
 from .dingtalk.channel import DingtalkChannel
-from .wecom.channel import WeComChannel
 from .mqtt.channel import MqttChannel
 
-__all__ = ['FeishuChannel', 'DingtalkChannel', 'WeComChannel', 'MqttChannel']
+__all__ = ['FeishuChannel', 'DingtalkChannel', 'MqttChannel']

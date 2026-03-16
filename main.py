@@ -1,4 +1,4 @@
-﻿import os
+import os
 import platform
 import ctypes
 import sys
@@ -54,12 +54,6 @@ except ImportError as e:
     print(f"⚠️ 钉钉 Channel 未导入: {e}")
 
 try:
-    from channels.wecom import WeComChannel
-    CHANNELS_AVAILABLE['wecom'] = WeComChannel
-except ImportError as e:
-    print(f"⚠️ 企业微信 Channel 未导入: {e}")
-
-try:
     from channels.mqtt import MqttChannel
     CHANNELS_AVAILABLE['mqtt'] = MqttChannel
 except ImportError as e:
@@ -73,9 +67,11 @@ else:
 RELOAD_SIGNAL = "__RELOAD_SKILLS__"
 SET_MODEL_PREFIX = "__SET_MODEL__:"
 WA_IN_PREFIX = "__WA_IN__:"
+WECOM_IN_PREFIX = "__WECOM_IN__:"
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[ -/]*[@-~]")
 
 _gateway_process = None
+_wecom_gateway_process = None
 
 def _env_flag(name: str, default: bool = False) -> bool:
     raw = (os.getenv(name) or "").strip().lower()
@@ -138,6 +134,21 @@ def _wa_provider() -> str:
 def _wa_gateway_is_running() -> bool:
     try:
         with urllib.request.urlopen(_wa_gateway_base_url() + "/health", timeout=1.5) as resp:
+            return 200 <= int(getattr(resp, "status", 0) or 0) < 300
+    except Exception:
+        return False
+
+def _wecom_gateway_base_url():
+    host = (os.getenv("WECOM_GATEWAY_HOST") or "127.0.0.1").strip()
+    try:
+        port = int(os.getenv("WECOM_GATEWAY_PORT") or 8788)
+    except Exception:
+        port = 8788
+    return f"http://{host}:{port}"
+
+def _wecom_gateway_is_running() -> bool:
+    try:
+        with urllib.request.urlopen(_wecom_gateway_base_url() + "/health", timeout=1.5) as resp:
             return 200 <= int(getattr(resp, "status", 0) or 0) < 300
     except Exception:
         return False
@@ -221,6 +232,79 @@ def _start_wa_gateway_subprocess():
 
     atexit.register(_cleanup)
 
+def _start_wecom_gateway_subprocess():
+    global _wecom_gateway_process
+    if _wecom_gateway_process is not None:
+        return
+    default_autostart = True if _is_public_console() else False
+    if _env_flag("WECOM_GATEWAY_AUTOSTART", default_autostart) is False:
+        return
+    if _wecom_gateway_is_running():
+        return
+    if not ((os.getenv("WECOM_BOT_ID") or "").strip() and (os.getenv("WECOM_SECRET") or "").strip()):
+        return
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    gateway_dir = os.path.join(base_dir, "wecom-gateway")
+    if not os.path.isdir(gateway_dir):
+        return
+    node_modules_dir = os.path.join(gateway_dir, "node_modules")
+    if not os.path.isdir(node_modules_dir):
+        npm_candidates = ["npm.cmd", "npm"] if os.name == "nt" else ["npm"]
+        npm_bin = _resolve_executable("WECOM_NPM_BIN", npm_candidates)
+        if not npm_bin:
+            print(">>> 系统: 未找到 npm。请安装 Node.js，或设置 WECOM_NPM_BIN。")
+            return
+        print(">>> 系统: 未检测到 wecom-gateway/node_modules，正在安装依赖...")
+        try:
+            subprocess.run(
+                [npm_bin, "install", "--omit=dev", "--silent"],
+                cwd=gateway_dir,
+                env=os.environ.copy(),
+                check=True,
+            )
+        except Exception as e:
+            print(f">>> 系统: 安装 WeCom Gateway 依赖失败: {e}")
+            return
+    node_candidates = ["node.exe", "node"] if os.name == "nt" else ["node"]
+    node_bin = _resolve_executable("WECOM_NODE_BIN", node_candidates)
+    if not node_bin:
+        print(">>> 系统: 未找到 node。请安装 Node.js，或设置 WECOM_NODE_BIN。")
+        return
+    child_env = os.environ.copy()
+    webhook_url = (child_env.get("WECOM_WEBHOOK_URL") or "").strip()
+    if not webhook_url:
+        web_host = (child_env.get("WEB_HOST") or "127.0.0.1").strip()
+        if web_host in {"0.0.0.0", "::"}:
+            web_host = "127.0.0.1"
+        try:
+            web_port = int((child_env.get("WEB_PORT") or "1024").strip())
+        except Exception:
+            web_port = 1024
+        child_env["WECOM_WEBHOOK_URL"] = f"http://{web_host}:{web_port}/api/chat/wecom/webhook"
+    try:
+        _wecom_gateway_process = subprocess.Popen(
+            [node_bin, "index.js"],
+            cwd=gateway_dir,
+            env=child_env,
+        )
+    except Exception as e:
+        print(f">>> 系统: 启动 WeCom Gateway 失败: {e}")
+        _wecom_gateway_process = None
+        return
+
+    def _cleanup():
+        global _wecom_gateway_process
+        proc = _wecom_gateway_process
+        _wecom_gateway_process = None
+        if proc is None:
+            return
+        try:
+            proc.terminate()
+        except Exception:
+            return
+
+    atexit.register(_cleanup)
+
 def _extract_whatsapp_input(raw: str):
     text = str(raw or "").strip()
     if not text.startswith(WA_IN_PREFIX):
@@ -238,6 +322,25 @@ def _extract_whatsapp_input(raw: str):
     if not chat_jid or not msg_text:
         return None, ""
     return {"chatJid": chat_jid, "senderE164": sender_e164}, msg_text
+
+def _extract_wecom_input(raw: str):
+    text = str(raw or "").strip()
+    if not text.startswith(WECOM_IN_PREFIX):
+        return None, text
+    payload_raw = text[len(WECOM_IN_PREFIX):].strip()
+    try:
+        data = json.loads(payload_raw)
+    except Exception:
+        return None, ""
+    if not isinstance(data, dict):
+        return None, ""
+    chatid = str(data.get("chatid") or "").strip()
+    msg_text = str(data.get("text") or "").strip()
+    sender_userid = str(data.get("senderUserid") or "").strip()
+    kind = str(data.get("kind") or "").strip()
+    if not chatid or not msg_text:
+        return None, ""
+    return {"chatid": chatid, "senderUserid": sender_userid, "kind": kind}, msg_text
 
 def _wa_cloud_send_text(to_wa_id: str, text: str) -> bool:
     access_token = (os.getenv("WA_CLOUD_ACCESS_TOKEN") or "").strip()
@@ -287,6 +390,32 @@ def _send_whatsapp_reply(chat_jid: str, text: str):
         port = 8787
     url = f"http://{host}:{port}/send"
     body = json.dumps({"to": chat_jid, "text": text}, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return 200 <= int(getattr(resp, "status", 0) or 0) < 300
+    except Exception:
+        return False
+
+def _send_wecom_reply(chatid: str, text: str):
+    token = (os.getenv("WECOM_GATEWAY_TOKEN") or "").strip()
+    if not token:
+        return False
+    host = (os.getenv("WECOM_GATEWAY_HOST") or "127.0.0.1").strip()
+    try:
+        port = int(os.getenv("WECOM_GATEWAY_PORT") or 8788)
+    except Exception:
+        port = 8788
+    url = f"http://{host}:{port}/send"
+    body = json.dumps({"chatid": chatid, "text": text}, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=body,
@@ -1666,6 +1795,7 @@ def main():
     enable_dpi_awareness()
 
     _start_wa_gateway_subprocess()
+    _start_wecom_gateway_subprocess()
     
     # Start Web Server in a daemon thread
     web_thread = threading.Thread(target=start_web_server, daemon=True)
@@ -1726,17 +1856,8 @@ def main():
             else:
                 print("[ERROR] 钉钉 Channel 启动失败，请检查日志")
     
-    # 企业微信 Channel (WebSocket 长连接模式)
-    if 'wecom' in CHANNELS_AVAILABLE:
-        if os.getenv("WECOM_BOT_ID") and os.getenv("WECOM_SECRET"):
-            wecom = CHANNELS_AVAILABLE['wecom']()
-            wecom.set_agent(agent_executor)
-            wecom.start()
-            time.sleep(1)
-            if wecom.running:
-                print("[OK] 企业微信 Channel 已启动 (WebSocket 长连接)")
-            else:
-                print("[ERROR] 企业微信 Channel 启动失败，请检查日志")
+    if _wecom_gateway_is_running():
+        print("[OK] 企业微信网关已连接")
 
     # MQTT Channel (长连接模式)
     if 'mqtt' in CHANNELS_AVAILABLE:
@@ -1812,6 +1933,7 @@ def main():
             user_input = shared.get_input()
             user_input = user_input.strip()
             wa_ctx, user_input = _extract_whatsapp_input(user_input)
+            wecom_ctx, user_input = _extract_wecom_input(user_input)
 
             # 处理来自 Web 的标准消息协议
             if user_input.startswith("__CHAT_MSG__:"):
@@ -1876,6 +1998,12 @@ def main():
                 if wa_ctx:
                     auto_input = (
                         "你正在通过 WhatsApp 私聊与用户对话。"
+                        "请直接回复对方的消息内容，输出为纯文本，不要包含 'User:'/'Agent:'/'STATE:' 等标记。\n\n"
+                        f"用户消息：{user_input}"
+                    )
+                elif wecom_ctx:
+                    auto_input = (
+                        "你正在通过企业微信与用户对话。"
                         "请直接回复对方的消息内容，输出为纯文本，不要包含 'User:'/'Agent:'/'STATE:' 等标记。\n\n"
                         f"用户消息：{user_input}"
                     )
@@ -1985,6 +2113,10 @@ def main():
                     reply_text = (cleaned_output or output or "").strip()
                     if reply_text:
                         _send_whatsapp_reply(wa_ctx.get("chatJid"), reply_text)
+                if wecom_ctx and state != "CONTINUE":
+                    reply_text = (cleaned_output or output or "").strip()
+                    if reply_text:
+                        _send_wecom_reply(wecom_ctx.get("chatid"), reply_text)
                 # 构建聊天历史：user + assistant，工具轨迹已单独保存为 tool 角色
                 chat_history.extend([
                     ("user", stored_input),

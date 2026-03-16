@@ -101,12 +101,47 @@ async function postWebhook(payload) {
   if (!config.webhookUrl) return;
   const headers = { "Content-Type": "application/json" };
   if (config.webhookToken) headers["Authorization"] = `Bearer ${config.webhookToken}`;
+  const body = JSON.stringify(payload);
+  const fallbackUrl = (() => {
+    try {
+      const u = new URL(config.webhookUrl);
+      if (u.pathname === "/api/chat/wecom/webhook") return "";
+      u.pathname = "/api/chat/wecom/webhook";
+      u.search = "";
+      u.hash = "";
+      return u.toString();
+    } catch {
+      return "";
+    }
+  })();
   try {
-    await fetch(config.webhookUrl, {
+    const resp = await fetch(config.webhookUrl, {
       method: "POST",
       headers,
-      body: JSON.stringify(payload),
+      body,
     });
+    if ((resp.status === 404 || resp.status === 405) && fallbackUrl) {
+      const retryResp = await fetch(fallbackUrl, {
+        method: "POST",
+        headers,
+        body,
+      });
+      if (!retryResp.ok) {
+        let retryRaw = "";
+        try {
+          retryRaw = await retryResp.text();
+        } catch {}
+        process.stderr.write(`[WeCom] Webhook retry failed ${retryResp.status}: ${retryRaw || retryResp.statusText}\n`);
+      }
+      return;
+    }
+    if (!resp.ok) {
+      let raw = "";
+      try {
+        raw = await resp.text();
+      } catch {}
+      process.stderr.write(`[WeCom] Webhook failed ${resp.status}: ${raw || resp.statusText}\n`);
+    }
   } catch (e) {
     process.stderr.write(`Webhook post failed: ${e}\n`);
   }
