@@ -29,9 +29,6 @@ app.skills.system_skill.scripts
 - list_processes: 列出所有进程
 - delete_image: 删除图片
 - get_current_time: 获取当前时间
-- add_operation_experience: 添加操作经验
-- get_operation_experience: 查询操作经验
-- search_short_term_memory: 搜索短期记忆（本地对话消息）
 - run_shell_command: 运行shell命令
 - check_process_status: 检查进程状态
 ## Platforms
