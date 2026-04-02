@@ -13,13 +13,10 @@ import makeWASocket, {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const envCandidates = [
-  path.resolve(__dirname, "../.env"),
-  path.resolve(__dirname, "./.env"),
-];
-for (const p of envCandidates) {
-  if (fs.existsSync(p)) dotenv.config({ path: p });
-}
+const localEnvPath = path.resolve(__dirname, "./.env");
+const rootEnvPath = path.resolve(__dirname, "../.env");
+if (fs.existsSync(localEnvPath)) dotenv.config({ path: localEnvPath, override: true });
+if (fs.existsSync(rootEnvPath)) dotenv.config({ path: rootEnvPath, override: false });
 
 function envFlag(name, defaultValue = false) {
   const raw = (process.env[name] ?? "").trim().toLowerCase();
@@ -111,6 +108,48 @@ let reconnectTimer = null;
 let starting = false;
 const recentInbound = [];
 const maxInbound = 50;
+const typingPresence = new Map();
+const typingRefreshMs = Math.max(3000, envInt("WA_TYPING_REFRESH_MS", 8000));
+const typingMaxMs = Math.max(typingRefreshMs, envInt("WA_TYPING_MAX_MS", 120000));
+
+async function sendPresenceSafe(jid, state) {
+  if (!sock || !jid || !state) return;
+  try {
+    await sock.sendPresenceUpdate(state, jid);
+  } catch {}
+}
+
+async function stopTypingPresence(jid) {
+  const v = String(jid || "").trim();
+  if (!v) return;
+  const entry = typingPresence.get(v);
+  if (entry) {
+    if (entry.intervalId) clearInterval(entry.intervalId);
+    if (entry.timeoutId) clearTimeout(entry.timeoutId);
+    typingPresence.delete(v);
+  }
+  await sendPresenceSafe(v, "paused");
+}
+
+async function startTypingPresence(jid) {
+  const v = String(jid || "").trim();
+  if (!v) return;
+  await stopTypingPresence(v);
+  await sendPresenceSafe(v, "composing");
+  const intervalId = setInterval(() => {
+    sendPresenceSafe(v, "composing");
+  }, typingRefreshMs);
+  const timeoutId = setTimeout(() => {
+    stopTypingPresence(v);
+  }, typingMaxMs);
+  typingPresence.set(v, { intervalId, timeoutId });
+}
+
+function stopAllTypingPresence() {
+  for (const jid of Array.from(typingPresence.keys())) {
+    stopTypingPresence(jid);
+  }
+}
 
 function isAllowedDm(e164) {
   if (!config.dmEnabled) return false;
@@ -175,6 +214,7 @@ async function startWhatsapp({ force = false } = {}) {
       connectionState.lastDisconnectReason = reason;
 
       if (connection === "close") {
+        stopAllTypingPresence();
         const shouldReconnect = reason !== DisconnectReason.loggedOut;
         if (shouldReconnect) {
           if (!reconnectTimer) {
@@ -229,11 +269,7 @@ async function startWhatsapp({ force = false } = {}) {
           text,
           ts: Date.now(),
         };
-        try {
-          await sock.sendMessage(remoteJid, { text: "已收到命令，请稍候" });
-        } catch (e) {
-          process.stderr.write(`Ack send failed: ${e}\n`);
-        }
+        await startTypingPresence(remoteJid);
         recentInbound.push(payload);
         if (recentInbound.length > maxInbound) recentInbound.splice(0, recentInbound.length - maxInbound);
         process.stdout.write(`[WA IN] ${e164} ${messageId} ${String(text).slice(0, 120).replace(/\s+/g, " ")}\n`);
@@ -301,6 +337,8 @@ app.post("/send", async (req, res) => {
     res.json({ ok: true, parts: parts.length });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e) });
+  } finally {
+    await stopTypingPresence(to);
   }
 });
 
@@ -317,6 +355,7 @@ app.post("/reset", async (_req, res) => {
       } catch {}
       sock = null;
     }
+    stopAllTypingPresence();
     lastQrText = "";
     connectionState = { connection: "init", lastDisconnectReason: null };
     clearAuthDir();
